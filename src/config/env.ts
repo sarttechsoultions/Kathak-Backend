@@ -38,4 +38,6 @@ export const env = {
   jitsiDomain: process.env.JITSI_DOMAIN?.trim() || "8x8.vc",
   jitsiKeyId: process.env.JITSI_KEY_ID?.trim(),
   jitsiPrivateKey: process.env.JITSI_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+  agoraAppId: process.env.AGORA_APP_ID,
+  agoraAppCertificate: process.env.AGORA_APP_CERTIFICATE,
 } as const;

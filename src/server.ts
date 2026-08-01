@@ -1,6 +1,8 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
+import { createServer } from "http";
+import { Server } from "socket.io";
 import "./types/auth";
 import authRoutes from "./modules/auth/auth.routes";
 import adminRoutes from "./modules/admin/admin.routes";
@@ -10,6 +12,8 @@ import liveClassRoutes from "./modules/liveclass/liveclass.routes";
 import { env } from "./config/env";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware";
 import { generalRateLimiter } from "./middleware/rateLimit.middleware";
+import { registerLiveClassSocket } from "./modules/liveclass/liveclass.socket";
+
 
 const app = express();
 
@@ -39,19 +43,30 @@ app.get("/api/v1/health", (_req: Request, res: Response) => {
   });
 });
 
+import { getCourses } from "./modules/admin/admin.controller";
+
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/upload", uploadRoutes);
 app.use("/api/v1/student", studentRoutes);
 app.use("/api/v1", liveClassRoutes);
+app.get("/api/v1/courses", getCourses);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-app.listen(env.port, () => {
-  console.log(`==================================================`);
-  console.log(`🚀 Kathak Express Server running on: http://localhost:${env.port}`);
-  console.log(`🔗 Health Check URL: http://localhost:${env.port}/api/v1/health`);
-  console.log(`🔒 Environment: ${env.nodeEnv}`);
-  console.log(`==================================================`);
+const httpServer = createServer(app);
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: env.frontendUrl,
+    credentials: true,
+  },
+});
+
+registerLiveClassSocket(io);
+
+httpServer.listen(env.port, () => {
+  console.log(` Environment: ${env.nodeEnv}`);
+  console.log(` Server (HTTP + Socket.io) listening on port ${env.port}`);
 });

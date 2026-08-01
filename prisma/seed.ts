@@ -1,7 +1,7 @@
 import { Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "../src/lib/prisma";
-import process from "process";
+// use the global `process` provided by Node.js
 
 async function main() {
   console.log("🌱 Seeding Admin User into PostgreSQL...");

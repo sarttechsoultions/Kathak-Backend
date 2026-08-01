@@ -1,11 +1,9 @@
 import { LiveClassStatus, Role } from "@prisma/client";
 import { Request, Response } from "express";
-import jwt from "jsonwebtoken";
-import { env } from "../../config/env";
 import { prisma } from "../../lib/prisma";
+import { agoraKeyReady, buildAgoraToken, numericUidFromString } from "./agoraToken";
 
 const serialise = (liveClass: any) => ({ ...liveClass, batchName: liveClass.batch.name, batchCode: liveClass.batch.code, courseName: liveClass.batch.courseName });
-const keyReady = () => env.jitsiAppId && env.jitsiKeyId && env.jitsiPrivateKey;
 
 export const listAdminLiveClasses = async (_req: Request, res: Response) => {
   const classes = await prisma.liveClass.findMany({ include: { batch: { select: { name: true, code: true, courseName: true } } }, orderBy: { scheduledStart: "asc" } });
@@ -40,17 +38,47 @@ export const setLiveClassStatus = async (req: Request, res: Response) => {
 };
 
 export const getLiveClassToken = async (req: Request, res: Response) => {
-  if (!keyReady()) { res.status(503).json({ status: "error", message: "Jitsi is not configured. Add JITSI_APP_ID, JITSI_KEY_ID and JITSI_PRIVATE_KEY to backend/.env." }); return; }
+  if (!agoraKeyReady()) {
+    res.status(503).json({ status: "error", message: "Video service is not configured. Add AGORA_APP_ID and AGORA_APP_CERTIFICATE to backend/.env." });
+    return;
+  }
+
   const liveClass = await prisma.liveClass.findUnique({ where: { id: String(req.params.id) }, include: { batch: true } });
-  if (!liveClass || liveClass.status !== "LIVE") { res.status(404).json({ status: "error", message: "This class is not live." }); return; }
+  if (!liveClass || liveClass.status !== "LIVE") {
+    res.status(404).json({ status: "error", message: "This class is not live." });
+    return;
+  }
+
   const user = req.user!;
-  const isStaff = user.role === Role.ADMIN || user.role === Role.TEACHER;
-  if (!isStaff) {
+  const isAdmin = user.role === Role.ADMIN;
+  const isTeacher = user.role === Role.TEACHER;
+
+  if (!isAdmin && !isTeacher) {
     const membership = await prisma.batchStudent.findUnique({ where: { batchId_studentId: { batchId: liveClass.batchId, studentId: user.id } } });
     const joinOpensAt = new Date(liveClass.scheduledStart.getTime() - 10 * 60 * 1000);
-    if (!membership || new Date() < joinOpensAt) { res.status(403).json({ status: "error", message: "You can join only from 10 minutes before this class." }); return; }
+    if (!membership || new Date() < joinOpensAt) {
+      res.status(403).json({ status: "error", message: "You can join only from 10 minutes before this class." });
+      return;
+    }
   }
-  const now = Math.floor(Date.now() / 1000);
-  const token = jwt.sign({ aud: "jitsi", iss: "chat", sub: env.jitsiAppId, room: liveClass.roomName, nbf: now - 5, exp: now + 60 * 60 * 3, context: { user: { id: user.id, name: user.email, email: user.email, moderator: isStaff }, features: { recording: false, livestreaming: false, transcription: false, outboundCall: false } } }, env.jitsiPrivateKey!, { algorithm: "RS256", keyid: env.jitsiKeyId });
-  res.json({ status: "success", data: { token, domain: env.jitsiDomain, appId: env.jitsiAppId, roomName: `${env.jitsiAppId}/${liveClass.roomName}`, liveClass: serialise(liveClass) } });
+
+  // Admin monitors only (view-only). Teacher always gets uid 1 so the frontend
+  // can reliably tell "which stream is the teacher" without extra lookups.
+  const agoraClientRole: "publisher" | "subscriber" = isAdmin ? "subscriber" : "publisher";
+  const uid = isTeacher ? 1 : isAdmin ? 999999 : numericUidFromString(user.id);
+
+  const token = buildAgoraToken(liveClass.roomName, uid, agoraClientRole);
+
+  res.json({
+    status: "success",
+    data: {
+      token,
+      appId: process.env.AGORA_APP_ID,
+      channelName: liveClass.roomName,
+      uid,
+      role: isAdmin ? "admin" : isTeacher ? "teacher" : "student",
+      agoraRole: agoraClientRole,
+      liveClass: serialise(liveClass),
+    },
+  });
 };
