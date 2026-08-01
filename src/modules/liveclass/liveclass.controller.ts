@@ -62,9 +62,9 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
     }
   }
 
-  // Admin monitors only (view-only). Teacher always gets uid 1 so the frontend
-  // can reliably tell "which stream is the teacher" without extra lookups.
-  const agoraClientRole: "publisher" | "subscriber" = isAdmin ? "subscriber" : "publisher";
+  // All active participants (Teacher, Admin, Student) get publisher role
+  // so video and audio streams publish and transmit bidirectionally to all users.
+  const agoraClientRole: "publisher" | "subscriber" = "publisher";
   const uid = isTeacher ? 1 : isAdmin ? 999999 : numericUidFromString(user.id);
 
   const token = buildAgoraToken(liveClass.roomName, uid, agoraClientRole);

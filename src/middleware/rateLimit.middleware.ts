@@ -3,7 +3,8 @@ import { env } from "../config/env";
 
 export const generalRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: env.isProduction ? 200 : 1000,
+  max: env.isProduction ? 300 : 100000,
+  skip: () => !env.isProduction,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -14,7 +15,8 @@ export const generalRateLimiter = rateLimit({
 
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: env.isProduction ? 10 : 50,
+  max: env.isProduction ? 15 : 10000,
+  skip: () => !env.isProduction,
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
