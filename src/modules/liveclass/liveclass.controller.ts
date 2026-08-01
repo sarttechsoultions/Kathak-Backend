@@ -54,6 +54,12 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
     return;
   }
 
+  // ✅ Extra safety: never let a blank/undefined appId leak into a successful response
+  if (!process.env.AGORA_APP_ID) {
+    res.status(503).json({ status: "error", message: "AGORA_APP_ID is missing on the server. Video cannot start." });
+    return;
+  }
+
   const liveClass = await prisma.liveClass.findUnique({ where: { id: String(req.params.id) }, include: { batch: true } });
   if (!liveClass || liveClass.status !== "LIVE") {
     res.status(404).json({ status: "error", message: "This class is not live." });
