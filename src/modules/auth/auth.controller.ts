@@ -94,3 +94,74 @@ export const logoutUser = async (req: Request, res: Response): Promise<void> => 
     res.status(500).json({ status: "error", message: "Internal server error during logout." });
   }
 };
+
+export const getMe = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ status: "error", message: "Unauthorized" });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { permissions: true },
+    });
+
+    if (!user || !user.isActive) {
+      res.status(401).json({ status: "error", message: "User not found or inactive." });
+      return;
+    }
+
+    const permissionList = user.permissions.map((p) => p.permission);
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        user: {
+          id: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          avatarUrl: user.avatarUrl,
+          permissions: permissionList,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("GetMe Error:", error);
+    res.status(500).json({ status: "error", message: "Internal server error." });
+  }
+};
+
+export const changePassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { newPassword } = req.body;
+
+    if (!userId) {
+      res.status(401).json({ status: "error", message: "Unauthorized." });
+      return;
+    }
+
+    if (!newPassword || typeof newPassword !== "string" || newPassword.length < 6) {
+      res.status(400).json({ status: "error", message: "New password must be at least 6 characters long." });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash }
+    });
+
+    res.status(200).json({
+      status: "success",
+      message: "Password updated successfully."
+    });
+  } catch (error: any) {
+    console.error("Change Password Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to update password." });
+  }
+};

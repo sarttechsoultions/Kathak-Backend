@@ -9,6 +9,9 @@ const helmet_1 = __importDefault(require("helmet"));
 require("./types/auth");
 const auth_routes_1 = __importDefault(require("./modules/auth/auth.routes"));
 const admin_routes_1 = __importDefault(require("./modules/admin/admin.routes"));
+const upload_routes_1 = __importDefault(require("./modules/upload/upload.routes"));
+const student_routes_1 = __importDefault(require("./modules/student/student.routes"));
+const liveclass_routes_1 = __importDefault(require("./modules/liveclass/liveclass.routes"));
 const env_1 = require("./config/env");
 const error_middleware_1 = require("./middleware/error.middleware");
 const rateLimit_middleware_1 = require("./middleware/rateLimit.middleware");
@@ -24,8 +27,8 @@ app.use((0, cors_1.default)({
     allowedHeaders: ["Content-Type", "Authorization"],
 }));
 app.use(rateLimit_middleware_1.generalRateLimiter);
-app.use(express_1.default.json({ limit: "10kb" }));
-app.use(express_1.default.urlencoded({ extended: true, limit: "10kb" }));
+app.use(express_1.default.json({ limit: "10mb" }));
+app.use(express_1.default.urlencoded({ extended: true, limit: "10mb" }));
 app.get("/api/v1/health", (_req, res) => {
     res.status(200).json({
         status: "success",
@@ -36,6 +39,9 @@ app.get("/api/v1/health", (_req, res) => {
 });
 app.use("/api/v1/auth", auth_routes_1.default);
 app.use("/api/v1/admin", admin_routes_1.default);
+app.use("/api/v1/upload", upload_routes_1.default);
+app.use("/api/v1/student", student_routes_1.default);
+app.use("/api/v1", liveclass_routes_1.default);
 app.use(error_middleware_1.notFoundHandler);
 app.use(error_middleware_1.errorHandler);
 app.listen(env_1.env.port, () => {

@@ -34,4 +34,8 @@ export const env = {
   jwtSecret: getJwtSecret(),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+  jitsiAppId: process.env.JITSI_APP_ID?.trim(),
+  jitsiDomain: process.env.JITSI_DOMAIN?.trim() || "8x8.vc",
+  jitsiKeyId: process.env.JITSI_KEY_ID?.trim(),
+  jitsiPrivateKey: process.env.JITSI_PRIVATE_KEY?.replace(/\\n/g, "\n"),
 } as const;

@@ -15,26 +15,74 @@ enum Role {
 
 enum Permission {
   VIEW_DASHBOARD
+  
   MANAGE_COURSES
+  VIEW_COURSES
+  CREATE_COURSE
+  EDIT_COURSE
+  DELETE_COURSE
+
   MANAGE_STUDENTS
+  VIEW_STUDENTS
+  CREATE_STUDENT
+  EDIT_STUDENT
+  DELETE_STUDENT
+
   MANAGE_TEACHERS
+  VIEW_TEACHERS
+  CREATE_TEACHER
+  EDIT_TEACHER
+  DELETE_TEACHER
+
   MANAGE_BATCHES
+  VIEW_BATCHES
+  CREATE_BATCH
+  EDIT_BATCH
+  DELETE_BATCH
+
   MANAGE_ASSIGNMENTS
+  VIEW_ASSIGNMENTS
+  CREATE_ASSIGNMENT
+  GRADE_ASSIGNMENT
+
   MANAGE_CLASSES
+  VIEW_CLASSES
+  START_LIVE_CLASS
+
   MANAGE_RECORDED_CLASSES
+  UPLOAD_RECORDED_CLASS
+
   MANAGE_VIDEO_REVIEWS
+  VIEW_VIDEO_REVIEWS
+  EVALUATE_VIDEO_REVIEW
+
   MANAGE_EXAMS
+  VIEW_EXAMS
+  CREATE_EXAM
+  GRADE_EXAMS
+
   VIEW_EXAM_RESULTS
+
   MANAGE_ATTENDANCE
+  VIEW_ATTENDANCE
+  MARK_ATTENDANCE
+
   MANAGE_EVENTS
+  VIEW_EVENTS
+
   MANAGE_COMMUNICATION
+  VIEW_COMMUNICATION
+  SEND_COMMUNICATION
+
   MANAGE_CONTENT_LIBRARY
   VIEW_PAYMENTS
   MANAGE_WEBSITE
   VIEW_ANALYTICS
   MANAGE_CERTIFICATES
+  ISSUE_CERTIFICATE
   MANAGE_SETTINGS
   MANAGE_SUPPORT
+  ANSWER_SUPPORT
   MANAGE_INQUIRIES
   MANAGE_GALLERY
   MANAGE_REVIEWS
@@ -83,6 +131,8 @@ model User {
   enrollments   Enrollment[]
   inquiries     Inquiry[]
   payments      Payment[]
+  attendances   Attendance[]
+  batchMemberships BatchStudent[]
 }
 
 model TeacherPermission {
@@ -148,6 +198,22 @@ model Batch {
   updatedAt     DateTime     @updatedAt
 
   course        Course?      @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  students      BatchStudent[]
+  attendances   Attendance[]
+  liveClasses   LiveClass[]
+}
+
+model BatchStudent {
+  id        String   @id @default(uuid())
+  batchId   String
+  studentId String
+  createdAt DateTime @default(now())
+
+  batch     Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, studentId])
+  @@index([studentId])
 }
 
 model Enrollment {
@@ -193,4 +259,54 @@ model Inquiry {
   createdAt    DateTime @default(now())
 
   user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  LEAVE
+}
+
+enum LiveClassStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+model LiveClass {
+  id             String          @id @default(uuid())
+  batchId        String
+  title          String
+  teacherName    String
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  roomName       String          @unique
+  status         LiveClassStatus @default(SCHEDULED)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  batch          Batch           @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, scheduledStart])
+}
+
+model Attendance {
+  id          String           @id @default(uuid())
+  studentId   String
+  studentName String
+  batchId     String?
+  batchName   String
+  session     String           @default("General")
+  date        DateTime         @default(now())
+  status      AttendanceStatus @default(PRESENT)
+  remarks     String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  student     User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  batch       Batch?           @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, date, session])
 }

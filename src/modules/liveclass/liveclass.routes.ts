@@ -1,0 +1,12 @@
+import { Router } from "express";
+import { Permission, Role } from "@prisma/client";
+import { authenticate, requirePermission, requireRole } from "../../middleware/auth.middleware";
+import { createLiveClass, getLiveClassToken, listAdminLiveClasses, listStudentLiveClasses, setLiveClassStatus } from "./liveclass.controller";
+const router = Router();
+router.use(authenticate);
+router.get("/admin/classes", requirePermission(Permission.MANAGE_CLASSES), listAdminLiveClasses);
+router.post("/admin/classes", requirePermission(Permission.MANAGE_CLASSES), createLiveClass);
+router.patch("/admin/classes/:id/status", requirePermission(Permission.START_LIVE_CLASS), setLiveClassStatus);
+router.get("/student/classes", requireRole(Role.STUDENT), listStudentLiveClasses);
+router.get("/classes/:id/join-token", requireRole(Role.ADMIN, Role.TEACHER, Role.STUDENT), getLiveClassToken);
+export default router;
