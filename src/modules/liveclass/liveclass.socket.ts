@@ -91,13 +91,20 @@ export function registerLiveClassSocket(io: Server) {
     socket.on("disconnect", () => {
       const roomName = socket.data.roomName;
       const userName = socket.data.userName;
-      if (roomName && userName && roomParticipants[roomName]) {
-        roomParticipants[roomName].delete(userName);
+      if (roomName && roomParticipants[roomName]) {
+        if (userName) {
+          roomParticipants[roomName].delete(userName);
+        }
+        for (const [key, p] of roomParticipants[roomName].entries()) {
+          if (p.id === socket.id) {
+            roomParticipants[roomName].delete(key);
+          }
+        }
         const currentList = Array.from(roomParticipants[roomName].values());
         io.to(roomName).emit("liveclass:room-users", currentList);
         io.to(roomName).emit("liveclass:user-left", {
           id: socket.id,
-          userName
+          userName: userName || "User"
         });
       }
     });

@@ -11,9 +11,20 @@ export const listAdminLiveClasses = async (_req: Request, res: Response) => {
 };
 
 export const listStudentLiveClasses = async (req: Request, res: Response) => {
+  const studentId = req.user!.id;
+  const studentBatches = await prisma.batchStudent.findMany({
+    where: { studentId },
+    select: { batchId: true }
+  });
+  const batchIds = studentBatches.map((b) => b.batchId);
+
   const classes = await prisma.liveClass.findMany({
-    where: { batch: { students: { some: { studentId: req.user!.id } } }, status: { in: ["SCHEDULED", "LIVE"] } },
-    include: { batch: { select: { name: true, code: true, courseName: true } } }, orderBy: { scheduledStart: "asc" }
+    where: {
+      ...(batchIds.length > 0 ? { batchId: { in: batchIds } } : {}),
+      status: { in: ["SCHEDULED", "LIVE"] }
+    },
+    include: { batch: { select: { name: true, code: true, courseName: true } } },
+    orderBy: { scheduledStart: "asc" }
   });
   res.json({ status: "success", data: { classes: classes.map(serialise) } });
 };
