@@ -133,6 +133,7 @@ model User {
   payments      Payment[]
   attendances   Attendance[]
   batchMemberships BatchStudent[]
+  assignmentSubmissions AssignmentSubmission[]
 }
 
 model TeacherPermission {
@@ -201,6 +202,7 @@ model Batch {
   students      BatchStudent[]
   attendances   Attendance[]
   liveClasses   LiveClass[]
+  assignments   Assignment[]
 }
 
 model BatchStudent {
@@ -309,4 +311,45 @@ model Attendance {
   batch       Batch?           @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
   @@index([batchId, date, session])
+}
+
+enum SubmissionStatus {
+  PENDING
+  SUBMITTED
+  GRADED
+  OVERDUE
+}
+
+model Assignment {
+  id          String   @id @default(uuid())
+  batchId     String?
+  batchName   String   @default("All Batches")
+  title       String
+  description String
+  typeTag     String   @default("Practical Assessment")
+  dueDate     DateTime
+  totalPoints Int      @default(100)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  batch       Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  submissions AssignmentSubmission[]
+}
+
+model AssignmentSubmission {
+  id           String           @id @default(uuid())
+  assignmentId String
+  studentId    String
+  studentName  String
+  fileUrl      String?
+  notes        String?
+  submittedAt  DateTime         @default(now())
+  status       SubmissionStatus @default(SUBMITTED)
+  grade        String?
+  feedback     String?
+
+  assignment   Assignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, studentId])
 }

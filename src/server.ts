@@ -1,6 +1,8 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
+import path from "path";
+import fs from "fs";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import "./types/auth";
@@ -37,19 +39,37 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
-// Dynamic CORS configuration allowing localhost + local Wi-Fi IP access across mobile & secondary laptops
-app.use(cors({
-  origin: (_origin, callback) => {
-    callback(null, true);
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-}));
+const allowedOrigins = [
+  env.frontendUrl,
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("CORS policy violation: Access denied."));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 app.use(generalRateLimiter);
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// Ensure uploads directory exists and is served statically
+const uploadsDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use("/uploads", express.static(uploadsDir));
 
 app.get("/api/v1/health", (_req: Request, res: Response) => {
   res.status(200).json({
@@ -90,14 +110,15 @@ const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: true,
+    origin: allowedOrigins,
     credentials: true,
   },
 });
 
 registerLiveClassSocket(io);
 
-httpServer.listen(env.port, "0.0.0.0", () => {
-  console.log(` Environment: ${env.nodeEnv}`);
-  console.log(` Server (HTTP + Socket.io) listening on port ${env.port} across all network interfaces`);
+const PORT = env.port || 5000;
+
+httpServer.listen(PORT, () => {
+  console.log(`🚀 Kathak Next Backend Server listening on http://localhost:${PORT}`);
 });

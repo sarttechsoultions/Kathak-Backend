@@ -1,16 +1,25 @@
 import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
-import jwt, { SignOptions } from "jsonwebtoken";
+import jwt from "jsonwebtoken";
+import { Role } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
 import { revokeToken } from "../../lib/tokenBlocklist";
+import {
+  setPortalAuthCookie,
+  clearPortalAuthCookies,
+  validatePortalAccess,
+  signUserToken,
+  roleDisplayName,
+  getTokenFromCookies,
+} from "../../lib/authHelpers";
 
 export const loginUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    const { email, password, rememberMe } = req.body;
 
     if (!email || !password || typeof email !== "string" || typeof password !== "string") {
-      res.status(400).json({ status: "error", message: "Email and password are required." });
+      res.status(400).json({ status: "error", message: "Email/Phone and password are required." });
       return;
     }
 
@@ -19,38 +28,45 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    const input = email.trim();
 
-    const user = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ email: input.toLowerCase() }, { phone: input }],
+      },
       include: { permissions: true },
     });
 
     if (!user || !user.isActive) {
-      res.status(401).json({ status: "error", message: "Invalid credentials." });
+      res.status(401).json({ status: "error", message: "Invalid email/phone or password." });
+      return;
+    }
+
+    // P0: Admin portal – only ADMIN / TEACHER allowed
+    const portalError = validatePortalAccess(user.role, "admin");
+    if (portalError) {
+      res.status(403).json({ status: "error", message: portalError });
       return;
     }
 
     const isMatch = await bcrypt.compare(password, user.passwordHash);
     if (!isMatch) {
-      res.status(401).json({ status: "error", message: "Invalid credentials." });
+      res.status(401).json({ status: "error", message: "Invalid email/phone or password." });
       return;
     }
 
     const permissionList = user.permissions.map((p) => p.permission);
 
-    const signOptions: SignOptions = { expiresIn: env.jwtExpiresIn as SignOptions["expiresIn"] };
+    const { token, expiresInMs } = signUserToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      permissions: permissionList,
+      rememberMe: Boolean(rememberMe),
+    });
 
-    const token = jwt.sign(
-      {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        permissions: permissionList,
-      },
-      env.jwtSecret,
-      signOptions
-    );
+    // HttpOnly cookie set
+    setPortalAuthCookie(res, "admin", token, expiresInMs);
 
     res.status(200).json({
       status: "success",
@@ -64,8 +80,9 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
           role: user.role,
           avatarUrl: user.avatarUrl,
           permissions: permissionList,
+          displayRole: roleDisplayName(user.role),
         },
-        token,
+        token, // transitional – frontend abhi use kar sakta hai
       },
     });
   } catch (error) {
@@ -76,14 +93,28 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
 
 export const logoutUser = async (req: Request, res: Response): Promise<void> => {
   try {
+    // Token nikaalo – Bearer header ya cookie se
+    let token: string | null = null;
+
     const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.slice(7).trim();
+    }
+
+    if (!token) {
+      token = getTokenFromCookies(req.headers.cookie);
+    }
 
     if (token) {
       const decoded = jwt.decode(token) as { exp?: number } | null;
-      const expiresAtMs = decoded?.exp ? decoded.exp * 1000 : Date.now() + 7 * 24 * 60 * 60 * 1000;
+      const expiresAtMs = decoded?.exp
+        ? decoded.exp * 1000
+        : Date.now() + 7 * 24 * 60 * 60 * 1000;
       revokeToken(token, expiresAtMs);
     }
+
+    // Dono portal cookies clear karo
+    clearPortalAuthCookies(res);
 
     res.status(200).json({
       status: "success",
@@ -138,27 +169,42 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
 export const changePassword = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.user?.id;
-    const { newPassword } = req.body;
+    const { currentPassword, newPassword } = req.body;
 
     if (!userId) {
       res.status(401).json({ status: "error", message: "Unauthorized." });
       return;
     }
 
-    if (!newPassword || typeof newPassword !== "string" || newPassword.length < 6) {
-      res.status(400).json({ status: "error", message: "New password must be at least 6 characters long." });
+    if (!currentPassword || !newPassword || typeof newPassword !== "string" || newPassword.length < 6) {
+      res.status(400).json({
+        status: "error",
+        message: "Current password and a new password (min 6 characters) are required.",
+      });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      res.status(404).json({ status: "error", message: "User not found." });
+      return;
+    }
+
+    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!matches) {
+      res.status(400).json({ status: "error", message: "Current password is incorrect." });
       return;
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await prisma.user.update({
       where: { id: userId },
-      data: { passwordHash }
+      data: { passwordHash },
     });
 
     res.status(200).json({
       status: "success",
-      message: "Password updated successfully."
+      message: "Password updated successfully.",
     });
   } catch (error: any) {
     console.error("Change Password Error:", error);

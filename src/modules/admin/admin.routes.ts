@@ -27,9 +27,18 @@ import {
   createBatch,
   updateBatch,
   deleteBatch,
+  getAssignments,
+  createAssignment,
+  getAssignmentSubmissions,
+  gradeAssignmentSubmission,
+  getExams,
+  createExam,
+  getExamResults,
+  evaluateExamResult,
   getAttendanceRecords,
   saveAttendance,
   getPayments,
+  recordFeePayment,
   refundPayment,
   getInquiries,
   updateInquiryStatus,
@@ -80,6 +89,18 @@ router.put("/batches/:id", requirePermission(Permission.MANAGE_BATCHES), updateB
 router.delete("/batches/:id", requirePermission(Permission.MANAGE_BATCHES), deleteBatch);
 router.get("/batches/:batchId/students", requirePermission(Permission.MANAGE_BATCHES), getBatchStudents);
 
+// 5.5 Assignment Management
+router.get("/assignments", requirePermission(Permission.MANAGE_COURSES), getAssignments);
+router.post("/assignments", requirePermission(Permission.MANAGE_COURSES), createAssignment);
+router.get("/assignments/submissions", requirePermission(Permission.MANAGE_COURSES), getAssignmentSubmissions);
+router.post("/assignments/submissions/:id/grade", requirePermission(Permission.MANAGE_COURSES), gradeAssignmentSubmission);
+
+// 5.8 Exam Management
+router.get("/exams", requirePermission(Permission.VIEW_EXAMS), getExams);
+router.post("/exams", requirePermission(Permission.CREATE_EXAM), createExam);
+router.get("/exams/results", requirePermission(Permission.VIEW_EXAM_RESULTS), getExamResults);
+router.post("/exams/results/:id/evaluate", requirePermission(Permission.GRADE_EXAMS), evaluateExamResult);
+
 // 6. Attendance Management
 router.get("/attendance", requirePermission(Permission.MANAGE_ATTENDANCE), getAttendanceRecords);
 router.post("/attendance", requirePermission(Permission.MANAGE_ATTENDANCE), saveAttendance);
@@ -87,6 +108,7 @@ router.post("/attendance", requirePermission(Permission.MANAGE_ATTENDANCE), save
 // 7. Payments & Finance
 router.get("/payments", requirePermission(Permission.VIEW_PAYMENTS), getPayments);
 router.get("/finance", requirePermission(Permission.VIEW_PAYMENTS), getPayments);
+router.post("/payments", requirePermission(Permission.VIEW_PAYMENTS), recordFeePayment);
 router.post("/payments/:id/refund", requirePermission(Permission.VIEW_PAYMENTS), refundPayment);
 
 // 8. Inquiries

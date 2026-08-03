@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { Role, Permission, PaymentStatus, CourseCategory } from "@prisma/client";
+import { Role, Permission, PaymentStatus, CourseCategory, AttendanceStatus } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma";
 
@@ -814,6 +814,7 @@ export const getBatches = async (req: Request, res: Response): Promise<void> => 
       id: b.id,
       name: b.name,
       code: b.code,
+      courseId: b.courseId || b.course?.id,
       course: b.courseName || b.course?.title || "Kathak Foundations",
       courseName: b.courseName || b.course?.title || "Kathak Foundations",
       teacher: b.teacherName || "Guru Meenakshi",
@@ -900,49 +901,318 @@ export const deleteBatch = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-// ================= 6. ATTENDANCE MANAGEMENT =================
+// ================= 5.5 ASSIGNMENT MANAGEMENT =================
 
-export const getAttendanceRecords = async (req: Request, res: Response): Promise<void> => {
+export const getAssignments = async (req: Request, res: Response): Promise<void> => {
   try {
-    const records = await prisma.attendance.findMany({
-      include: { student: { select: { id: true, fullName: true, email: true } }, batch: true },
-      orderBy: { date: "desc" }
+    const assignments = await (prisma as any).assignment.findMany({
+      include: {
+        batch: true,
+        submissions: true,
+      },
+      orderBy: { createdAt: "desc" },
     });
+
+    const mapped = assignments.map((a: any) => ({
+      id: a.id,
+      teacherName: "Admin User",
+      teacherDept: "Faculty Lead",
+      teacherAvatar: "/Ananya.png",
+      title: a.title,
+      typeTag: a.typeTag || "Practical Assessment",
+      targetBatch: a.batchName || a.batch?.name || "Kathak Basics",
+      dueDate: new Date(a.dueDate).toLocaleDateString("en-US", {
+        month: "short",
+        day: "2-digit",
+        year: "numeric",
+      }),
+      totalStudents: `${a.submissions?.length || 0} Submissions`,
+    }));
+
+    // ---- Real metrics ----
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    let pendingReviews = 0;
+    let submissionsThisWeek = 0;
+    let totalSubmittedOrGraded = 0;
+    let totalExpected = 0;
+
+    for (const a of assignments as any[]) {
+      const subs: any[] = a.submissions || [];
+
+      pendingReviews += subs.filter((s) => s.status === "SUBMITTED").length;
+
+      submissionsThisWeek += subs.filter((s) => {
+        const t = new Date(s.submittedAt || s.createdAt || 0).getTime();
+        return t >= weekAgo;
+      }).length;
+
+      totalSubmittedOrGraded += subs.filter(
+        (s) => s.status === "SUBMITTED" || s.status === "GRADED"
+      ).length;
+
+      const batchSize = a.batch?.totalStudents ?? 0;
+      totalExpected += batchSize > 0 ? batchSize : Math.max(subs.length, 1);
+    }
+
+    const avgCompletionRate =
+      totalExpected > 0
+        ? `${Math.round((totalSubmittedOrGraded / totalExpected) * 1000) / 10}%`
+        : "0%";
 
     res.json({
       status: "success",
       data: {
-        attendanceRecords: records,
-        records
+        assignments: mapped,
+        records: mapped,
+        metrics: {
+          totalActive: assignments.length,
+          pendingReviews,
+          submissionsThisWeek,
+          avgCompletionRate,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Get Assignments Error:", error);
+    res.status(500).json({
+      status: "error",
+      message: "Failed to fetch assignments.",
+    });
+  }
+};
+
+export const createAssignment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { title, description, batchId, targetBatch, dueDate, typeTag, totalPoints } = req.body;
+    if (!title || !title.trim()) {
+      res.status(400).json({ status: "error", message: "Assignment title is required." });
+      return;
+    }
+
+    const assignment = await (prisma as any).assignment.create({
+      data: {
+        title: title.trim(),
+        description: description || "Complete Tatkar practice video.",
+        typeTag: typeTag || "Practical Assessment",
+        batchId: batchId || undefined,
+        batchName: targetBatch || "All Batches",
+        dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        totalPoints: totalPoints ? Number(totalPoints) : 100
+      }
+    });
+
+    res.status(201).json({ status: "success", message: "Assignment created successfully.", data: assignment });
+  } catch (error) {
+    console.error("Create Assignment Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to create assignment." });
+  }
+};
+
+export const getAssignmentSubmissions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const submissions = await (prisma as any).assignmentSubmission.findMany({
+      include: {
+        assignment: true,
+        student: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
+      },
+      orderBy: { submittedAt: "desc" }
+    });
+
+    const mapped = submissions.map((s: any) => ({
+      id: s.id,
+      assignmentId: s.assignment?.id,
+      studentName: s.studentName || s.student?.fullName || "Student",
+      studentId: `#STU-${s.studentId.substring(0, 4).toUpperCase()}`,
+      studentAvatar: s.student?.avatarUrl || "/Ananya.png",
+      assignmentTitle: s.assignment?.title || "Practical Exercise",
+      batch: s.assignment?.batchName || "Kathak Basics",
+      submittedDate: new Date(s.submittedAt).toLocaleString("en-US", { month: "short", day: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+      status: s.status === "GRADED" ? "Submitted" : s.status === "OVERDUE" ? "Overdue" : "Submitted",
+      grade: s.grade,
+      feedback: s.feedback,
+      notes: s.notes,
+      fileUrl: s.fileUrl
+    }));
+
+    res.json({
+      status: "success",
+      data: {
+        submissions: mapped,
+        records: mapped
       }
     });
   } catch (error) {
-    console.error(error);
+    console.error("Get Assignment Submissions Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch assignment submissions." });
+  }
+};
+
+export const gradeAssignmentSubmission = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { grade, feedback } = req.body;
+
+    const updated = await (prisma as any).assignmentSubmission.update({
+      where: { id },
+      data: {
+        grade: String(grade),
+        feedback,
+        status: "GRADED"
+      }
+    });
+
+    res.json({ status: "success", message: "Submission graded successfully.", data: updated });
+  } catch (error) {
+    console.error("Grade Submission Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to grade submission." });
+  }
+};
+
+// ================= 6. ATTENDANCE MANAGEMENT =================
+
+export const getAttendanceRecords = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const batchId = req.query.batchId as string;
+    const dateStr = req.query.date as string;
+    const sessionStr = (req.query.session as string) || "Morning Session";
+
+    const targetDate = dateStr ? new Date(dateStr) : new Date();
+    const dayStart = new Date(targetDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(targetDate);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const allBatches = await prisma.batch.findMany({
+      orderBy: { name: "asc" }
+    });
+
+    let records: any[] = [];
+
+    if (batchId) {
+      const batchStudents = await prisma.batchStudent.findMany({
+        where: { batchId },
+        include: {
+          student: true,
+          batch: { include: { course: true } }
+        }
+      });
+
+      const existingAttendances = await prisma.attendance.findMany({
+        where: {
+          batchId,
+          date: { gte: dayStart, lte: dayEnd }
+        }
+      });
+
+      records = batchStudents.map((bs) => {
+        const att = existingAttendances.find((a) => a.studentId === bs.studentId);
+        let status = "U"; // Default Unmarked
+
+        if (att) {
+          if (att.status === "PRESENT") status = "P";
+          else if (att.status === "ABSENT") status = "A";
+          else if (att.status === "LATE") status = "L";
+          else if (att.status === "LEAVE") status = "LV";
+        }
+
+        return {
+          id: att ? att.id : `temp-${bs.studentId}`,
+          studentId: `STU-${bs.student.id.substring(0, 4).toUpperCase()}`,
+          rawStudentId: bs.student.id,
+          name: bs.student.fullName,
+          email: bs.student.email,
+          avatar: bs.student.avatarUrl || "/Ananya.png",
+          batchCode: bs.batch.code,
+          courseName: bs.batch.courseName || bs.batch.course?.title || "Kathak Basics",
+          status
+        };
+      });
+    }
+
+    const batchAnalytics = await Promise.all(
+      allBatches.map(async (b) => {
+        const total = await prisma.batchStudent.count({ where: { batchId: b.id } });
+        const presentCount = await prisma.attendance.count({
+          where: { batchId: b.id, status: { in: ["PRESENT", "LATE"] } }
+        });
+        const rate = total > 0 ? Math.round((presentCount / total) * 100) : 85;
+        return { id: b.id, name: b.name, rate };
+      })
+    );
+
+    res.json({
+      status: "success",
+      data: {
+        records,
+        attendanceRecords: records,
+        batchAnalytics
+      }
+    });
+  } catch (error) {
+    console.error("Get Attendance Records Error:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch attendance records." });
   }
 };
 
 export const saveAttendance = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { studentId, studentName, batchId, batchName, date, status, session, remarks } = req.body;
+    const { batchId, date, session, records } = req.body;
 
-    const record = await prisma.attendance.create({
-      data: {
-        studentId,
-        studentName: studentName || "Student",
-        batchId: batchId || undefined,
-        batchName: batchName || "General Batch",
-        date: date ? new Date(date) : new Date(),
-        status: status || "PRESENT",
-        session: session || "General",
-        remarks: remarks || undefined
+    if (!batchId || !Array.isArray(records)) {
+      res.status(400).json({ status: "error", message: "Batch and attendance records array are required." });
+      return;
+    }
+
+    const batch = await prisma.batch.findUnique({ where: { id: batchId } });
+    const targetDate = date ? new Date(date) : new Date();
+    const dayStart = new Date(targetDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(targetDate);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    for (const r of records) {
+      const studentId = r.rawStudentId || r.studentId;
+      if (!studentId || r.status === "U") continue;
+
+      let dbStatus: AttendanceStatus = AttendanceStatus.PRESENT;
+      if (r.status === "A") dbStatus = AttendanceStatus.ABSENT;
+      else if (r.status === "L") dbStatus = AttendanceStatus.LATE;
+      else if (r.status === "LV") dbStatus = AttendanceStatus.LEAVE;
+
+      const existing = await prisma.attendance.findFirst({
+        where: {
+          studentId,
+          batchId,
+          date: { gte: dayStart, lte: dayEnd }
+        }
+      });
+
+      if (existing) {
+        await prisma.attendance.update({
+          where: { id: existing.id },
+          data: { status: dbStatus, session: session || "Morning Session" }
+        });
+      } else {
+        await prisma.attendance.create({
+          data: {
+            studentId,
+            studentName: r.name || "Student",
+            batchId,
+            batchName: batch?.name || "General Batch",
+            session: session || "Morning Session",
+            date: targetDate,
+            status: dbStatus,
+            remarks: "Manually marked by admin"
+          }
+        });
       }
-    });
+    }
 
-    res.status(201).json({ status: "success", message: "Attendance saved successfully.", data: record });
+    res.status(200).json({ status: "success", message: "Attendance saved successfully." });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ status: "error", message: "Failed to save attendance record." });
+    console.error("Save Attendance Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to save attendance records." });
   }
 };
 
@@ -958,21 +1228,114 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
       orderBy: { createdAt: "desc" }
     });
 
-    const revenueResult = await prisma.payment.aggregate({
-      where: { status: PaymentStatus.SUCCESS },
-      _sum: { amount: true }
+    const students = await prisma.user.findMany({
+      where: { role: Role.STUDENT },
+      include: {
+        enrollments: { include: { course: true } },
+        payments: { where: { status: PaymentStatus.SUCCESS } },
+        batchMemberships: { include: { batch: true } }
+      }
     });
+
+    let totalFeeAmount = 0;
+    let amountReceived = 0;
+    let paidStudentsCount = 0;
+    let pendingStudentsCount = 0;
+
+    const studentFinanceRecords = students.map((s) => {
+      const course = s.enrollments[0]?.course;
+      const courseName = course?.title || "Kathak Dance Basic";
+      const totalFee = course ? (course.groupFeeINR || 12000) : 12000;
+      const paid = s.payments.reduce((acc, p) => acc + p.amount, 0);
+      const pending = Math.max(0, totalFee - paid);
+
+      totalFeeAmount += totalFee;
+      amountReceived += paid;
+
+      if (pending === 0 && totalFee > 0) {
+        paidStudentsCount++;
+      } else {
+        pendingStudentsCount++;
+      }
+
+      const batchName = s.batchMemberships[0]?.batch?.name || s.batchMemberships[0]?.batch?.code || "General Batch";
+
+      return {
+        id: s.id,
+        studentIdCode: `STU-${s.id.substring(0, 4).toUpperCase()}`,
+        studentName: s.fullName,
+        studentAvatar: s.avatarUrl || "/Ananya.png",
+        course: courseName,
+        batch: batchName,
+        totalFees: `₹${totalFee.toLocaleString("en-IN")}`,
+        paidAmount: `₹${paid.toLocaleString("en-IN")}`,
+        pendingAmount: `₹${pending.toLocaleString("en-IN")}`,
+        rawTotal: totalFee,
+        rawPaid: paid,
+        rawPending: pending
+      };
+    });
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todaysPayments = payments.filter((p) => new Date(p.createdAt) >= todayStart);
 
     res.json({
       status: "success",
       data: {
-        totalRevenue: revenueResult._sum.amount || 0,
-        payments
+        totalRevenue: amountReceived,
+        payments,
+        financeList: studentFinanceRecords,
+        records: studentFinanceRecords,
+        metrics: {
+          totalStudents: students.length || studentFinanceRecords.length,
+          paidStudents: paidStudentsCount,
+          pendingStudents: pendingStudentsCount,
+          totalFeeAmount,
+          amountReceived,
+          pendingAmount: Math.max(0, totalFeeAmount - amountReceived),
+          overdueCount: studentFinanceRecords.filter((r) => r.rawPending > 5000).length,
+          overdueAmount: studentFinanceRecords.reduce((acc, r) => acc + (r.rawPending > 5000 ? r.rawPending : 0), 0),
+          partialCount: studentFinanceRecords.filter((r) => r.rawPaid > 0 && r.rawPending > 0).length,
+          partialAmount: studentFinanceRecords.reduce((acc, r) => acc + (r.rawPaid > 0 ? r.rawPending : 0), 0)
+        },
+        todaysPayments
       }
     });
   } catch (error) {
-    console.error(error);
+    console.error("Get Payments Error:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch payments." });
+  }
+};
+
+export const recordFeePayment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { studentId, amount, gateway, transactionId } = req.body;
+    if (!studentId || !amount || Number(amount) <= 0) {
+      res.status(400).json({ status: "error", message: "Student and valid payment amount are required." });
+      return;
+    }
+
+    const txId = transactionId || `TXN-${Date.now().toString(36).toUpperCase()}`;
+    const orderId = `ORD-${Date.now().toString(36).toUpperCase()}`;
+
+    const payment = await prisma.payment.create({
+      data: {
+        userId: studentId,
+        amount: Number(amount),
+        currency: "INR",
+        gateway: gateway || "MANUAL_CASH",
+        transactionId: txId,
+        orderId,
+        status: PaymentStatus.SUCCESS
+      }
+    });
+
+    res.status(201).json({ status: "success", message: "Fee payment recorded successfully.", data: payment });
+  } catch (error) {
+    console.error("Record Payment Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to record payment." });
   }
 };
 
@@ -1112,3 +1475,160 @@ export const changeAdminPassword = async (req: Request, res: Response): Promise<
     res.status(500).json({ status: "error", message: "Failed to change password." });
   }
 };
+
+// ================= EXAM MANAGEMENT =================
+
+export const getExams = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const exams = await (prisma as any).assignment.findMany({
+      where: {
+        OR: [
+          { typeTag: { startsWith: "EXAM" } },
+          { typeTag: { startsWith: "Exam" } },
+          { typeTag: "Practical Assessment" }
+        ]
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    const mapped = exams.map((ex: any) => {
+      let extraData: any = {};
+      if (ex.description && ex.description.startsWith("{")) {
+        try {
+          extraData = JSON.parse(ex.description);
+        } catch {
+          // ignore
+        }
+      }
+
+      const formattedDate = new Date(ex.dueDate).toLocaleDateString("en-US", {
+        month: "short",
+        day: "2-digit",
+        year: "numeric"
+      });
+
+      return {
+        id: ex.id,
+        examCode: extraData.examCode || `EX-${ex.id.substring(0, 6).toUpperCase()}`,
+        title: ex.title,
+        batchCourse: ex.batchName || "All Batches",
+        dateTime: extraData.dateTime || `${formattedDate} • 10:00 AM`,
+        duration: extraData.durationMins ? `${extraData.durationMins} Mins` : "120 Mins",
+        status: extraData.status || "SCHEDULED",
+        passingMark: extraData.passingMark || 60,
+        questions: extraData.questions || []
+      };
+    });
+
+    res.json({ status: "success", data: { exams: mapped } });
+  } catch (error) {
+    console.error("Get Exams Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch exams." });
+  }
+};
+
+export const createExam = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { title, examCode, batchCourse, examDate, startTime, durationMins, passingMark, autoGrading, randomizeQuestions, questions, status } = req.body;
+
+    if (!title || !title.trim()) {
+      res.status(400).json({ status: "error", message: "Exam title is required." });
+      return;
+    }
+
+    const payload = JSON.stringify({
+      examCode: examCode || `EX-2024-${Math.floor(100 + Math.random() * 900)}`,
+      durationMins: durationMins || "120",
+      passingMark: passingMark || 60,
+      autoGrading: autoGrading ?? true,
+      randomizeQuestions: randomizeQuestions ?? true,
+      questions: questions || [],
+      dateTime: `${examDate || "Upcoming"} • ${startTime || "10:00 AM"}`,
+      status: status || "SCHEDULED"
+    });
+
+    const created = await (prisma as any).assignment.create({
+      data: {
+        title: title.trim(),
+        description: payload,
+        typeTag: "EXAM",
+        batchName: batchCourse || "All Batches",
+        dueDate: examDate ? new Date(examDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        totalPoints: 100
+      }
+    });
+
+    res.status(201).json({ status: "success", message: "Exam created successfully.", data: created });
+  } catch (error) {
+    console.error("Create Exam Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to create exam." });
+  }
+};
+
+export const getExamResults = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const submissions = await (prisma as any).assignmentSubmission.findMany({
+      include: {
+        assignment: true,
+        student: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
+      },
+      orderBy: { submittedAt: "desc" }
+    });
+
+    const mapped = submissions.map((s: any) => {
+      let scoreStr = s.grade ? `${s.grade}/100` : "--";
+      let statusStr = "Passed";
+      const numericGrade = parseInt(s.grade || "0", 10);
+      if (!s.grade || s.grade === "0") {
+        statusStr = s.notes === "Absent" ? "Absent" : "Failed";
+      } else if (numericGrade < 40) {
+        statusStr = "Failed";
+      } else {
+        statusStr = "Passed";
+      }
+
+      return {
+        id: s.id,
+        examId: s.assignment?.id,
+        studentName: s.studentName || s.student?.fullName || "Student",
+        studentEmail: s.student?.email || "student@institution.edu",
+        studentAvatar: s.student?.avatarUrl || "/Ananya.png",
+        studentIdCode: `#STU-${s.studentId.substring(0, 4).toUpperCase()}`,
+        batchName: s.assignment?.batchName || "Kathak Batch",
+        examTitle: s.assignment?.title || "Kathak Exam",
+        score: scoreStr,
+        status: statusStr,
+        feedback: s.feedback,
+        notes: s.notes,
+        fileUrl: s.fileUrl,
+        submittedAt: new Date(s.submittedAt).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })
+      };
+    });
+
+    res.json({ status: "success", data: { results: mapped } });
+  } catch (error) {
+    console.error("Get Exam Results Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch exam results." });
+  }
+};
+
+export const evaluateExamResult = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { grade, feedback, status } = req.body;
+
+    const updated = await (prisma as any).assignmentSubmission.update({
+      where: { id },
+      data: {
+        grade: String(grade),
+        feedback,
+        status: status || "GRADED"
+      }
+    });
+
+    res.json({ status: "success", message: "Exam evaluation saved successfully.", data: updated });
+  } catch (error) {
+    console.error("Evaluate Exam Result Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to save exam evaluation." });
+  }
+};  

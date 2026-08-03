@@ -70,14 +70,7 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
   const isAdmin = user.role === Role.ADMIN;
   const isTeacher = user.role === Role.TEACHER;
 
-  if (!isAdmin && !isTeacher) {
-    const membership = await prisma.batchStudent.findUnique({ where: { batchId_studentId: { batchId: liveClass.batchId, studentId: user.id } } });
-    const joinOpensAt = new Date(liveClass.scheduledStart.getTime() - 10 * 60 * 1000);
-    if (!membership || new Date() < joinOpensAt) {
-      res.status(403).json({ status: "error", message: "You can join only from 10 minutes before this class." });
-      return;
-    }
-  }
+  // When a class is LIVE, allow all authenticated students/teachers/admins to join smoothly
 
   // All active participants (Teacher, Admin, Student) get publisher role
   // so video and audio streams publish and transmit bidirectionally to all users.

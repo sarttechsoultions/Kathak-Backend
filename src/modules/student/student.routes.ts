@@ -1,24 +1,40 @@
 import { Router } from "express";
-import { authenticate } from "../../middleware/auth.middleware";
+import { Role } from "@prisma/client";
+import { authenticate, requireRole } from "../../middleware/auth.middleware";
+import { logoutUser } from "../auth/auth.controller";
 import {
   enrollStudent,
   getStudentProfile,
   updateStudentProfile,
   changeStudentPassword,
-  studentLogin
+  studentLogin,
+  getStudentFinance,
+  getStudentAssignments,
+  submitStudentAssignment,
+  getStudentExams,
+  getStudentExamById,
+  submitStudentExam,
 } from "./student.controller";
 
 const router = Router();
+
 router.post("/login", studentLogin);
 router.post("/enroll", enrollStudent);
 
-router.get(
-  "/profile",
-  authenticate,
-  getStudentProfile,
-  updateStudentProfile,
-  changeStudentPassword,
-  
-);
+// Protected student routes
+const studentOnly = [authenticate, requireRole(Role.STUDENT)];
+
+router.post("/logout", ...studentOnly, logoutUser);
+
+router.get("/profile", ...studentOnly, getStudentProfile);
+router.put("/profile", ...studentOnly, updateStudentProfile);
+router.post("/profile/change-password", ...studentOnly, changeStudentPassword);
+router.get("/finance", ...studentOnly, getStudentFinance);
+router.get("/assignments", ...studentOnly, getStudentAssignments);
+router.post("/assignments/submit", ...studentOnly, submitStudentAssignment);
+
+router.get("/exams", ...studentOnly, getStudentExams);
+router.get("/exams/:id", ...studentOnly, getStudentExamById);
+router.post("/exams/submit", ...studentOnly, submitStudentExam);
 
 export default router;

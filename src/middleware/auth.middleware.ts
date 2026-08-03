@@ -4,6 +4,7 @@ import { Permission, Role } from "@prisma/client";
 import { env } from "../config/env";
 import { isTokenRevoked } from "../lib/tokenBlocklist";
 import { AuthUser } from "../types/auth";
+import { getTokenFromCookies } from "../lib/authHelpers";
 
 interface JwtPayload {
   id: string;
@@ -14,32 +15,23 @@ interface JwtPayload {
   exp?: number;
 }
 
-function extractBearerToken(req: Request): string | null {
+function extractToken(req: Request): string | null {
+  // 1. Authorization: Bearer <token>
   const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
-    return null;
+  if (header?.startsWith("Bearer ")) {
+    const token = header.slice(7).trim();
+    if (token.length > 0) return token;
   }
 
-  const token = header.slice(7).trim();
-  return token.length > 0 ? token : null;
+  // 2. HttpOnly portal cookies
+  return getTokenFromCookies(req.headers.cookie);
 }
 
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
-  const token = extractBearerToken(req);
+  const token = extractToken(req);
 
   if (!token) {
-    // In development mode, provide fallback Admin session
-    if (env.nodeEnv === "development") {
-      req.user = {
-        id: "admin-dev-01",
-        email: "admin@kathakbyharshita.com",
-        role: Role.ADMIN,
-        permissions: Object.values(Permission)
-      } satisfies AuthUser;
-      return next();
-    }
-
-    res.status(401).json({ status: "error", message: "Authentication required." });
+    res.status(401).json({ status: "error", message: "Authentication required. Please log in." });
     return;
   }
 
@@ -60,18 +52,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
 
     next();
   } catch {
-    // Development Mode Fallback: Allow dev token / admin session to succeed smoothly
-    if (env.nodeEnv === "development") {
-      req.user = {
-        id: "admin-dev-01",
-        email: "admin@kathakbyharshita.com",
-        role: Role.ADMIN,
-        permissions: Object.values(Permission)
-      } satisfies AuthUser;
-      return next();
-    }
-
-    res.status(401).json({ status: "error", message: "Invalid or expired token." });
+    res.status(401).json({ status: "error", message: "Invalid or expired authorization token." });
   }
 }
 
