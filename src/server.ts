@@ -37,8 +37,11 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
+// Dynamic CORS configuration allowing localhost + local Wi-Fi IP access across mobile & secondary laptops
 app.use(cors({
-  origin: env.frontendUrl,
+  origin: (_origin, callback) => {
+    callback(null, true);
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -87,14 +90,14 @@ const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: env.frontendUrl,
+    origin: true,
     credentials: true,
   },
 });
 
 registerLiveClassSocket(io);
 
-httpServer.listen(env.port, () => {
+httpServer.listen(env.port, "0.0.0.0", () => {
   console.log(` Environment: ${env.nodeEnv}`);
-  console.log(` Server (HTTP + Socket.io) listening on port ${env.port}`);
+  console.log(` Server (HTTP + Socket.io) listening on port ${env.port} across all network interfaces`);
 });
