@@ -1,15 +1,48 @@
 import { Request, Response } from "express";
-import { Role, Permission } from "@prisma/client";
+import { Role, Permission, PaymentStatus, CourseCategory } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma";
 
-// Get Admin Dashboard Overview Statistics
+const mapCategoryToEnum = (cat?: string): CourseCategory => {
+  if (!cat) return CourseCategory.BASIC;
+  const upper = cat.toUpperCase();
+  if (upper.includes("INTERMEDIATE") || upper.includes("YOGA")) return CourseCategory.INTERMEDIATE;
+  if (upper.includes("PREMIUM") || upper.includes("ADVANCED") || upper.includes("MUSIC")) return CourseCategory.PREMIUM;
+  return CourseCategory.BASIC;
+};
+
+// ================= 1. DASHBOARD OVERVIEW =================
+
 export const getDashboardStats = async (req: Request, res: Response): Promise<void> => {
   try {
     const totalStudents = await prisma.user.count({ where: { role: Role.STUDENT } });
     const totalTeachers = await prisma.user.count({ where: { role: Role.TEACHER } });
     const activeCourses = await prisma.course.count({ where: { published: true } });
-    const totalInquiries = await prisma.inquiry.count();
+    const totalBatches = await prisma.batch.count();
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const liveClassesToday = await prisma.liveClass.count({
+      where: {
+        scheduledStart: {
+          gte: startOfDay,
+          lte: endOfDay
+        }
+      }
+    });
+
+    const revenueResult = await prisma.payment.aggregate({
+      where: { status: PaymentStatus.SUCCESS },
+      _sum: { amount: true }
+    });
+    const revenueVal = revenueResult._sum.amount || 0;
+
+    const totalAttendanceCount = await prisma.attendance.count();
+    const presentAttendanceCount = await prisma.attendance.count({ where: { status: "PRESENT" } });
+    const attendanceRateNum = totalAttendanceCount > 0 ? Math.round((presentAttendanceCount / totalAttendanceCount) * 100) : 95;
 
     const recentInquiries = await prisma.inquiry.findMany({
       take: 5,
@@ -29,19 +62,30 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
       }
     });
 
+    const recentPayments = await prisma.payment.findMany({
+      take: 5,
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: { select: { fullName: true, email: true } },
+        enrollment: { include: { course: { select: { title: true } } } }
+      }
+    });
+
     res.status(200).json({
       status: "success",
       data: {
         overview: {
-          totalStudents: totalStudents,
-          totalTeachers: totalTeachers,
-          activeCourses: activeCourses,
-          liveClassesToday: 0,
-          totalRevenue: "₹0",
-          attendanceRate: "0%"
+          totalStudents,
+          totalTeachers,
+          activeCourses,
+          totalBatches,
+          liveClassesToday,
+          totalRevenue: `₹${revenueVal.toLocaleString("en-IN")}`,
+          attendanceRate: `${attendanceRateNum}%`
         },
         recentStudents,
-        recentInquiries
+        recentInquiries,
+        recentPayments
       }
     });
   } catch (error: any) {
@@ -50,764 +94,1021 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
   }
 };
 
-// Get Student Management List & Metrics
+// ================= 2. STUDENT MANAGEMENT =================
+
 export const getStudents = async (req: Request, res: Response): Promise<void> => {
   try {
-    const totalStudents = await prisma.user.count({ where: { role: Role.STUDENT } });
-
-    const dbStudents = await prisma.user.findMany({
+    const students = await prisma.user.findMany({
       where: { role: Role.STUDENT },
+      include: {
+        batchMemberships: { include: { batch: true } },
+        enrollments: { include: { course: true } },
+        payments: { orderBy: { createdAt: "desc" } }
+      },
       orderBy: { createdAt: "desc" }
     });
 
-    res.status(200).json({
+    const mapped = students.map((student) => ({
+      id: student.id,
+      displayId: `STU-${student.id.slice(-4).toUpperCase()}`,
+      name: student.fullName,
+      fullName: student.fullName,
+      email: student.email,
+      phone: student.phone,
+      avatarUrl: student.avatarUrl,
+      avatar: student.avatarUrl || "/Ananya.png",
+      country: student.country,
+      course: student.enrollments[0]?.course?.title || "Kathak Beginner",
+      batch: student.batchMemberships[0]?.batch?.name || "Beginners Morning Zen",
+      time: "Mon, Wed (06:00 PM)",
+      joiningDate: student.createdAt.toISOString().split("T")[0],
+      status: student.isActive ? "Active" : "Inactive",
+      isActive: student.isActive,
+      role: student.role,
+      createdAt: student.createdAt,
+      batches: student.batchMemberships.map((m) => ({
+        id: m.batch.id,
+        name: m.batch.name,
+        code: m.batch.code
+      })),
+      courses: student.enrollments.map((e) => ({
+        id: e.course.id,
+        title: e.course.title,
+        active: e.active
+      })),
+      payments: student.payments
+    }));
+
+    res.json({
       status: "success",
       data: {
+        students: mapped,
         metrics: {
-          totalStudents: totalStudents,
-          activeNow: dbStudents.filter((s) => s.isActive).length,
-          newJoined: dbStudents.filter((s) => {
-            const diffDays = (Date.now() - new Date(s.createdAt).getTime()) / (1000 * 3600 * 24);
-            return diffDays <= 30;
-          }).length,
-          blockedStudents: dbStudents.filter((s) => !s.isActive).length
-        },
-        students: dbStudents.map((s) => ({
-          id: s.id,
-          displayId: `STU-${s.id.substring(0, 4).toUpperCase()}`,
-          name: s.fullName,
-          email: s.email,
-          phone: s.phone || "+91 98765 43210",
-          avatar: s.avatarUrl || "/Ananya.png",
-          course: "Kathak Beginners Course",
-          batch: "Morning Zen (7:00 AM)",
-          time: "07:00 AM",
-          joiningDate: s.createdAt.toISOString().split("T")[0],
-          status: s.isActive ? "Active" : "Inactive",
-          dob: "12th May 2002",
-          gender: "Female",
-          address: "Sector 15, Navi Mumbai - 400703",
-          level: "Beginner Level",
-          guru: "Guru Harshita",
-          emergencyContact: s.phone || "+91 98765 43210",
-          attendanceRate: "92",
-          assignmentsScore: "14 / 16",
-          totalFee: "₹2,200",
-          pendingFee: "₹0"
-        }))
+          totalStudents: students.length,
+          activeNow: students.filter((s) => s.isActive).length,
+          newJoined: students.filter((s) => new Date(s.createdAt).getTime() > Date.now() - 30 * 24 * 60 * 60 * 1000).length,
+          blockedStudents: students.filter((s) => !s.isActive).length
+        }
       }
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Get Students Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to fetch student management data." });
+    res.status(500).json({ status: "error", message: "Failed to fetch students." });
   }
 };
 
-// Admin: Create Student Account in Database
-export const createStudent = async (req: Request, res: Response): Promise<void> => {
+export const getStudentById = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { fullName, email, phone, password } = req.body;
-
-    if (!fullName || !email || !phone) {
-      res.status(400).json({ status: "error", message: "FullName, Email, and Phone are required." });
-      return;
-    }
-
-    const normalizedEmail = String(email).trim().toLowerCase();
-    const normalizedPhone = String(phone).trim();
-
-    const existingUser = await prisma.user.findFirst({
-      where: { OR: [{ email: normalizedEmail }, { phone: normalizedPhone }] }
-    });
-
-    if (existingUser) {
-      res.status(400).json({ status: "error", message: "User with this email or phone already exists." });
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(password || "Student@123", 10);
-
-    const student = await prisma.user.create({
-      data: {
-        fullName: String(fullName).trim(),
-        email: normalizedEmail,
-        phone: normalizedPhone,
-        passwordHash,
-        role: Role.STUDENT,
-        avatarUrl: "/Ananya.png"
+    const id = req.params.id as string;
+    const student = await prisma.user.findFirst({
+      where: { id, role: Role.STUDENT },
+      include: {
+        batchMemberships: { include: { batch: true } },
+        enrollments: { include: { course: true } },
+        attendances: { orderBy: { date: "desc" }, take: 20 },
+        payments: { orderBy: { createdAt: "desc" } }
       }
     });
 
-    res.status(201).json({
-      status: "success",
-      message: "Student account created successfully.",
-      data: student
+    if (!student) {
+      res.status(404).json({ status: "error", message: "Student not found." });
+      return;
+    }
+
+    res.json({ status: "success", data: student });
+  } catch (error) {
+    console.error("Get Student Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch student." });
+  }
+};
+
+export const createStudent = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { fullName, email, phone, password, country, batchId } = req.body;
+    if (!fullName || !email || !phone || !password) {
+      res.status(400).json({ status: "error", message: "FullName, Email, Phone, and Password are required." });
+      return;
+    }
+
+    const existing = await prisma.user.findFirst({
+      where: { OR: [{ email: email.toLowerCase() }, { phone }] }
     });
-  } catch (error: any) {
-    console.error("Create Student Error:", error);
+    if (existing) {
+      res.status(400).json({ status: "error", message: "Email or Phone already registered." });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const newStudent = await prisma.user.create({
+      data: {
+        fullName,
+        email: email.toLowerCase(),
+        phone,
+        passwordHash,
+        role: Role.STUDENT,
+        country: country || "India"
+      }
+    });
+
+    if (batchId) {
+      await prisma.batchStudent.create({
+        data: { batchId: String(batchId), studentId: newStudent.id }
+      });
+      await prisma.batch.update({
+        where: { id: String(batchId) },
+        data: { totalStudents: { increment: 1 } }
+      });
+    }
+
+    res.status(201).json({ status: "success", message: "Student account created successfully.", data: newStudent });
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ status: "error", message: "Failed to create student account." });
   }
 };
 
-// Admin: Delete Student Account from Database
-export const deleteStudent = async (req: Request, res: Response): Promise<void> => {
+export const updateStudent = async (req: Request, res: Response): Promise<void> => {
   try {
-    const studentId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    await prisma.user.delete({ where: { id: studentId } });
-    res.status(200).json({ status: "success", message: "Student account deleted successfully." });
-  } catch (error: any) {
-    console.error("Delete Student Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to delete student account." });
+    const id = req.params.id as string;
+    const { fullName, email, phone, country, avatarUrl, batchId } = req.body;
+
+    const student = await prisma.user.findFirst({ where: { id, role: Role.STUDENT } });
+    if (!student) {
+      res.status(404).json({ status: "error", message: "Student not found." });
+      return;
+    }
+
+    if (email) {
+      const existingEmail = await prisma.user.findFirst({
+        where: { email: email.toLowerCase(), NOT: { id } }
+      });
+      if (existingEmail) {
+        res.status(400).json({ status: "error", message: "Email already exists." });
+        return;
+      }
+    }
+
+    if (phone) {
+      const existingPhone = await prisma.user.findFirst({
+        where: { phone, NOT: { id } }
+      });
+      if (existingPhone) {
+        res.status(400).json({ status: "error", message: "Phone number already exists." });
+        return;
+      }
+    }
+
+    const updatedStudent = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: { id },
+        data: {
+          fullName: fullName ?? undefined,
+          email: email ? email.toLowerCase() : undefined,
+          phone: phone ?? undefined,
+          country: country ?? undefined,
+          avatarUrl: avatarUrl ?? undefined
+        }
+      });
+
+      if (batchId) {
+        const targetBatchId = String(batchId);
+        const batch = await tx.batch.findUnique({ where: { id: targetBatchId } });
+        if (batch) {
+          const oldMembership = await tx.batchStudent.findFirst({ where: { studentId: id } });
+          if (oldMembership && oldMembership.batchId !== targetBatchId) {
+            await tx.batchStudent.delete({
+              where: { batchId_studentId: { batchId: oldMembership.batchId, studentId: id } }
+            });
+            await tx.batch.update({
+              where: { id: oldMembership.batchId },
+              data: { totalStudents: { decrement: 1 } }
+            });
+          }
+
+          const exists = await tx.batchStudent.findUnique({
+            where: { batchId_studentId: { batchId: targetBatchId, studentId: id } }
+          });
+          if (!exists) {
+            await tx.batchStudent.create({ data: { batchId: targetBatchId, studentId: id } });
+            await tx.batch.update({ where: { id: targetBatchId }, data: { totalStudents: { increment: 1 } } });
+          }
+        }
+      }
+
+      return user;
+    });
+
+    res.json({ status: "success", message: "Student updated successfully.", data: updatedStudent });
+  } catch (error) {
+    console.error("Update Student Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to update student." });
   }
 };
 
-// Admin: Get Teacher List & Metrics
-export const getTeachers = async (req: Request, res: Response): Promise<void> => {
+export const changeStudentStatus = async (req: Request, res: Response): Promise<void> => {
   try {
-    const totalTeachersCount = await prisma.user.count({ where: { role: Role.TEACHER } });
+    const id = req.params.id as string;
+    const { isActive } = req.body;
 
-    const [dbTeachers, dbBatches] = await Promise.all([
-      prisma.user.findMany({
-        where: { role: Role.TEACHER },
-        include: { permissions: true },
-        orderBy: { createdAt: "desc" }
-      }),
-      prisma.batch.findMany()
-    ]);
+    const student = await prisma.user.findFirst({ where: { id, role: Role.STUDENT } });
+    if (!student) {
+      res.status(404).json({ status: "error", message: "Student not found." });
+      return;
+    }
 
-    res.status(200).json({
-      status: "success",
-      data: {
-        metrics: {
-          totalTeachers: totalTeachersCount,
-          activeFaculty: dbTeachers.filter((t) => t.isActive).length,
-          onLeave: 0,
-          avgRating: "4.9"
+    const updated = await prisma.user.update({
+      where: { id },
+      data: { isActive: Boolean(isActive) }
+    });
+
+    res.json({ status: "success", message: `Student ${updated.isActive ? "activated" : "deactivated"} successfully.`, data: updated });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to update student status." });
+  }
+};
+
+export const resetStudentPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { newPassword } = req.body;
+
+    if (!newPassword) {
+      res.status(400).json({ status: "error", message: "New password is required." });
+      return;
+    }
+
+    const student = await prisma.user.findFirst({ where: { id, role: Role.STUDENT } });
+    if (!student) {
+      res.status(404).json({ status: "error", message: "Student not found." });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({ where: { id }, data: { passwordHash } });
+
+    res.json({ status: "success", message: "Password reset successfully." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to reset password." });
+  }
+};
+
+export const deleteStudent = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.batchStudent.deleteMany({ where: { studentId: id } });
+      await tx.attendance.deleteMany({ where: { studentId: id } });
+      await tx.payment.deleteMany({ where: { userId: id } });
+      await tx.enrollment.deleteMany({ where: { userId: id } });
+      await tx.inquiry.deleteMany({ where: { userId: id } });
+      await tx.user.delete({ where: { id } });
+    });
+
+    res.json({ status: "success", message: "Student deleted successfully." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to delete student." });
+  }
+};
+
+export const assignStudentBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { batchId } = req.body;
+    const targetBatchId = String(batchId);
+
+    if (!batchId) {
+      res.status(400).json({ status: "error", message: "batchId is required." });
+      return;
+    }
+
+    const exists = await prisma.batchStudent.findUnique({
+      where: { batchId_studentId: { batchId: targetBatchId, studentId: id } }
+    });
+
+    if (!exists) {
+      await prisma.batchStudent.create({ data: { batchId: targetBatchId, studentId: id } });
+      await prisma.batch.update({
+        where: { id: targetBatchId },
+        data: { totalStudents: { increment: 1 } }
+      });
+    }
+
+    res.json({ status: "success", message: "Batch assigned to student successfully." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to assign batch." });
+  }
+};
+
+export const removeStudentBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const batchId = req.params.batchId as string;
+
+    await prisma.batchStudent.deleteMany({
+      where: { studentId: id, batchId }
+    });
+    await prisma.batch.update({
+      where: { id: batchId },
+      data: { totalStudents: { decrement: 1 } }
+    });
+
+    res.json({ status: "success", message: "Batch removed from student." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to remove batch." });
+  }
+};
+
+export const getBatchStudents = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const batchId = req.params.batchId ? (req.params.batchId as string) : undefined;
+    const students = await prisma.batchStudent.findMany({
+      where: batchId ? { batchId } : {},
+      include: {
+        student: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+            avatarUrl: true,
+            country: true,
+            isActive: true,
+            createdAt: true
+          }
         },
-        teachers: dbTeachers.map((t) => {
-          const assigned = dbBatches
-            .filter((b) => b.teacherName?.toLowerCase().includes(t.fullName.toLowerCase()))
-            .map((b) => b.name);
-
-          return {
-            id: t.id,
-            name: t.fullName,
-            email: t.email,
-            avatar: t.avatarUrl || "/Ananya.png",
-            designation: "Kathak Instructor",
-            assignedBatches: assigned.length > 0 ? assigned : ["Beginners Morning Zen"],
-            joinedDate: t.createdAt.toISOString().split("T")[0],
-            rating: "4.9",
-            status: t.isActive ? "Active" : "Disabled",
-            phone: t.phone,
-            permissions: t.permissions.map((p) => p.permission)
-          };
-        })
+        batch: true
       }
     });
-  } catch (error: any) {
+
+    res.json({
+      status: "success",
+      data: students.map((bs) => ({
+        id: bs.student.id,
+        fullName: bs.student.fullName,
+        name: bs.student.fullName,
+        email: bs.student.email,
+        phone: bs.student.phone,
+        avatar: bs.student.avatarUrl || "/Ananya.png",
+        batchId: bs.batchId,
+        batchName: bs.batch.name
+      }))
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to fetch batch students." });
+  }
+};
+
+// ================= 3. TEACHER MANAGEMENT =================
+
+export const getTeachers = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const teachers = await prisma.user.findMany({
+      where: { role: Role.TEACHER },
+      include: { permissions: true },
+      orderBy: { createdAt: "desc" }
+    });
+
+    const mapped = teachers.map((teacher) => ({
+      id: teacher.id,
+      fullName: teacher.fullName,
+      name: teacher.fullName,
+      title: "Senior Kathak Faculty",
+      email: teacher.email,
+      phone: teacher.phone,
+      avatarUrl: teacher.avatarUrl,
+      avatar: teacher.avatarUrl || "/Ananya.png",
+      country: teacher.country,
+      isActive: teacher.isActive,
+      status: teacher.isActive ? "Active" : "Disabled",
+      role: teacher.role,
+      designation: "Senior Kathak Faculty",
+      assignedBatches: ["Beginners Morning Zen"],
+      batches: ["Beginners Morning Zen"],
+      id_proof: "Verified",
+      qualifications: ["MA in Kathak", "Sangeet Visharad"],
+      bank_details: ["HDFC Bank **** 4321"],
+      emergency_contact: [9876543210],
+      category: "Kathak",
+      expertise: "Senior Kathak Instructor",
+      permissions: teacher.permissions.map((p) => p.permission),
+      createdAt: teacher.createdAt
+    }));
+
+    res.json({
+      status: "success",
+      data: {
+        teachers: mapped,
+        metrics: {
+          totalTeachers: teachers.length,
+          activeFaculty: teachers.filter((t) => t.isActive).length,
+          avgRating: "4.9"
+        }
+      }
+    });
+  } catch (error) {
     console.error("Get Teachers Error:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch teachers." });
   }
 };
 
-// Admin: Create Teacher
+export const getTeacherById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const teacher = await prisma.user.findFirst({
+      where: { id, role: Role.TEACHER },
+      include: { permissions: true }
+    });
+
+    if (!teacher) {
+      res.status(404).json({ status: "error", message: "Teacher not found." });
+      return;
+    }
+
+    res.json({
+      status: "success",
+      data: {
+        ...teacher,
+        permissions: teacher.permissions.map((p) => p.permission)
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to fetch teacher." });
+  }
+};
+
 export const createTeacher = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { fullName, email, phone, password, permissions, avatarUrl } = req.body;
+    const { fullName, email, phone, password, country, permissions } = req.body;
 
     if (!fullName || !email || !phone || !password) {
       res.status(400).json({ status: "error", message: "FullName, Email, Phone, and Password are required." });
       return;
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
-    const normalizedPhone = String(phone).trim();
-
     const existingUser = await prisma.user.findFirst({
-      where: { OR: [{ email: normalizedEmail }, { phone: normalizedPhone }] }
+      where: { OR: [{ email: email.toLowerCase() }, { phone }] }
     });
-
     if (existingUser) {
-      res.status(400).json({ status: "error", message: "User with this email or phone already exists." });
+      res.status(400).json({ status: "error", message: "Email or Phone already exists." });
       return;
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
+    const validPermissions: Permission[] = Array.isArray(permissions)
+      ? permissions.filter((p: any) => Object.values(Permission).includes(p))
+      : [];
 
-    const teacher = await prisma.user.create({
+    const newTeacher = await prisma.user.create({
       data: {
-        fullName: String(fullName).trim(),
-        email: normalizedEmail,
-        phone: normalizedPhone,
+        fullName,
+        email: email.toLowerCase(),
+        phone,
         passwordHash,
-        avatarUrl: avatarUrl || "/Ananya.png",
         role: Role.TEACHER,
+        country: country || "India",
         permissions: {
-          create: (permissions || []).map((perm: Permission) => ({
-            permission: perm
-          }))
+          create: validPermissions.map((perm) => ({ permission: perm }))
         }
       },
-      include: {
-        permissions: true
-      }
+      include: { permissions: true }
     });
 
     res.status(201).json({
       status: "success",
       message: "Teacher account created successfully.",
       data: {
-        id: teacher.id,
-        fullName: teacher.fullName,
-        email: teacher.email,
-        role: teacher.role,
-        avatarUrl: teacher.avatarUrl,
-        permissions: teacher.permissions.map((p) => p.permission)
+        id: newTeacher.id,
+        fullName: newTeacher.fullName,
+        email: newTeacher.email,
+        phone: newTeacher.phone,
+        role: newTeacher.role,
+        permissions: newTeacher.permissions.map((p) => p.permission)
       }
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Create Teacher Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to create teacher account." });
+    res.status(500).json({ status: "error", message: "Failed to create teacher." });
   }
 };
 
-// Admin: Delete Teacher Account
-export const deleteTeacher = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const teacherId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    await prisma.user.delete({ where: { id: teacherId } });
-    res.status(200).json({ status: "success", message: "Teacher account deleted successfully." });
-  } catch (error: any) {
-    console.error("Delete Teacher Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to delete teacher account." });
-  }
-};
-
-// Admin: Update Teacher Account in Database
 export const updateTeacher = async (req: Request, res: Response): Promise<void> => {
   try {
-    const teacherId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const { fullName, email, phone, password, isActive, permissions, avatarUrl } = req.body;
+    const id = req.params.id as string;
+    const { fullName, email, phone, country, permissions, isActive } = req.body;
 
-    const dataToUpdate: any = {};
-    if (fullName) dataToUpdate.fullName = String(fullName).trim();
-    if (email) dataToUpdate.email = String(email).trim().toLowerCase();
-    if (phone) dataToUpdate.phone = String(phone).trim();
-    if (avatarUrl) dataToUpdate.avatarUrl = avatarUrl;
-    if (isActive !== undefined) dataToUpdate.isActive = Boolean(isActive);
-    if (password) dataToUpdate.passwordHash = await bcrypt.hash(password, 10);
-
-    if (permissions && Array.isArray(permissions)) {
-      await prisma.teacherPermission.deleteMany({ where: { userId: teacherId } });
-      dataToUpdate.permissions = {
-        create: permissions.map((perm: Permission) => ({
-          permission: perm
-        }))
-      };
-    }
-
-    const updatedTeacher = await prisma.user.update({
-      where: { id: teacherId },
-      data: dataToUpdate,
-      include: { permissions: true }
-    });
-
-    res.status(200).json({
-      status: "success",
-      message: "Teacher account updated successfully.",
-      data: updatedTeacher
-    });
-  } catch (error: any) {
-    console.error("Update Teacher Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to update teacher account." });
-  }
-};
-
-// ================= BATCH MANAGEMENT CONTROLLERS (100% REAL DYNAMIC DB QUEIES) =================
-
-// Admin: Get All Batches & Summary Metrics strictly from Prisma Database
-export const getBatches = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const dbBatches = await prisma.batch.findMany({ orderBy: { createdAt: "desc" } });
-
-    const activeBatchesCount = dbBatches.filter((b) => b.status === "Active").length;
-    const completedBatchesCount = dbBatches.filter((b) => b.status === "Completed" || b.status === "DONE").length;
-    const totalStudentsSum = dbBatches.reduce((acc, b) => acc + (b.totalStudents || 0), 0);
-
-    const batchesA = dbBatches.filter((b) => b.name.toUpperCase().includes("A") || b.code.toUpperCase().includes("A")).length;
-    const batchesB = dbBatches.filter((b) => b.name.toUpperCase().includes("B") || b.code.toUpperCase().includes("B")).length;
-    const batchesC = dbBatches.filter((b) => b.name.toUpperCase().includes("C") || b.code.toUpperCase().includes("C")).length;
-
-    res.status(200).json({
-      status: "success",
-      data: {
-        metrics: {
-          activeBatches: activeBatchesCount,
-          totalStudents: totalStudentsSum,
-          completedBatches: completedBatchesCount,
-          batchesA: batchesA,
-          batchesB: batchesB,
-          batchesC: batchesC
-        },
-        batches: dbBatches.map((b) => ({
-          id: b.id,
-          name: b.name,
-          code: b.code,
-          course: b.courseName,
-          level: b.level as any,
-          teacher: b.teacherName,
-          schedule: b.schedule,
-          totalStudents: b.totalStudents,
-          status: b.status
-        }))
-      }
-    });
-  } catch (error: any) {
-    console.error("Get Batches Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to fetch batches from database." });
-  }
-};
-
-// Admin: Create New Batch in Database
-export const createBatch = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { name, courseName, level, teacherName, schedule, totalStudents, status, studentIds = [] } = req.body;
-
-    if (!name || !courseName) {
-      res.status(400).json({ status: "error", message: "Batch Name and Course are required." });
+    const teacher = await prisma.user.findFirst({ where: { id, role: Role.TEACHER } });
+    if (!teacher) {
+      res.status(404).json({ status: "error", message: "Teacher not found." });
       return;
     }
 
-    const code = `KTH-${Math.floor(100 + Math.random() * 900)}-${String(name).substring(0, 4).toUpperCase()}`;
+    const validPermissions: Permission[] = Array.isArray(permissions)
+      ? permissions.filter((p: any) => Object.values(Permission).includes(p))
+      : [];
 
-    const batch = await prisma.batch.create({
-      data: {
-        name: String(name).trim(),
-        code,
-        courseName: String(courseName).trim(),
-        level: level || "INTERMEDIATE",
-        teacherName: teacherName || "Kathak Faculty",
-        schedule: schedule || "Mon,Wed,Fri 06:30 PM - 08:00 PM",
-        totalStudents: Array.isArray(studentIds) ? studentIds.length : Number(totalStudents) || 0,
-        status: status || "Active",
-        students: Array.isArray(studentIds) ? { create: [...new Set(studentIds)].map((studentId: string) => ({ studentId })) } : undefined
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          fullName: fullName ?? undefined,
+          email: email ? email.toLowerCase() : undefined,
+          phone: phone ?? undefined,
+          country: country ?? undefined,
+          isActive: typeof isActive === "boolean" ? isActive : undefined
+        }
+      });
+
+      if (Array.isArray(permissions)) {
+        await tx.teacherPermission.deleteMany({ where: { userId: id } });
+        if (validPermissions.length > 0) {
+          await tx.teacherPermission.createMany({
+            data: validPermissions.map((perm) => ({ userId: id, permission: perm }))
+          });
+        }
       }
     });
 
-    res.status(201).json({
-      status: "success",
-      message: "Batch created successfully.",
-      data: batch
-    });
-  } catch (error: any) {
-    console.error("Create Batch Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to create batch." });
+    res.json({ status: "success", message: "Teacher account updated successfully." });
+  } catch (error) {
+    console.error("Update Teacher Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to update teacher." });
   }
 };
 
-// Admin: Update Existing Batch in Database
-export const updateBatch = async (req: Request, res: Response): Promise<void> => {
+export const deleteTeacher = async (req: Request, res: Response): Promise<void> => {
   try {
-    const batchId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const { name, courseName, level, teacherName, schedule, totalStudents, status, studentIds } = req.body;
-    const replaceStudents = Array.isArray(studentIds);
-
-    const batch = await prisma.batch.update({
-      where: { id: batchId },
-      data: {
-        ...(name && { name: String(name).trim() }),
-        ...(courseName && { courseName: String(courseName).trim() }),
-        ...(level && { level }),
-        ...(teacherName && { teacherName }),
-        ...(schedule && { schedule }),
-        ...(totalStudents !== undefined && { totalStudents: Number(totalStudents) }),
-        ...(status && { status }),
-        ...(replaceStudents && { totalStudents: studentIds.length, students: { deleteMany: {}, create: [...new Set(studentIds)].map((studentId: string) => ({ studentId })) } })
-      }
+    const id = req.params.id as string;
+    await prisma.$transaction(async (tx) => {
+      await tx.teacherPermission.deleteMany({ where: { userId: id } });
+      await tx.user.delete({ where: { id } });
     });
 
-    res.status(200).json({
-      status: "success",
-      message: "Batch updated successfully.",
-      data: batch
-    });
-  } catch (error: any) {
-    console.error("Update Batch Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to update batch." });
+    res.json({ status: "success", message: "Teacher account deleted successfully." });
+  } catch (error) {
+    console.error("Delete Teacher Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to delete teacher." });
   }
 };
 
-// Admin: Delete Batch from Database
-export const deleteBatch = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const batchId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    await prisma.batch.delete({ where: { id: batchId } });
-    res.status(200).json({ status: "success", message: "Batch deleted successfully." });
-  } catch (error: any) {
-    console.error("Delete Batch Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to delete batch." });
-  }
-};
+// ================= 4. COURSE & LESSON MANAGEMENT =================
 
-// Admin: Get Batch Student Directory Cohort
-export const getBatchStudents = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const batchId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const batch = await prisma.batch.findUnique({ where: { id: batchId } });
-
-    const memberships = await prisma.batchStudent.findMany({ where: { batchId }, include: { student: true }, orderBy: { createdAt: "desc" } });
-    const studentsList = memberships.map(({ student: s }) => ({
-      id: s.id,
-      name: s.fullName,
-      email: s.email,
-      avatar: s.avatarUrl || "/Ananya.png",
-      studentId: `STU-2024-${s.id.substring(0, 4).toUpperCase()}`,
-      batchCode: batch?.code || "KTH-BATCH",
-      joiningDate: s.createdAt.toISOString().split("T")[0],
-      assignmentsSubmitted: "14 / 16"
-    }));
-
-    res.status(200).json({
-      status: "success",
-      data: {
-        batchName: batch?.name || "Batch Student Cohort",
-        batchCode: batch?.code || "KTH-BATCH",
-        totalStudents: studentsList.length,
-        students: studentsList
-      }
-    });
-  } catch (error: any) {
-    console.error("Get Batch Students Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to fetch batch student directory." });
-  }
-};
-
-// ================= COURSE MANAGEMENT CONTROLLERS =================
-
-// Admin: Get All Courses & Metrics from Database
 export const getCourses = async (req: Request, res: Response): Promise<void> => {
   try {
-    const dbCourses = await prisma.course.findMany({
+    const courses = await prisma.course.findMany({
+      include: { lessons: { orderBy: { orderIndex: "asc" } }, batches: true },
       orderBy: { createdAt: "desc" }
     });
 
-    const totalCourses = dbCourses.length;
+    const mapped = courses.map((c) => ({
+      ...c,
+      code: c.slug ? `CRS-${c.slug.slice(0, 6).toUpperCase()}` : `CRS-${c.id.slice(-4).toUpperCase()}`,
+      level: c.category || "BEGINNER",
+      duration: c.groupClassesCount || "12 Sessions",
+      status: c.published !== false ? "Active" : "Draft",
+      thumbnail: (c as any).thumbnail || "/Ananya.png"
+    }));
 
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-
-    const newThisMonth = dbCourses.filter((c) => new Date(c.createdAt) >= startOfMonth).length;
-
-    res.status(200).json({
+    res.json({
       status: "success",
       data: {
-        totalCourses,
-        newThisMonth,
-        courses: dbCourses.map((c) => ({
-          id: c.id,
-          code: `CRS-${c.id.substring(0, 4).toUpperCase()}`,
-          title: c.title,
-          description: c.description,
-          category: (c.category as string) === "BASIC" ? "Classical Dance" : (c.category as string) === "INTERMEDIATE" ? "Yoga" : "Kathak Mastery",
-          level: c.borderColor || "Beginner",
-          feeINR: c.groupFeeINR,
-          groupFeeINR: c.groupFeeINR,
-          groupFeeUSD: c.groupFeeUSD,
-          oneToOneFeeINR: c.oneToOneFeeINR,
-          oneToOneFeeUSD: c.oneToOneFeeUSD,
-          groupClassesCount: c.groupClassesCount,
-          oneToOneClassesCount: c.oneToOneClassesCount,
-          classesCount: c.groupClassesCount,
-          duration: c.groupClassesCount || "24 Classes",
-          videoUrl: (c.oneToOneClassesCount && c.oneToOneClassesCount.startsWith("http")) ? c.oneToOneClassesCount : "",
-          studentsCount: "0/50",
-          studentPercent: "0%",
-          status: c.published ? "Active" : "Draft",
-          thumbnail: c.badgeBgColor && (c.badgeBgColor.startsWith("http") || c.badgeBgColor.startsWith("/")) ? c.badgeBgColor : "/gurukul-dancer.jpg"
-        }))
+        courses: mapped,
+        metrics: {
+          totalCourses: courses.length,
+          publishedCourses: courses.filter((c) => c.published).length,
+          draftCourses: courses.filter((c) => !c.published).length
+        }
       }
     });
-  } catch (error: any) {
-    console.error("Get Courses Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to fetch courses from database." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to fetch courses." });
   }
 };
 
-// Admin: Create New Course in Database
 export const createCourse = async (req: Request, res: Response): Promise<void> => {
   try {
-    const {
-      title,
-      description,
-      category,
-      level,
-      groupFeeINR,
-      groupFeeUSD,
-      groupClassesCount,
-      oneToOneFeeINR,
-      oneToOneFeeUSD,
-      oneToOneClassesCount,
-      feeINR,
-      classesCount,
-      thumbnail,
-      videoUrl
-    } = req.body;
+    const { title, description, category, groupFeeINR, groupFeeUSD, oneToOneFeeINR, oneToOneFeeUSD } = req.body;
+    const baseSlug = (title || "course").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
+    const slug = `${baseSlug}-${Date.now().toString(36)}`;
 
-    if (!title) {
-      res.status(400).json({ status: "error", message: "Course Title is required." });
-      return;
-    }
-
-    const slug = String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now();
-
-    let mappedCategory: any = "BASIC";
-    if (category === "Yoga") mappedCategory = "INTERMEDIATE";
-    else if (category === "Music Theory") mappedCategory = "ADVANCED";
-    else if (category === "Contemporary") mappedCategory = "SPECIAL";
-    else if (category === "Classical Dance") mappedCategory = "BASIC";
-
-    const course = await prisma.course.create({
+    const newCourse = await prisma.course.create({
       data: {
-        title: String(title).trim(),
+        title: title || "New Course",
         slug,
-        description: description || "Kathak Dance Course",
-        category: mappedCategory,
-        borderColor: level || "Beginner",
-        groupFeeINR: Number(groupFeeINR || feeINR) || 2200,
-        groupFeeUSD: Number(groupFeeUSD) || 50,
-        groupClassesCount: String(groupClassesCount || classesCount || "10 Classes/month"),
-        oneToOneFeeINR: Number(oneToOneFeeINR) || 600,
-        oneToOneFeeUSD: Number(oneToOneFeeUSD) || 15,
-        oneToOneClassesCount: String(videoUrl || oneToOneClassesCount || "Min 4 Classes/month"),
-        badgeBgColor: thumbnail || "/gurukul-dancer.jpg",
+        description: description || "",
+        category: mapCategoryToEnum(category),
+        groupFeeINR: Number(groupFeeINR) || 4999,
+        groupFeeUSD: Number(groupFeeUSD) || 99,
+        groupClassesCount: "12 Sessions",
+        oneToOneFeeINR: Number(oneToOneFeeINR) || 12999,
+        oneToOneFeeUSD: Number(oneToOneFeeUSD) || 249,
+        oneToOneClassesCount: "12 Sessions",
         published: true
       }
     });
 
-    res.status(201).json({
-      status: "success",
-      message: "Course created successfully.",
-      data: course
-    });
+    res.status(201).json({ status: "success", message: "Course created successfully.", data: newCourse });
   } catch (error: any) {
     console.error("Create Course Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to create course in database." });
+    res.status(500).json({ status: "error", message: error.message || "Failed to create course." });
   }
 };
 
-// Admin: Update Existing Course in Database
 export const updateCourse = async (req: Request, res: Response): Promise<void> => {
   try {
-    const courseId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const {
-      title,
-      description,
-      category,
-      level,
-      groupFeeINR,
-      groupFeeUSD,
-      groupClassesCount,
-      oneToOneFeeINR,
-      oneToOneFeeUSD,
-      oneToOneClassesCount,
-      feeINR,
-      classesCount,
-      thumbnail,
-      videoUrl
-    } = req.body;
-
-    let mappedCategory: any = undefined;
-    if (category === "Yoga") mappedCategory = "INTERMEDIATE";
-    else if (category === "Music Theory") mappedCategory = "ADVANCED";
-    else if (category === "Contemporary") mappedCategory = "SPECIAL";
-    else if (category === "Classical Dance") mappedCategory = "BASIC";
+    const id = req.params.id as string;
+    const { title, description, category, groupFeeINR, groupFeeUSD, published } = req.body;
 
     const updated = await prisma.course.update({
-      where: { id: courseId },
+      where: { id },
       data: {
-        title: title ? String(title).trim() : undefined,
-        description: description !== undefined ? description : undefined,
-        category: mappedCategory,
-        borderColor: level || undefined,
-        groupFeeINR: (groupFeeINR || feeINR) ? Number(groupFeeINR || feeINR) : undefined,
+        title: title ?? undefined,
+        description: description ?? undefined,
+        category: category ? mapCategoryToEnum(category) : undefined,
+        groupFeeINR: groupFeeINR ? Number(groupFeeINR) : undefined,
         groupFeeUSD: groupFeeUSD ? Number(groupFeeUSD) : undefined,
-        groupClassesCount: (groupClassesCount || classesCount) ? String(groupClassesCount || classesCount) : undefined,
-        oneToOneFeeINR: oneToOneFeeINR ? Number(oneToOneFeeINR) : undefined,
-        oneToOneFeeUSD: oneToOneFeeUSD ? Number(oneToOneFeeUSD) : undefined,
-        oneToOneClassesCount: (videoUrl !== undefined ? String(videoUrl) : (oneToOneClassesCount ? String(oneToOneClassesCount) : undefined)),
-        badgeBgColor: thumbnail || undefined
+        published: typeof published === "boolean" ? published : undefined
       }
     });
 
-    res.status(200).json({
-      status: "success",
-      message: "Course updated successfully.",
-      data: updated
-    });
+    res.json({ status: "success", message: "Course updated successfully.", data: updated });
   } catch (error: any) {
     console.error("Update Course Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to update course." });
+    res.status(500).json({ status: "error", message: error.message || "Failed to update course." });
   }
 };
 
-// Admin: Delete Course from Database
 export const deleteCourse = async (req: Request, res: Response): Promise<void> => {
   try {
-    const courseId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    await prisma.course.delete({ where: { id: courseId } });
-    res.status(200).json({ status: "success", message: "Course deleted successfully." });
-  } catch (error: any) {
-    console.error("Delete Course Error:", error);
+    const id = req.params.id as string;
+    await prisma.course.delete({ where: { id } });
+    res.json({ status: "success", message: "Course deleted successfully." });
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ status: "error", message: "Failed to delete course." });
   }
 };
 
-// Admin: Fetch Attendance Records for Batch & Date (100% Dynamic DB Query)
-const attendanceDay = (value?: unknown) => {
-  const raw = typeof value === "string" ? value : new Date().toISOString().slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
-  return new Date(`${raw}T00:00:00.000Z`);
+export const addLesson = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const courseId = req.params.id as string;
+    const { title, description, durationSec, bunnyVideoId, videoLibraryId } = req.body;
+
+    const lastLesson = await prisma.lesson.findFirst({
+      where: { courseId },
+      orderBy: { orderIndex: "desc" }
+    });
+    const orderIndex = lastLesson ? lastLesson.orderIndex + 1 : 1;
+
+    const lesson = await prisma.lesson.create({
+      data: {
+        courseId,
+        title,
+        description: description || undefined,
+        durationSec: Number(durationSec) || 600,
+        orderIndex,
+        bunnyVideoId: bunnyVideoId || "sample-bunny-id",
+        videoLibraryId: videoLibraryId || "sample-lib-id"
+      }
+    });
+
+    res.status(201).json({ status: "success", message: "Lesson added successfully.", data: lesson });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to add lesson." });
+  }
 };
+
+export const deleteLesson = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const lessonId = req.params.lessonId as string;
+    await prisma.lesson.delete({ where: { id: lessonId } });
+    res.json({ status: "success", message: "Lesson deleted." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to delete lesson." });
+  }
+};
+
+// ================= 5. BATCH MANAGEMENT =================
+
+export const getBatches = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const batches = await prisma.batch.findMany({
+      include: {
+        students: { include: { student: { select: { id: true, fullName: true, email: true, phone: true } } } },
+        course: true
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    const mapped = batches.map((b) => ({
+      id: b.id,
+      name: b.name,
+      code: b.code,
+      course: b.courseName || b.course?.title || "Kathak Foundations",
+      courseName: b.courseName || b.course?.title || "Kathak Foundations",
+      teacher: b.teacherName || "Guru Meenakshi",
+      teacherName: b.teacherName || "Guru Meenakshi",
+      schedule: b.schedule || "Mon, Wed, Fri (6:00 PM)",
+      level: b.level || "ADVANCED",
+      totalStudents: b.totalStudents || b.students.length || 0,
+      status: b.status === "ACTIVE" ? "Active" : b.status === "COMPLETED" ? "Completed" : "Upcoming"
+    }));
+
+    res.json({
+      status: "success",
+      data: {
+        batches: mapped,
+        metrics: {
+          totalBatches: batches.length,
+          activeBatches: batches.filter((b) => b.status === "ACTIVE").length,
+          totalStudents: batches.reduce((acc, b) => acc + (b.totalStudents || b.students.length || 0), 0),
+          completedBatches: batches.filter((b) => b.status === "COMPLETED").length,
+          batchesA: batches.length,
+          batchesB: 0,
+          batchesC: 0
+        }
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to fetch batches." });
+  }
+};
+
+export const createBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, code, courseId, courseName, teacherName, schedule, level } = req.body;
+    const newBatch = await prisma.batch.create({
+      data: {
+        name,
+        code: code || `KTH-${Date.now().toString().slice(-4)}`,
+        courseId: courseId || undefined,
+        courseName: courseName || "Kathak Foundations",
+        teacherName: teacherName || "Guru Meenakshi",
+        schedule: schedule || "Mon, Wed, Fri (6:00 PM)",
+        level: level || "ADVANCED"
+      }
+    });
+    res.status(201).json({ status: "success", message: "Batch created successfully.", data: newBatch });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to create batch." });
+  }
+};
+
+export const updateBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { name, code, teacherName, schedule, level, status } = req.body;
+
+    const updated = await prisma.batch.update({
+      where: { id },
+      data: {
+        name: name ?? undefined,
+        code: code ?? undefined,
+        teacherName: teacherName ?? undefined,
+        schedule: schedule ?? undefined,
+        level: level ?? undefined,
+        status: status ?? undefined
+      }
+    });
+    res.json({ status: "success", message: "Batch updated successfully.", data: updated });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to update batch." });
+  }
+};
+
+export const deleteBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    await prisma.batch.delete({ where: { id } });
+    res.json({ status: "success", message: "Batch deleted successfully." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to delete batch." });
+  }
+};
+
+// ================= 6. ATTENDANCE MANAGEMENT =================
 
 export const getAttendanceRecords = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { batchId, date } = req.query;
-    const targetDate = attendanceDay(date) || new Date();
-    targetDate.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date(targetDate);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    let batch = null;
-    if (batchId && typeof batchId === "string" && batchId !== "ALL" && batchId !== "All Batches") {
-      batch = await prisma.batch.findUnique({ where: { id: batchId } });
-    }
-
-    // 1. Fetch memberships / students
-    let students: { id: string; fullName: string; email: string; avatarUrl: string | null }[] = [];
-    if (batch) {
-      const memberships = await prisma.batchStudent.findMany({
-        where: { batchId: batch.id, student: { isActive: true } },
-        include: { student: { select: { id: true, fullName: true, email: true, avatarUrl: true } } }
-      });
-      students = memberships.map((m) => m.student);
-    } else {
-      students = await prisma.user.findMany({
-        where: { role: "STUDENT", isActive: true },
-        select: { id: true, fullName: true, email: true, avatarUrl: true }
-      });
-    }
-
-    // 2. Fetch recorded attendance for target date
-    const attendanceEntries = await prisma.attendance.findMany({
-      where: {
-        date: { gte: targetDate, lte: endOfDay },
-        ...(batch ? { batchId: batch.id } : {})
-      }
+    const records = await prisma.attendance.findMany({
+      include: { student: { select: { id: true, fullName: true, email: true } }, batch: true },
+      orderBy: { date: "desc" }
     });
 
-    const attendanceMap = new Map(attendanceEntries.map((entry) => [entry.studentId, entry.status]));
-
-    const records = students.map((s) => {
-      const dbStatus = attendanceMap.get(s.id);
-      const statusCode = dbStatus === "PRESENT" ? "P" : dbStatus === "ABSENT" ? "A" : dbStatus === "LATE" ? "L" : dbStatus === "LEAVE" ? "LV" : "U";
-      return {
-        id: s.id,
-        studentId: `STU-${s.id.substring(0, 4).toUpperCase()}`,
-        name: s.fullName,
-        email: s.email,
-        avatar: s.avatarUrl || "/Ananya.png",
-        batchCode: batch ? batch.code : "BEGINNERS-ZEN",
-        courseName: batch ? batch.courseName : "Kathak Classical Course",
-        status: statusCode
-      };
-    });
-
-    const totalStudents = records.length;
-    const presentToday = records.filter((r) => r.status === "P").length;
-    const absent = records.filter((r) => r.status === "A").length;
-    const leaveRequests = records.filter((r) => r.status === "L" || r.status === "LV").length;
-
-    // 3. Dynamic Batch-wise Analytics Progress Bars for ALL Active Batches
-    const dbBatches = await prisma.batch.findMany({ where: { status: "Active" }, select: { id: true, name: true, code: true, schedule: true } });
-    
-    const defaultRates = [96, 88, 80, 72, 64, 60];
-    const batchAnalytics = await Promise.all(
-      dbBatches.map(async (b, idx) => {
-        const [members, markedPresent] = await Promise.all([
-          prisma.batchStudent.count({ where: { batchId: b.id, student: { isActive: true } } }),
-          prisma.attendance.count({
-            where: { batchId: b.id, status: { in: ["PRESENT", "LATE"] } }
-          })
-        ]);
-
-        const calcRate = members > 0 && markedPresent > 0 ? Math.round((markedPresent / members) * 100) : defaultRates[idx % defaultRates.length];
-
-        return {
-          id: b.id,
-          name: `${b.name} (${b.schedule || "Active"})`,
-          rate: Math.min(100, Math.max(10, calcRate))
-        };
-      })
-    );
-
-    res.status(200).json({
+    res.json({
       status: "success",
       data: {
-        records,
-        metrics: {
-          totalStudents,
-          presentToday,
-          absent,
-          leaveRequests
-        },
-        batchAnalytics
+        attendanceRecords: records,
+        records
       }
     });
-  } catch (error: any) {
-    console.error("Get Attendance Error:", error);
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ status: "error", message: "Failed to fetch attendance records." });
   }
 };
 
-// Admin: Save / Mark Attendance for Students in Database
 export const saveAttendance = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { batchId, date, session = "General", records } = req.body;
+    const { studentId, studentName, batchId, batchName, date, status, session, remarks } = req.body;
 
-    if (!Array.isArray(records)) {
-      res.status(400).json({ status: "error", message: "Records array is required." });
-      return;
-    }
-
-    const targetDate = attendanceDay(date);
-    if (!targetDate || typeof batchId !== "string" || !batchId) { res.status(400).json({ status: "error", message: "A valid date and batchId are required." }); return; }
-    const batch = await prisma.batch.findUnique({ where: { id: batchId } });
-    if (!batch) { res.status(404).json({ status: "error", message: "Batch not found." }); return; }
-    if (batch.status !== "Active") { res.status(400).json({ status: "error", message: "Attendance can be saved only for active batches." }); return; }
-    const memberIds = new Set((await prisma.batchStudent.findMany({ where: { batchId }, select: { studentId: true } })).map((m) => m.studentId));
-    const validRecords = records.filter((r: any) => memberIds.has(r.id || r.studentId) && r.status !== "U");
-    await prisma.$transaction(async (tx) => {
-      for (const r of validRecords) {
-        const stId = r.id || r.studentId;
-        let enumStatus: "PRESENT" | "ABSENT" | "LATE" | "LEAVE" = "PRESENT";
-        if (r.status === "A" || r.status === "ABSENT") enumStatus = "ABSENT";
-        else if (r.status === "L" || r.status === "LATE") enumStatus = "LATE";
-        else if (r.status === "LV" || r.status === "LEAVE") enumStatus = "LEAVE";
-        const existing = await tx.attendance.findFirst({ where: { studentId: stId, batchId, date: targetDate, session: String(session) } });
-        if (existing) await tx.attendance.update({ where: { id: existing.id }, data: { status: enumStatus, studentName: r.name || "Student", batchName: batch.name } });
-        else await tx.attendance.create({ data: { studentId: stId, studentName: r.name || "Student", batchId, batchName: batch.name, date: targetDate, session: String(session), status: enumStatus } });
+    const record = await prisma.attendance.create({
+      data: {
+        studentId,
+        studentName: studentName || "Student",
+        batchId: batchId || undefined,
+        batchName: batchName || "General Batch",
+        date: date ? new Date(date) : new Date(),
+        status: status || "PRESENT",
+        session: session || "General",
+        remarks: remarks || undefined
       }
     });
 
-    res.status(200).json({
-      status: "success",
-      message: "Attendance saved successfully."
+    res.status(201).json({ status: "success", message: "Attendance saved successfully.", data: record });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to save attendance record." });
+  }
+};
+
+// ================= 7. PAYMENTS & FINANCE =================
+
+export const getPayments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const payments = await prisma.payment.findMany({
+      include: {
+        user: { select: { id: true, fullName: true, email: true, phone: true } },
+        enrollment: { include: { course: true } }
+      },
+      orderBy: { createdAt: "desc" }
     });
-  } catch (error: any) {
-    console.error("Save Attendance Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to save attendance records." });
+
+    const revenueResult = await prisma.payment.aggregate({
+      where: { status: PaymentStatus.SUCCESS },
+      _sum: { amount: true }
+    });
+
+    res.json({
+      status: "success",
+      data: {
+        totalRevenue: revenueResult._sum.amount || 0,
+        payments
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to fetch payments." });
+  }
+};
+
+export const refundPayment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const updated = await prisma.payment.update({
+      where: { id },
+      data: { status: PaymentStatus.REFUNDED }
+    });
+
+    res.json({ status: "success", message: "Payment status marked as Refunded.", data: updated });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to process refund." });
+  }
+};
+
+// ================= 8. INQUIRIES MANAGEMENT =================
+
+export const getInquiries = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const inquiries = await prisma.inquiry.findMany({
+      orderBy: { createdAt: "desc" }
+    });
+
+    res.json({
+      status: "success",
+      data: {
+        inquiries,
+        leads: inquiries
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to fetch inquiries." });
+  }
+};
+
+export const updateInquiryStatus = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { status } = req.body;
+
+    const updated = await prisma.inquiry.update({
+      where: { id },
+      data: { status: status || "CLOSED" }
+    });
+
+    res.json({ status: "success", message: "Inquiry status updated.", data: updated });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to update inquiry." });
+  }
+};
+
+export const deleteInquiry = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    await prisma.inquiry.delete({ where: { id } });
+    res.json({ status: "success", message: "Inquiry deleted." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to delete inquiry." });
+  }
+};
+
+// ================= 9. ADMIN PROFILE =================
+
+export const getAdminProfile = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id }
+    });
+
+    if (!user) {
+      res.status(404).json({ status: "error", message: "Admin user not found." });
+      return;
+    }
+
+    res.json({ status: "success", data: user });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to fetch profile." });
+  }
+};
+
+export const updateAdminProfile = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { fullName, email, phone, avatarUrl } = req.body;
+    const updated = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: {
+        fullName: fullName ?? undefined,
+        email: email ? email.toLowerCase() : undefined,
+        phone: phone ?? undefined,
+        avatarUrl: avatarUrl ?? undefined
+      }
+    });
+
+    res.json({ status: "success", message: "Admin profile updated.", data: updated });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to update profile." });
+  }
+};
+
+export const changeAdminPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      res.status(400).json({ status: "error", message: "Current and new password are required." });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+    if (!user) {
+      res.status(404).json({ status: "error", message: "Admin user not found." });
+      return;
+    }
+
+    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!matches) {
+      res.status(400).json({ status: "error", message: "Current password is incorrect." });
+      return;
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: req.user!.id },
+      data: { passwordHash: newHash }
+    });
+
+    res.json({ status: "success", message: "Password changed successfully." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", message: "Failed to change password." });
   }
 };
