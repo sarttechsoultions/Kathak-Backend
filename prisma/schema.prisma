@@ -115,24 +115,40 @@ enum Currency {
 }
 
 model User {
-  id            String               @id @default(uuid())
-  fullName      String
-  email         String               @unique
-  phone         String               @unique
-  passwordHash  String
-  role          Role                 @default(STUDENT)
-  avatarUrl     String?
-  country       String               @default("India")
-  isActive      Boolean              @default(true)
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  id           String   @id @default(uuid())
+  fullName     String
+  email        String   @unique
+  phone        String   @unique
+  passwordHash String
+  role         Role     @default(STUDENT)
+  avatarUrl    String?
+  country      String   @default("India")
+  countryCode  String?
+  address      String?
 
-  permissions   TeacherPermission[]
-  enrollments   Enrollment[]
-  inquiries     Inquiry[]
-  payments      Payment[]
-  attendances   Attendance[]
-  batchMemberships BatchStudent[]
+  dob              DateTime?
+  gender           String?
+  city             String?
+  region           String?
+  postalCode       String?
+  skillLevel       String?
+  joiningDate      DateTime?
+  isUnder18        Boolean   @default(false)
+  guardianName     String?
+  relationship     String?
+  emergencyContact String?
+  paymentMethod    String?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  permissions           TeacherPermission[]
+  enrollments           Enrollment[]
+  inquiries             Inquiry[]
+  payments              Payment[]
+  attendances           Attendance[]
+  batchMemberships      BatchStudent[]
   assignmentSubmissions AssignmentSubmission[]
 }
 
@@ -321,19 +337,29 @@ enum SubmissionStatus {
 }
 
 model Assignment {
-  id          String   @id @default(uuid())
-  batchId     String?
-  batchName   String   @default("All Batches")
-  title       String
-  description String
-  typeTag     String   @default("Practical Assessment")
-  dueDate     DateTime
-  totalPoints Int      @default(100)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String   @id @default(uuid())
+  batchId          String?
+  batchName        String   @default("All Batches")
+  title            String
+  description      String
+  typeTag          String   @default("Practical Assessment")
+  dueDate          DateTime
+  totalPoints      Int      @default(100)
+  referenceFileUrl String?
+  status           String   @default("ACTIVE")
 
-  batch       Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  submissions AssignmentSubmission[]
+  // Teacher fields
+  teacherId        String?
+  teacherName      String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  batch            Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  submissions      AssignmentSubmission[]
+
+  // Optional: relation to User
+  // teacher         User?    @relation(fields: [teacherId], references: [id], onDelete: SetNull)
 }
 
 model AssignmentSubmission {

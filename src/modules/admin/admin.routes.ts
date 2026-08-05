@@ -31,6 +31,8 @@ import {
   createAssignment,
   getAssignmentSubmissions,
   gradeAssignmentSubmission,
+  getAssignmentDetails,
+  getAssignmentSubmissionsByAssignment,
   getExams,
   createExam,
   getExamResults,
@@ -94,6 +96,12 @@ router.get("/assignments", requirePermission(Permission.MANAGE_COURSES), getAssi
 router.post("/assignments", requirePermission(Permission.MANAGE_COURSES), createAssignment);
 router.get("/assignments/submissions", requirePermission(Permission.MANAGE_COURSES), getAssignmentSubmissions);
 router.post("/assignments/submissions/:id/grade", requirePermission(Permission.MANAGE_COURSES), gradeAssignmentSubmission);
+router.get("/assignments/:id", requirePermission(Permission.MANAGE_COURSES), getAssignmentDetails);
+router.get(
+  "/assignments/:id/submissions",
+  requirePermission(Permission.MANAGE_COURSES),
+  getAssignmentSubmissionsByAssignment
+);
 
 // 5.8 Exam Management
 router.get("/exams", requirePermission(Permission.VIEW_EXAMS), getExams);

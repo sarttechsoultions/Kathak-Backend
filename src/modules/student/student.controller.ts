@@ -10,248 +10,270 @@ import {
   signUserToken,
 } from "../../lib/authHelpers";
 
-export const enrollStudent = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+
+const cleanPhoneInput = (phone: unknown): string => {
+  return String(phone || "").replace(/[^\d+]/g, "").trim();
+};
+
+const toE164 = (phone: unknown, countryCode: unknown = "+91"): string => {
+  const digits = String(phone || "").replace(/\D/g, "");
+  const code = String(countryCode || "+91").replace(/\D/g, "");
+
+  if (code && digits.startsWith(code)) {
+    return `+${digits}`;
+  }
+
+  return `+${code}${digits}`;
+};
+
+const normalizeForLookup = (input: unknown): string[] => {
+  const cleaned = cleanPhoneInput(input);
+  const digitsOnly = cleaned.replace(/\D/g, "");
+
+  const candidates = new Set<string>();
+
+  if (cleaned.startsWith("+")) {
+    candidates.add(cleaned);
+  }
+
+  candidates.add(`+${digitsOnly}`);
+  candidates.add(digitsOnly);
+
+  // Common India cases
+  if (digitsOnly.length === 10) {
+    candidates.add(`+91${digitsOnly}`);
+  }
+  if (digitsOnly.length === 12 && digitsOnly.startsWith("91")) {
+    candidates.add(`+${digitsOnly}`);
+  }
+
+  return Array.from(candidates);
+};
+
+export const enrollStudent = async (req: Request, res: Response): Promise<void> => {
   try {
     const {
-      fullName,
-      email,
-      phone,
-      password,
-      courseId,
-      courseTitle,
-      skillLevel,
-      batch,
-      joiningDate,
-      paymentMethod,
-      groupFeeINR,
-      groupFeeUSD
+fullName,
+  email,
+  phone,
+  password,
+  courseId,
+  batchId,
+  country,
+  countryCode,
+  address,
+  profileImage,
+  dob,
+  gender,
+  city,
+  region,
+  postalCode,
+  skillLevel,
+  joiningDate,
+  isUnder18,
+  guardianName,
+  relationship,
+  emergencyContact,
+  paymentMethod,
+      // ... other fields
     } = req.body;
 
-    // Validation
+    // ---------- Validation ----------
     if (!fullName?.trim()) {
-      res.status(400).json({
-        status: "error",
-        message: "Full Name is required."
-      });
+      res.status(400).json({ status: "error", message: "Full Name is required." });
       return;
     }
 
     if (!email?.trim()) {
-      res.status(400).json({
-        status: "error",
-        message: "Email is required."
-      });
+      res.status(400).json({ status: "error", message: "Email is required." });
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
     if (!emailRegex.test(email)) {
+      res.status(400).json({ status: "error", message: "Invalid email address." });
+      return;
+    }
+
+    if (!country?.toString().trim()) {
+      res.status(400).json({ status: "error", message: "Country is required." });
+      return;
+    }
+
+    if (!phone?.toString().trim()) {
+      res.status(400).json({ status: "error", message: "Phone number is required." });
+      return;
+    }
+
+    // Convert to E.164
+    const e164Phone = toE164(phone, countryCode || "+91");
+
+    // Basic length check (E.164 is max 15 digits after +)
+    const digitsOnly = e164Phone.replace(/\D/g, "");
+    if (digitsOnly.length < 10 || digitsOnly.length > 15) {
       res.status(400).json({
         status: "error",
-        message: "Invalid email address."
+        message: "Please enter a valid international phone number (10–15 digits).",
       });
       return;
     }
 
-    if (!phone?.trim()) {
-      res.status(400).json({
-        status: "error",
-        message: "Phone number is required."
-      });
-      return;
-    }
-
-    if (!/^\d{10}$/.test(phone)) {
-      res.status(400).json({
-        status: "error",
-        message: "Phone number must be exactly 10 digits."
-      });
+    if (!address?.toString().trim()) {
+      res.status(400).json({ status: "error", message: "Residential address is required." });
       return;
     }
 
     if (!password || password.length < 6) {
-      res.status(400).json({
-        status: "error",
-        message: "Password must be at least 6 characters."
-      });
+      res.status(400).json({ status: "error", message: "Password must be at least 6 characters." });
       return;
     }
 
-    if (!courseId) {  
-      res.status(400).json({
-        status: "error",
-        message: "Course is required."
-      });
+    if (!courseId) {
+      res.status(400).json({ status: "error", message: "Course is required." });
       return;
+    }
+
+    if (batchId && !String(batchId).trim()) {
+      res.status(400).json({ status: "error", message: "Batch selection is invalid." });
+      return;
+    }
+
+    let batchRecord = null;
+    if (batchId) {
+      batchRecord = await prisma.batch.findUnique({ where: { id: String(batchId) } });
+      if (!batchRecord) {
+        res.status(400).json({ status: "error", message: "Selected batch does not exist." });
+        return;
+      }
+      if (batchRecord.courseId && batchRecord.courseId !== String(courseId)) {
+        res.status(400).json({ status: "error", message: "Selected batch does not belong to the chosen course." });
+        return;
+      }
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const normalizedPhone = phone.trim();
+    const normalizedCountryCode = countryCode
+      ? (String(countryCode).startsWith("+") ? String(countryCode) : `+${countryCode}`)
+      : "+91";
 
-    // Duplicate Check
+    // ---------- Duplicate Check ----------
     const existingUser = await prisma.user.findFirst({
       where: {
         OR: [
-          {
-            email: normalizedEmail
-          },
-          {
-            phone: normalizedPhone
-          }
-        ]
-      }
+          { email: normalizedEmail },
+          { phone: e164Phone },                    // exact E.164 match
+        ],
+      },
     });
 
     if (existingUser) {
       res.status(409).json({
         status: "error",
-        message: "An account with this email or phone already exists. Please login."
+        message: "An account with this email or phone already exists. Please login.",
       });
       return;
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    // ---------- Transaction ----------
+  const result = await prisma.$transaction(async (tx) => {
+  const passwordHash = await bcrypt.hash(password, 10);
 
-      const passwordHash = await bcrypt.hash(password, 10);
-
-      const user = await tx.user.create({
-        data: {
-          fullName: fullName.trim(),
-          email: normalizedEmail,
-          phone: normalizedPhone,
-          passwordHash,
-          role: Role.STUDENT,
-          avatarUrl: "/Ananya.png",
-          isActive: true
-        }
-      });
-
-      console.log("Received courseId:", courseId);
-
-const course = await tx.course.findUnique({
-  where: {
-    id: courseId
-  }
+const user = await tx.user.create({
+  data: {
+    fullName: fullName.trim(),
+    email: normalizedEmail,
+    phone: e164Phone,
+    countryCode: normalizedCountryCode,
+    passwordHash,
+    role: Role.STUDENT,
+    avatarUrl: profileImage?.trim() || null,
+    country: country?.trim() || "India",
+    address: address?.trim() || null,
+    dob: dob ? new Date(dob) : null,
+    gender: gender?.trim() || null,
+    city: city?.trim() || null,
+    region: region?.trim() || null,
+    postalCode: postalCode?.trim() || null,
+    skillLevel: skillLevel?.trim() || null,
+    joiningDate: joiningDate ? new Date(joiningDate) : null,
+    isUnder18: Boolean(isUnder18),
+    guardianName: guardianName?.trim() || null,
+    relationship: relationship?.trim() || null,
+    emergencyContact: emergencyContact?.trim() || null,
+    paymentMethod: paymentMethod?.trim() || null,
+    isActive: true,
+  },
 });
 
-console.log("Course Found:", course);
-            // Create Enrollment
-      const enrollment = await tx.enrollment.create({
-        data: {
-          userId: user.id,
-          courseId,
-          mode: ClassMode.ONLINE,
-          type: "GROUP",
-          active: true
-        }
-      });
+  const enrollment = await tx.enrollment.create({
+    data: {
+      userId: user.id,
+      courseId: String(courseId),
+      mode: ClassMode.ONLINE,
+      type: "GROUP",
+      active: true,
+    },
+  });
 
-      // Assign Student to Batch
-      if (batch) {
-
-        const targetBatch = await tx.batch.findFirst({
-          where: {
-            OR: [
-              {
-                name: {
-                  contains: String(batch).substring(0, 8),
-                  mode: "insensitive"
-                }
-              },
-              {
-                code: String(batch)
-              }
-            ]
-          }
-        });
-
-        if (!targetBatch) {
-          throw new Error("Selected batch not found.");
-        }
-
-        await tx.batchStudent.create({
-          data: {
-            batchId: targetBatch.id,
-            studentId: user.id
-          }
-        });
-
-        await tx.batch.update({
-          where: {
-            id: targetBatch.id
-          },
-          data: {
-            totalStudents: {
-              increment: 1
-            }
-          }
-        });
-      }
-
-      return {
-        user,
-        enrollment
-      };
-
-    });
-        const signOptions: SignOptions = {
-      expiresIn: env.jwtExpiresIn as SignOptions["expiresIn"]
-    };
-
-    const token = jwt.sign(
-      {
-        id: result.user.id,
-        email: result.user.email,
-        role: result.user.role,
-        permissions: []
+  if (batchId) {
+    await tx.batchStudent.create({
+      data: {
+        batchId: String(batchId),
+        studentId: user.id,
       },
-      env.jwtSecret,
-      signOptions
-    );
+    });
+
+    await tx.batch.update({
+      where: { id: String(batchId) },
+      data: { totalStudents: { increment: 1 } },
+    });
+  }
+
+  return { user, enrollment };
+});
+
+    const { token, expiresInMs } = signUserToken({
+      id: result.user.id,
+      email: result.user.email,
+      role: result.user.role,
+      permissions: [],
+      rememberMe: true,
+    });
+
+    setPortalAuthCookie(res, "student", token, expiresInMs);
 
     res.status(201).json({
       status: "success",
-      message: `Enrollment & course purchase completed successfully for ${result.user.fullName}!`,
+      message: "Student enrolled successfully.",
       data: {
+        token,
         user: {
           id: result.user.id,
           fullName: result.user.fullName,
           email: result.user.email,
           phone: result.user.phone,
+          country: result.user.country,
+          countryCode: result.user.countryCode,
+          address: result.user.address,
           role: result.user.role,
-          avatarUrl: result.user.avatarUrl
+          avatarUrl: result.user.avatarUrl,
+          isActive: result.user.isActive,
+          createdAt: result.user.createdAt,
+          updatedAt: result.user.updatedAt,
         },
-        token,
-        courseEnrollment: {
+        enrollment: {
           id: result.enrollment.id,
-          courseId,
-          courseTitle: courseTitle || "",
-          batch: batch || "",
-          skillLevel: skillLevel || "Beginner",
-          joiningDate:
-            joiningDate || new Date().toISOString().split("T")[0],
-          paymentMethod: paymentMethod || "",
-          paymentStatus: "PENDING",
-          amountPaid: groupFeeINR
-            ? `₹${groupFeeINR}`
-            : groupFeeUSD
-            ? `$${groupFeeUSD}`
-            : "-"
-        }
-      }
+          courseId: result.enrollment.courseId,
+          mode: result.enrollment.mode,
+          type: result.enrollment.type,
+          active: result.enrollment.active,
+          createdAt: result.enrollment.createdAt,
+        },
+      },
     });
-
   } catch (error: any) {
-    console.error("Student Enrollment Error:", error);
-
-    res.status(500).json({
-      status: "error",
-      message: error.message || "Failed to process enrollment."
-    });
+    console.error("Student enrollment error:", error);
+    res.status(500).json({ status: "error", message: "Enrollment failed." });
   }
 };
 
@@ -262,7 +284,7 @@ export const getStudentProfile = async (
   try {
     const student = await prisma.user.findUnique({
       where: {
-        id: req.user!.id
+        id: req.user!.id,
       },
       select: {
         id: true,
@@ -271,31 +293,104 @@ export const getStudentProfile = async (
         phone: true,
         role: true,
         avatarUrl: true,
+        countryCode: true,
         country: true,
+        address: true,
         isActive: true,
-        createdAt: true
-      }
+        createdAt: true,
+        dob: true,
+        gender: true,
+        skillLevel: true,          // → level
+        guardianName: true,
+        relationship: true,
+        emergencyContact: true,
+        city: true,
+        region: true,
+        postalCode: true,
+        batchMemberships: {
+          select: {
+            batch: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                courseName: true,
+                teacherName: true,
+                schedule: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!student) {
       res.status(404).json({
         status: "error",
-        message: "Student not found."
+        message: "Student not found.",
       });
       return;
     }
 
+    const enrolledBatches = (student.batchMemberships || [])
+      .map((membership: any) => membership.batch)
+      .filter(Boolean);
+
+    const firstBatch = enrolledBatches[0];
+
+    // Guardian ko better handle karo
+    let father = null;
+    let mother = null;
+    if (student.guardianName) {
+      if (student.relationship?.toLowerCase().includes("father")) {
+        father = student.guardianName;
+      } else if (student.relationship?.toLowerCase().includes("mother")) {
+        mother = student.guardianName;
+      } else {
+        // agar relationship clear nahi hai to father mein daal do
+        father = student.guardianName;
+      }
+    }
+
     res.json({
       status: "success",
-      data: student
+      data: {
+        id: student.id,
+        fullName: student.fullName,
+        email: student.email,
+        phone: student.phone,
+        countryCode: student.countryCode,
+        role: student.role,
+        avatarUrl: student.avatarUrl,
+        country: student.country,
+        address: student.address,
+        isActive: student.isActive,
+        createdAt: student.createdAt,
+   dob: student.dob
+  ? new Date(student.dob).toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    })
+  : null,
+        gender: student.gender,
+        level: student.skillLevel,                    // frontend "level" expect karta hai
+        batch: firstBatch?.name || firstBatch?.courseName || firstBatch?.code || null,
+        guru: firstBatch?.teacherName || null,
+        father,
+        mother,
+        emergencyContact: student.emergencyContact,
+        // extra useful fields (optional)
+        city: student.city,
+        region: student.region,
+        postalCode: student.postalCode,
+      },
     });
-
   } catch (error) {
     console.error(error);
-
     res.status(500).json({
       status: "error",
-      message: "Failed to fetch profile."
+      message: "Failed to fetch profile.",
     });
   }
 };
@@ -305,7 +400,7 @@ export const updateStudentProfile = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { fullName, phone, country, avatarUrl } = req.body;
+    const { fullName, phone, country, countryCode, address, avatarUrl, gender } = req.body;
 
     const student = await prisma.user.findUnique({
       where: {
@@ -321,53 +416,78 @@ export const updateStudentProfile = async (
       return;
     }
 
-    // Check duplicate phone number
-    if (phone && phone !== student.phone) {
-      const existingPhone = await prisma.user.findFirst({
-        where: {
-          phone,
-          NOT: {
-            id: student.id
-          }
-        }
-      });
+    const normalizedPhone = phone ? toE164(phone, countryCode ?? student.countryCode) : student.phone;
+const normalizedCountryCode = countryCode
+  ? (String(countryCode).startsWith("+") ? String(countryCode) : `+${String(countryCode)}`)
+  : student.countryCode;
 
-      if (existingPhone) {
-        res.status(409).json({
-          status: "error",
-          message: "Phone number already exists."
-        });
-        return;
-      }
-    }
+// Duplicate check
+if (phone && normalizedPhone !== student.phone) {
+  const existingPhone = await prisma.user.findFirst({
+    where: {
+      phone: normalizedPhone,
+      NOT: { id: student.id },
+    },
+  });
+
+  if (existingPhone) {
+    res.status(409).json({ status: "error", message: "Phone number already exists." });
+    return;
+  }
+}
 
     const updatedStudent = await prisma.user.update({
-      where: {
-        id: student.id
-      },
-      data: {
-        fullName: fullName ?? student.fullName,
-        phone: phone ?? student.phone,
-        country: country ?? student.country,
-        avatarUrl: avatarUrl ?? student.avatarUrl
-      },
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        country: true,
-        avatarUrl: true,
-        role: true,
-        isActive: true
-      }
-    });
+  where: {
+    id: student.id,
+  },
+  data: {
+    fullName: fullName ?? student.fullName,
+    phone: normalizedPhone,
+    countryCode: normalizedCountryCode,
+    country: country ?? student.country,
+    address: address ?? student.address,
+    avatarUrl: avatarUrl ?? student.avatarUrl,
+    gender: gender ?? student.gender,
+  },
+  select: {
+    id: true,
+    fullName: true,
+    email: true,
+    phone: true,
+    countryCode: true,
+    country: true,
+    address: true,
+    avatarUrl: true,
+    role: true,
+    isActive: true,
+    createdAt: true,
+    dob: true,                    // ← sirf true
+    gender: true,
+    skillLevel: true,
+    guardianName: true,
+    relationship: true,
+    emergencyContact: true,
+  },
+});
 
-    res.json({
-      status: "success",
-      message: "Profile updated successfully.",
-      data: updatedStudent
-    });
+// Format yahan karo
+const formattedStudent = {
+  ...updatedStudent,
+  dob: updatedStudent.dob
+    ? new Date(updatedStudent.dob).toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      })
+    : null,
+  level: updatedStudent.skillLevel, // frontend "level" expect karta hai
+};
+
+res.json({
+  status: "success",
+  message: "Profile updated successfully.",
+  data: formattedStudent,
+});
 
   } catch (error) {
     console.error(error);
@@ -457,54 +577,47 @@ export const changeStudentPassword = async (
 
 export const studentLogin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { emailOrPhone, password, rememberMe } = req.body;  // rememberMe optional
+    const { emailOrPhone, password, rememberMe } = req.body;
 
     if (!emailOrPhone || !password) {
       res.status(400).json({
         status: "error",
-        message: "Email/Phone and Password are required."
+        message: "Email/Phone and Password are required.",
       });
       return;
     }
 
     const loginValue = String(emailOrPhone).trim();
 
-    const user = await prisma.user.findFirst({
+    // Try email first
+    let user = await prisma.user.findFirst({
       where: {
-        role: Role.STUDENT,          // pehle se hai
-        OR: [
-          { email: loginValue.toLowerCase() },
-          { phone: loginValue }
-        ]
-      }
+        email: loginValue.toLowerCase(),
+      },
     });
 
+    // If not found by email → try phone with multiple possible formats
     if (!user) {
-      res.status(404).json({ status: "error", message: "Student account not found." });
-      return;
+      const phoneCandidates = normalizeForLookup(loginValue);
+
+      user = await prisma.user.findFirst({
+        where: {
+          phone: { in: phoneCandidates },
+        },
+      });
     }
 
-    if (!user.isActive) {
-      res.status(403).json({ status: "error", message: "Your account is inactive." });
+    if (!user || !user.isActive || user.role !== Role.STUDENT) {
+      res.status(401).json({ status: "error", message: "Invalid credentials." });
       return;
     }
-
-    // ---------- YAHAN ADD KARO (password check se pehle bhi chalega) ----------
-    const portalError = validatePortalAccess(user.role, "student");
-    if (portalError) {
-      res.status(403).json({ status: "error", message: portalError });
-      return;
-    }
-    // --------------------------------------------------------------------------
 
     const passwordMatched = await bcrypt.compare(password, user.passwordHash);
-
     if (!passwordMatched) {
       res.status(401).json({ status: "error", message: "Invalid credentials." });
       return;
     }
 
-    // ---------- PURANA jwt.sign HATAO, YE LIKHO ----------
     const { token, expiresInMs } = signUserToken({
       id: user.id,
       email: user.email,
@@ -514,25 +627,24 @@ export const studentLogin = async (req: Request, res: Response): Promise<void> =
     });
 
     setPortalAuthCookie(res, "student", token, expiresInMs);
-    // -----------------------------------------------------
 
     res.json({
       status: "success",
       message: "Login successful.",
       data: {
-        token,                       // transitional – frontend abhi use kar sakta hai
+        token,
         user: {
           id: user.id,
           fullName: user.fullName,
           email: user.email,
-          phone: user.phone,
+          phone: user.phone,               // already in E.164
           role: user.role,
           avatarUrl: user.avatarUrl,
-          country: user.country
-        }
-      }
+          country: user.country,
+          countryCode: user.countryCode,
+        },
+      },
     });
-
   } catch (error) {
     console.error("Student Login Error:", error);
     res.status(500).json({ status: "error", message: "Login failed." });
@@ -639,26 +751,33 @@ export const getStudentAssignments = async (req: Request, res: Response): Promis
       return false;
     });
 
-    const mapped = filteredAssignments.map((a: any) => {
-      const sub = a.submissions[0];
-      let status = "PENDING";
-      if (sub) {
-        status = sub.status === "GRADED" ? "EVALUATED" : "SUBMITTED";
-      }
+const mapped = filteredAssignments.map((a: any) => {
+  const sub = a.submissions[0];
+  let status = "PENDING";
+  if (sub) {
+    status = sub.status === "GRADED" ? "EVALUATED" : "SUBMITTED";
+  }
 
-      return {
-        id: a.id,
-        name: a.title,
-        typeTag: a.typeTag || "Practical Assessment",
-        course: a.batchName || "KATHAK",
-        dueDate: new Date(a.dueDate).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
-        status,
-        grade: sub?.grade ? `${sub.grade}/100` : "—",
-        feedback: sub?.feedback || sub?.notes || null,
-        notes: sub?.notes || null,
-        fileUrl: sub?.fileUrl
-      };
-    });
+  return {
+    id: a.id,
+    name: a.title,
+    typeTag: a.typeTag || "Practical Assessment",
+    course: a.batchName || "KATHAK",
+    dueDate: new Date(a.dueDate).toLocaleDateString("en-US", {
+      month: "short",
+      day: "2-digit",
+      year: "numeric",
+    }),
+    status,
+    grade: sub?.grade ? `${sub.grade}/100` : "—",
+    feedback: sub?.feedback || sub?.notes || null,
+    notes: sub?.notes || null,
+    fileUrl: sub?.fileUrl,
+    referenceFileUrl: a.referenceFileUrl || null,  // ✅ zaruri
+    description: a.description || null,
+    maxPoints: a.totalPoints ? `${a.totalPoints} pts` : "100 pts",
+  };
+});
 
     const totalAssigned = mapped.length;
     const pendingCount = mapped.filter((m: any) => m.status === "PENDING").length;
@@ -676,6 +795,8 @@ export const getStudentAssignments = async (req: Request, res: Response): Promis
     res.status(500).json({ status: "error", message: "Failed to fetch assignments." });
   }
 };
+
+
 
 export const submitStudentAssignment = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -903,5 +1024,193 @@ export const submitStudentExam = async (req: Request, res: Response): Promise<vo
   } catch (error) {
     console.error("Submit Exam Error:", error);
     res.status(500).json({ status: "error", message: "Failed to submit exam." });
+  }
+};
+
+export const getStudentDashboard = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+
+    const student = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        batchMemberships: {
+          include: {
+            batch: {
+              include: {
+                course: {
+                  include: {
+                    lessons: true
+                  }
+                },
+                liveClasses: true,
+                assignments: true
+              }
+            }
+          }
+        },
+        enrollments: {
+          include: {
+            course: {
+              include: {
+                lessons: true
+              }
+            }
+          }
+        },
+        attendances: {
+          orderBy: { date: "desc" },
+          take: 5,
+          include: {
+            batch: true
+          }
+        },
+        assignmentSubmissions: true
+      }
+    });
+
+    if (!student) {
+      res.status(404).json({ status: "error", message: "Student profile not found." });
+      return;
+    }
+
+    const enrolledBatches = (student.batchMemberships || []).map((m: any) => m.batch).filter(Boolean);
+    const firstBatch = enrolledBatches[0];
+    const primaryCourse = firstBatch?.course || student.enrollments[0]?.course;
+
+    const courseTitle = primaryCourse?.title || firstBatch?.courseName || firstBatch?.name || "";
+    const totalLessons = primaryCourse?.lessons?.length || 0;
+    const completedSubmissions = student.assignmentSubmissions?.length || 0;
+    const progressPercent = totalLessons > 0 ? Math.min(100, Math.round((completedSubmissions / totalLessons) * 100)) : (completedSubmissions > 0 ? 100 : 0);
+
+    // Fetch live classes across student's enrolled batches
+    const batchIds = enrolledBatches.map((b: any) => b.id);
+    const liveClasses = batchIds.length > 0 ? await (prisma as any).liveClass.findMany({
+      where: {
+        batchId: { in: batchIds }
+      },
+      orderBy: { scheduledStart: "asc" }
+    }) : [];
+
+    const todayStr = new Date().toISOString().split("T")[0];
+    const todayClass = liveClasses.find((lc: any) => {
+      const lcDate = new Date(lc.scheduledStart).toISOString().split("T")[0];
+      return lcDate === todayStr;
+    });
+
+    const upcomingClass = liveClasses.find((lc: any) => new Date(lc.scheduledStart).getTime() > Date.now());
+
+    // Calculate pending assignments
+    const allBatchAssignments = enrolledBatches.flatMap((b: any) => b.assignments || []);
+    const submittedAssignmentIds = new Set((student.assignmentSubmissions || []).map((s: any) => s.assignmentId));
+    const pendingAssignmentsCount = allBatchAssignments.filter((a: any) => !submittedAssignmentIds.has(a.id)).length;
+
+    // Course progress list
+    const courseProgressList = (student.enrollments || []).map((e: any) => {
+      const cLessons = e.course?.lessons?.length || 0;
+      const percent = cLessons > 0 ? Math.min(100, Math.round((completedSubmissions / cLessons) * 100)) : 0;
+      return {
+        name: e.course?.title || "Enrolled Course",
+        percent
+      };
+    });
+
+    // Reminders
+    const reminders: { title: string; subtitle: string }[] = [];
+    if (upcomingClass) {
+      reminders.push({
+        title: upcomingClass.title || "Live Practice Session",
+        subtitle: `Starting at ${new Date(upcomingClass.scheduledStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+      });
+    }
+
+    const unsubmittedWithDueDate = allBatchAssignments.filter((a: any) => !submittedAssignmentIds.has(a.id) && a.dueDate);
+    unsubmittedWithDueDate.slice(0, 2).forEach((a: any) => {
+      reminders.push({
+        title: a.title || "Assignment Submission",
+        subtitle: `Due: ${new Date(a.dueDate).toLocaleDateString()}`
+      });
+    });
+
+    const dashboardData = {
+      user: {
+        id: student.id,
+        fullName: student.fullName,
+        email: student.email,
+        phone: student.phone,
+        profileImage: student.avatarUrl
+      },
+      currentCourse: courseTitle ? {
+        title: courseTitle,
+        subtitle: primaryCourse?.description || "Master the rhythm of the soul. Practice your Mudras & Tatkaar today!",
+        completedLessons: completedSubmissions,
+        totalLessons: totalLessons,
+        progressPercent: progressPercent
+      } : null,
+      todayLiveClass: todayClass ? {
+        title: todayClass.title,
+        instructor: todayClass.teacherName || firstBatch?.teacherName || "Faculty Instructor",
+        timeStr: new Date(todayClass.scheduledStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        isLive: todayClass.status === "LIVE" || todayClass.status === "SCHEDULED",
+        meetingLink: todayClass.zoomLink || todayClass.roomName || "/student/classes/room"
+      } : null,
+      recentClasses: (student.attendances || []).map((att: any) => ({
+        title: att.batch?.name || "Practice Session",
+        subtitle: att.batch?.courseName || "Kathak Lesson",
+        status: att.status === "PRESENT" ? "Present" : "Absent",
+        date: new Date(att.date).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
+      })),
+      upcomingLiveClass: upcomingClass ? {
+        title: upcomingClass.title,
+        subtitle: upcomingClass.description || "Chakkar Techniques",
+        timeStr: new Date(upcomingClass.scheduledStart).toLocaleString([], { dateStyle: "short", timeStyle: "short" }),
+        durationStr: `${upcomingClass.durationMins || 60} min`,
+        meetingLink: upcomingClass.zoomLink || upcomingClass.roomName || "https://zoom.us"
+      } : null,
+      courseProgress: courseProgressList,
+      metrics: {
+        completedLessons: completedSubmissions,
+        practiceHours: `${Math.floor(completedSubmissions * 1.5)}h 00m`,
+        assignmentsPending: pendingAssignmentsCount
+      },
+      reminders
+    };
+
+    res.json({ status: "success", data: dashboardData });
+  } catch (error) {
+    console.error("Get Student Dashboard Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch student dashboard data." });
+  }
+};
+
+export const getPublicCourses = async (req: Request, res: Response) => {
+  try {
+    const courses = await prisma.course.findMany({
+      where: { published: true },
+      select: {
+        id: true,
+        title: true,
+        groupFeeINR: true,
+        groupFeeUSD: true,
+        category: true,
+        // batches bhi chahiye to include karo
+        batches: {
+          select: {
+            id: true,
+            name: true,
+            schedule: true,
+            code: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    res.json({
+      status: "success",
+      data: { courses },
+    });
+  } catch (error) {
+    res.status(500).json({ status: "error", message: "Failed to fetch courses" });
   }
 };

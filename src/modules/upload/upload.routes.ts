@@ -7,19 +7,21 @@ const storage = multer.memoryStorage();
 
 const uploadImageMulter = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit for image
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 const uploadVideoMulter = multer({
   storage,
-  limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit for video
+  limits: { fileSize: 500 * 1024 * 1024 },
 });
 
 const router = Router();
 
-router.use(authenticate);
+// ✅ PUBLIC — enroll profile photo (no auth)
+router.post("/image/public", uploadImageMulter.single("image"), uploadImage);
 
-router.post("/image", uploadImageMulter.single("image"), uploadImage);
-router.post("/video", uploadVideoMulter.single("video"), uploadVideoToBunny);
+// Protected uploads
+router.post("/image", authenticate, uploadImageMulter.single("image"), uploadImage);
+router.post("/video", authenticate, uploadVideoMulter.single("video"), uploadVideoToBunny);
 
 export default router;

@@ -274,15 +274,17 @@ export const updateStudent = async (req: Request, res: Response): Promise<void> 
         const targetBatchId = String(batchId);
         const batch = await tx.batch.findUnique({ where: { id: targetBatchId } });
         if (batch) {
-          const oldMembership = await tx.batchStudent.findFirst({ where: { studentId: id } });
-          if (oldMembership && oldMembership.batchId !== targetBatchId) {
-            await tx.batchStudent.delete({
-              where: { batchId_studentId: { batchId: oldMembership.batchId, studentId: id } }
-            });
-            await tx.batch.update({
-              where: { id: oldMembership.batchId },
-              data: { totalStudents: { decrement: 1 } }
-            });
+          const oldMemberships = await tx.batchStudent.findMany({ where: { studentId: id } });
+          for (const old of oldMemberships) {
+            if (old.batchId !== targetBatchId) {
+              await tx.batchStudent.delete({
+                where: { batchId_studentId: { batchId: old.batchId, studentId: id } }
+              });
+              await tx.batch.update({
+                where: { id: old.batchId },
+                data: { totalStudents: { decrement: 1 } }
+              });
+            }
           }
 
           const exists = await tx.batchStudent.findUnique({
@@ -385,21 +387,36 @@ export const assignStudentBatch = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const exists = await prisma.batchStudent.findUnique({
-      where: { batchId_studentId: { batchId: targetBatchId, studentId: id } }
-    });
+    await prisma.$transaction(async (tx) => {
+      const oldMemberships = await tx.batchStudent.findMany({ where: { studentId: id } });
+      for (const old of oldMemberships) {
+        if (old.batchId !== targetBatchId) {
+          await tx.batchStudent.delete({
+            where: { batchId_studentId: { batchId: old.batchId, studentId: id } }
+          });
+          await tx.batch.update({
+            where: { id: old.batchId },
+            data: { totalStudents: { decrement: 1 } }
+          });
+        }
+      }
 
-    if (!exists) {
-      await prisma.batchStudent.create({ data: { batchId: targetBatchId, studentId: id } });
-      await prisma.batch.update({
-        where: { id: targetBatchId },
-        data: { totalStudents: { increment: 1 } }
+      const exists = await tx.batchStudent.findUnique({
+        where: { batchId_studentId: { batchId: targetBatchId, studentId: id } }
       });
-    }
+
+      if (!exists) {
+        await tx.batchStudent.create({ data: { batchId: targetBatchId, studentId: id } });
+        await tx.batch.update({
+          where: { id: targetBatchId },
+          data: { totalStudents: { increment: 1 } }
+        });
+      }
+    });
 
     res.json({ status: "success", message: "Batch assigned to student successfully." });
   } catch (error) {
-    console.error(error);
+    console.error("Assign Student Batch Error:", error);
     res.status(500).json({ status: "error", message: "Failed to assign batch." });
   }
 };
@@ -427,6 +444,39 @@ export const removeStudentBatch = async (req: Request, res: Response): Promise<v
 export const getBatchStudents = async (req: Request, res: Response): Promise<void> => {
   try {
     const batchId = req.params.batchId ? (req.params.batchId as string) : undefined;
+
+    // Strict 1-Student 1-Batch DB Enforcer: Clean up any legacy duplicate memberships
+    const allMemberships = await prisma.batchStudent.findMany({
+      orderBy: { createdAt: "desc" }
+    });
+    const seenStudents = new Set<string>();
+    const duplicateMemberships: { batchId: string; studentId: string }[] = [];
+
+    for (const m of allMemberships) {
+      if (seenStudents.has(m.studentId)) {
+        duplicateMemberships.push({ batchId: m.batchId, studentId: m.studentId });
+      } else {
+        seenStudents.add(m.studentId);
+      }
+    }
+
+    if (duplicateMemberships.length > 0) {
+      for (const dup of duplicateMemberships) {
+        await prisma.batchStudent.delete({
+          where: { batchId_studentId: { batchId: dup.batchId, studentId: dup.studentId } }
+        }).catch(() => {});
+      }
+    }
+
+    // Sync totalStudents count for all batches
+    const allBatches = await prisma.batch.findMany();
+    for (const b of allBatches) {
+      const actualCount = await prisma.batchStudent.count({ where: { batchId: b.id } });
+      if (b.totalStudents !== actualCount) {
+        await prisma.batch.update({ where: { id: b.id }, data: { totalStudents: actualCount } }).catch(() => {});
+      }
+    }
+
     const students = await prisma.batchStudent.findMany({
       where: batchId ? { batchId } : {},
       include: {
@@ -451,16 +501,18 @@ export const getBatchStudents = async (req: Request, res: Response): Promise<voi
       data: students.map((bs) => ({
         id: bs.student.id,
         fullName: bs.student.fullName,
-        name: bs.student.fullName,
         email: bs.student.email,
         phone: bs.student.phone,
         avatar: bs.student.avatarUrl || "/Ananya.png",
-        batchId: bs.batchId,
-        batchName: bs.batch.name
+        studentId: `#KL-2024-${bs.student.id.slice(0, 4).toUpperCase()}`,
+        batchName: bs.batch.code || bs.batch.name,
+        batchId: bs.batch.id,
+        joiningDate: new Date(bs.student.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        assignmentsSubmitted: "0/0 Submitted"
       }))
     });
   } catch (error) {
-    console.error(error);
+    console.error("Get Batch Students Error:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch batch students." });
   }
 };
@@ -810,6 +862,40 @@ export const getBatches = async (req: Request, res: Response): Promise<void> => 
       orderBy: { createdAt: "desc" }
     });
 
+    const computeBatchStatus = (schedule?: string, dbStatus?: string) => {
+      if (schedule && schedule.includes("|")) {
+        const parts = schedule.split("|");
+        const startDateStr = parts[2];
+        const endDateStr = parts[3];
+
+        if (startDateStr) {
+          const now = new Date();
+          now.setHours(0, 0, 0, 0);
+
+          const start = new Date(startDateStr);
+          start.setHours(0, 0, 0, 0);
+
+          if (!isNaN(start.getTime()) && start > now) {
+            return "Upcoming";
+          }
+
+          if (endDateStr) {
+            const end = new Date(endDateStr);
+            end.setHours(23, 59, 59, 999);
+            if (!isNaN(end.getTime()) && now > end) {
+              return "Completed";
+            }
+          }
+
+          return "Active";
+        }
+      }
+
+      if (!dbStatus) return "Active";
+      const s = dbStatus.toUpperCase();
+      return s === "ACTIVE" || s === "ACTIVE" ? "Active" : s === "UPCOMING" ? "Upcoming" : "Completed";
+    };
+
     const mapped = batches.map((b) => ({
       id: b.id,
       name: b.name,
@@ -822,8 +908,11 @@ export const getBatches = async (req: Request, res: Response): Promise<void> => 
       schedule: b.schedule || "Mon, Wed, Fri (6:00 PM)",
       level: b.level || "ADVANCED",
       totalStudents: b.totalStudents || b.students.length || 0,
-      status: b.status === "ACTIVE" ? "Active" : b.status === "COMPLETED" ? "Completed" : "Upcoming"
+      status: computeBatchStatus(b.schedule, b.status)
     }));
+
+    const activeCount = mapped.filter((b) => b.status === "Active").length;
+    const completedCount = mapped.filter((b) => b.status === "Completed").length;
 
     res.json({
       status: "success",
@@ -831,9 +920,9 @@ export const getBatches = async (req: Request, res: Response): Promise<void> => 
         batches: mapped,
         metrics: {
           totalBatches: batches.length,
-          activeBatches: batches.filter((b) => b.status === "ACTIVE").length,
+          activeBatches: activeCount,
           totalStudents: batches.reduce((acc, b) => acc + (b.totalStudents || b.students.length || 0), 0),
-          completedBatches: batches.filter((b) => b.status === "COMPLETED").length,
+          completedBatches: completedCount,
           batchesA: batches.length,
           batchesB: 0,
           batchesC: 0
@@ -848,21 +937,45 @@ export const getBatches = async (req: Request, res: Response): Promise<void> => 
 
 export const createBatch = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, code, courseId, courseName, teacherName, schedule, level } = req.body;
-    const newBatch = await prisma.batch.create({
-      data: {
-        name,
-        code: code || `KTH-${Date.now().toString().slice(-4)}`,
-        courseId: courseId || undefined,
-        courseName: courseName || "Kathak Foundations",
-        teacherName: teacherName || "Guru Meenakshi",
-        schedule: schedule || "Mon, Wed, Fri (6:00 PM)",
-        level: level || "ADVANCED"
+    const { name, code, courseId, courseName, teacherName, schedule, level, studentIds } = req.body;
+
+    if (!name || !name.trim()) {
+      res.status(400).json({ status: "error", message: "Batch name is required." });
+      return;
+    }
+
+    const batchCode = code || `KTH-${Date.now().toString().slice(-4)}`;
+
+    const newBatch = await prisma.$transaction(async (tx) => {
+      const created = await tx.batch.create({
+        data: {
+          name: name.trim(),
+          code: batchCode,
+          courseId: courseId || undefined,
+          courseName: courseName || "Kathak Foundations",
+          teacherName: teacherName || "Guru Meenakshi",
+          schedule: schedule || "Mon, Wed, Fri (6:00 PM)",
+          level: level || "ADVANCED",
+          totalStudents: Array.isArray(studentIds) ? studentIds.length : 0
+        }
+      });
+
+      if (Array.isArray(studentIds) && studentIds.length > 0) {
+        await tx.batchStudent.createMany({
+          data: studentIds.map((sid: string) => ({
+            batchId: created.id,
+            studentId: sid
+          })),
+          skipDuplicates: true
+        });
       }
+
+      return created;
     });
+
     res.status(201).json({ status: "success", message: "Batch created successfully.", data: newBatch });
   } catch (error) {
-    console.error(error);
+    console.error("Create Batch Error:", error);
     res.status(500).json({ status: "error", message: "Failed to create batch." });
   }
 };
@@ -870,22 +983,56 @@ export const createBatch = async (req: Request, res: Response): Promise<void> =>
 export const updateBatch = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { name, code, teacherName, schedule, level, status } = req.body;
+    const { name, code, courseName, teacherName, schedule, level, status, studentIds } = req.body;
 
-    const updated = await prisma.batch.update({
-      where: { id },
-      data: {
-        name: name ?? undefined,
-        code: code ?? undefined,
-        teacherName: teacherName ?? undefined,
-        schedule: schedule ?? undefined,
-        level: level ?? undefined,
-        status: status ?? undefined
+    const existingBatch = await prisma.batch.findUnique({ where: { id } });
+    if (!existingBatch) {
+      res.status(404).json({ status: "error", message: "Batch not found." });
+      return;
+    }
+
+    let targetStatus: string | undefined = undefined;
+    if (status) {
+      const s = String(status).toUpperCase();
+      targetStatus = s === "ACTIVE" || s === "ACTIVE" ? "Active" : s === "UPCOMING" ? "Upcoming" : "Completed";
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (Array.isArray(studentIds)) {
+        await tx.batchStudent.deleteMany({ where: { batchId: id } });
+        if (studentIds.length > 0) {
+          await tx.batchStudent.createMany({
+            data: studentIds.map((sid: string) => ({
+              batchId: id,
+              studentId: sid
+            })),
+            skipDuplicates: true
+          });
+        }
       }
+
+      const totalCount = Array.isArray(studentIds)
+        ? studentIds.length
+        : await tx.batchStudent.count({ where: { batchId: id } });
+
+      return await tx.batch.update({
+        where: { id },
+        data: {
+          name: name ?? undefined,
+          code: code ?? undefined,
+          courseName: courseName ?? undefined,
+          teacherName: teacherName ?? undefined,
+          schedule: schedule ?? undefined,
+          level: level ?? undefined,
+          status: targetStatus ?? status ?? undefined,
+          totalStudents: totalCount
+        }
+      });
     });
+
     res.json({ status: "success", message: "Batch updated successfully.", data: updated });
   } catch (error) {
-    console.error(error);
+    console.error("Update Batch Error:", error);
     res.status(500).json({ status: "error", message: "Failed to update batch." });
   }
 };
@@ -893,10 +1040,13 @@ export const updateBatch = async (req: Request, res: Response): Promise<void> =>
 export const deleteBatch = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    await prisma.batch.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.batchStudent.deleteMany({ where: { batchId: id } });
+      await tx.batch.delete({ where: { id } });
+    });
     res.json({ status: "success", message: "Batch deleted successfully." });
   } catch (error) {
-    console.error(error);
+    console.error("Delete Batch Error:", error);
     res.status(500).json({ status: "error", message: "Failed to delete batch." });
   }
 };
@@ -913,11 +1063,34 @@ export const getAssignments = async (req: Request, res: Response): Promise<void>
       orderBy: { createdAt: "desc" },
     });
 
-    const mapped = assignments.map((a: any) => ({
+const mapped = await Promise.all(
+  assignments.map(async (a: any) => {
+    let teacherName = a.teacherName || "Unknown";
+    let teacherAvatar = "/Ananya.png";
+    let teacherRole = "Teacher";
+
+    if (a.teacherId) {
+      const user = await prisma.user.findUnique({
+        where: { id: a.teacherId },
+        select: {
+          fullName: true,
+          avatarUrl: true,
+          role: true,
+        },
+      });
+
+      if (user) {
+        teacherName = user.fullName || teacherName;
+        teacherAvatar = user.avatarUrl || teacherAvatar;
+        teacherRole = user.role === "ADMIN" ? "Admin" : "Teacher";
+      }
+    }
+
+    return {
       id: a.id,
-      teacherName: "Admin User",
-      teacherDept: "Faculty Lead",
-      teacherAvatar: "/Ananya.png",
+      teacherName,
+      teacherDept: teacherRole,
+      teacherAvatar,
       title: a.title,
       typeTag: a.typeTag || "Practical Assessment",
       targetBatch: a.batchName || a.batch?.name || "Kathak Basics",
@@ -927,7 +1100,9 @@ export const getAssignments = async (req: Request, res: Response): Promise<void>
         year: "numeric",
       }),
       totalStudents: `${a.submissions?.length || 0} Submissions`,
-    }));
+    };
+  })
+);
 
     // ---- Real metrics ----
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -984,25 +1159,71 @@ export const getAssignments = async (req: Request, res: Response): Promise<void>
 
 export const createAssignment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { title, description, batchId, targetBatch, dueDate, typeTag, totalPoints } = req.body;
+    const {
+      title,
+      description,
+      batchId,
+      targetBatch,
+      dueDate,
+      typeTag,
+      totalPoints,
+      referenceFileUrl,
+      status,
+    } = req.body;
+
     if (!title || !title.trim()) {
       res.status(400).json({ status: "error", message: "Assignment title is required." });
       return;
     }
 
-    const assignment = await (prisma as any).assignment.create({
-      data: {
-        title: title.trim(),
-        description: description || "Complete Tatkar practice video.",
-        typeTag: typeTag || "Practical Assessment",
-        batchId: batchId || undefined,
-        batchName: targetBatch || "All Batches",
-        dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        totalPoints: totalPoints ? Number(totalPoints) : 100
-      }
-    });
+// Logged-in user (teacher / admin)
+const teacherId = req.user?.id || null;
+const teacherName =
+  (req.user as any)?.fullName ||
+  (req.user as any)?.name ||
+  "Teacher";
 
-    res.status(201).json({ status: "success", message: "Assignment created successfully.", data: assignment });
+const data: any = {
+  title: title.trim(),
+  description: description || "Complete Tatkar practice video.",
+  typeTag: typeTag || "Practical Assessment",
+  batchName: targetBatch || "All Batches",
+  dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  totalPoints: totalPoints ? Number(totalPoints) : 100,
+  referenceFileUrl: referenceFileUrl || null,
+  teacherId,
+  teacherName,
+};
+
+    if (batchId) {
+      const targetB = await (prisma as any).batch.findUnique({ where: { id: batchId } });
+      if (
+        targetB &&
+        targetB.status &&
+        targetB.status.toLowerCase() !== "active" &&
+        targetB.status.toLowerCase() !== "started"
+      ) {
+        res.status(400).json({
+          status: "error",
+          message: `Cannot assign assignment. Batch "${targetB.name}" has not started yet (Status: ${targetB.status}).`,
+        });
+        return;
+      }
+      data.batch = { connect: { id: batchId } };
+    }
+
+    // Agar teacher relation Prisma mein defined hai to connect bhi kar sakte ho:
+    // if (teacherId) {
+    //   data.teacher = { connect: { id: teacherId } };
+    // }
+
+    const assignment = await (prisma as any).assignment.create({ data });
+
+    res.status(201).json({
+      status: "success",
+      message: "Assignment created successfully.",
+      data: assignment,
+    });
   } catch (error) {
     console.error("Create Assignment Error:", error);
     res.status(500).json({ status: "error", message: "Failed to create assignment." });
@@ -1068,7 +1289,87 @@ export const gradeAssignmentSubmission = async (req: Request, res: Response): Pr
     res.status(500).json({ status: "error", message: "Failed to grade submission." });
   }
 };
+export const getAssignmentDetails = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+const id = req.params.id as string;
+    const assignment = await prisma.assignment.findUnique({
+      where: { id },
+      include: {
+        batch: true,
+        submissions: {
+          include: {
+            student: {
+              select: {
+                id: true,
+                fullName: true,
+                avatarUrl: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
+    if (!assignment) {
+      res.status(404).json({
+        status: "error",
+        message: "Assignment not found",
+      });
+      return;
+    }
+
+    res.json({
+      status: "success",
+      data: assignment,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: "Failed to fetch assignment details",
+    });
+  }
+};
+
+export const getAssignmentSubmissionsByAssignment = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+const id = req.params.id as string;
+    const submissions = await prisma.assignmentSubmission.findMany({
+      where: {
+        assignmentId: id,
+      },
+      include: {
+        student: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            avatarUrl: true,
+          },
+        },
+        assignment: true,
+      },
+    });
+
+    res.json({
+      status: "success",
+      data: {
+        submissions,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: "Failed to fetch submissions",
+    });
+  }
+};
 // ================= 6. ATTENDANCE MANAGEMENT =================
 
 export const getAttendanceRecords = async (req: Request, res: Response): Promise<void> => {
