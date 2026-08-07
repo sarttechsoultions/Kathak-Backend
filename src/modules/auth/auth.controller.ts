@@ -44,43 +44,14 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
       loginConditions.push({ phone: normalizedLoginPhone });
     }
 
-    let user = await prisma.user.findFirst({
+    const user = await prisma.user.findFirst({
       where: {
         OR: loginConditions,
       },
       include: { permissions: true },
     });
 
-    // Ensure teacher account asw@kathak.edu or teacher@kathak.com can log in with inputted password
-    if (input.toLowerCase() === "asw@kathak.edu" || input.toLowerCase() === "teacher@kathak.com") {
-      const passwordHash = await bcrypt.hash(password, 10);
-      if (!user) {
-        user = await prisma.user.create({
-          data: {
-            fullName: "Ananya Sharma",
-            email: input.toLowerCase(),
-            phone: "9876543210",
-            passwordHash,
-            role: Role.TEACHER,
-            country: "India",
-            isActive: true
-          },
-          include: { permissions: true }
-        });
-      } else if (user.role === Role.STUDENT || !(await bcrypt.compare(password, user.passwordHash))) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            role: Role.TEACHER,
-            passwordHash,
-            isActive: true
-          },
-          include: { permissions: true }
-        });
-      }
-    }
-
-    if (!user || !user.isActive || user.role === Role.STUDENT) {
+    if (!user || !user.isActive) {
       res.status(401).json({ status: "error", message: "Invalid credentials." });
       return;
     }
@@ -88,6 +59,12 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
     const isMatch = await bcrypt.compare(password, user.passwordHash);
     if (!isMatch) {
       res.status(401).json({ status: "error", message: "Invalid credentials." });
+      return;
+    }
+
+    const portalError = validatePortalAccess(user.role, "admin");
+    if (portalError) {
+      res.status(403).json({ status: "error", message: portalError });
       return;
     }
 
@@ -118,7 +95,11 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
           permissions: permissionList,
           displayRole: roleDisplayName(user.role),
         },
-        token, // transitional – frontend abhi use kar sakta hai
+        // ⚠️ SECURITY NOTE: token is duplicated here for Bearer-header auth.
+        // If your frontend now relies only on the HttpOnly cookie, remove this
+        // and drop Bearer-header support in auth.middleware.ts — returning the
+        // token in JSON lets any XSS on the frontend steal it, defeating HttpOnly.
+        token,
       },
     });
   } catch (error) {
@@ -146,7 +127,7 @@ export const logoutUser = async (req: Request, res: Response): Promise<void> => 
       const expiresAtMs = decoded?.exp
         ? decoded.exp * 1000
         : Date.now() + 7 * 24 * 60 * 60 * 1000;
-      revokeToken(token, expiresAtMs);
+      await revokeToken(token, expiresAtMs);
     }
 
     // Dono portal cookies clear karo

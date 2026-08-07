@@ -97,7 +97,7 @@ export const listTeacherLiveClasses = async (req: Request, res: Response) => {
   const teacherId = req.user!.id;
 
   const teacherBatches = await prisma.batch.findMany({
-    where: { teacherId },
+    where: { teacherId } as any,
     select: { id: true }
   });
   const batchIds = teacherBatches.map((b) => b.id);

@@ -27,7 +27,7 @@ function extractToken(req: Request): string | null {
   return getTokenFromCookies(req.headers.cookie);
 }
 
-export function authenticate(req: Request, res: Response, next: NextFunction): void {
+export async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
   const token = extractToken(req);
 
   if (!token) {
@@ -35,7 +35,18 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     return;
   }
 
-  if (isTokenRevoked(token)) {
+  let revoked: boolean;
+  try {
+    revoked = await isTokenRevoked(token);
+  } catch (err) {
+    // Redis (or other blocklist backend) unavailable — surface as a server
+    // error via the error middleware rather than letting the rejection go
+    // unhandled, and rather than silently treating the token as valid.
+    next(err);
+    return;
+  }
+
+  if (revoked) {
     res.status(401).json({ status: "error", message: "Session expired. Please log in again." });
     return;
   }

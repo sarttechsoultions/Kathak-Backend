@@ -40,4 +40,17 @@ export const env = {
   jitsiPrivateKey: process.env.JITSI_PRIVATE_KEY?.replace(/\\n/g, "\n"),
   agoraAppId: process.env.AGORA_APP_ID,
   agoraAppCertificate: process.env.AGORA_APP_CERTIFICATE,
+
+  // Bunny Stream — required, no hardcoded fallback (previously leaked in source)
+  bunnyLibraryId: requireEnv("BUNNY_LIBRARY_ID"),
+  bunnyApiKey: requireEnv("BUNNY_STREAM_API_KEY"),
+
+  // Cloudinary — required, no hardcoded fallback (previously leaked in source)
+  cloudinaryCloudName: requireEnv("CLOUDINARY_CLOUD_NAME"),
+  cloudinaryApiKey: requireEnv("CLOUDINARY_API_KEY"),
+  cloudinaryApiSecret: requireEnv("CLOUDINARY_API_SECRET"),
+
+  // Optional: when set, token blocklist and socket state use Redis instead of
+  // in-memory storage, which is required for any multi-instance deployment.
+  redisUrl: process.env.REDIS_URL?.trim(),
 } as const;

@@ -15,7 +15,7 @@ enum Role {
 
 enum Permission {
   VIEW_DASHBOARD
-  
+
   MANAGE_COURSES
   VIEW_COURSES
   CREATE_COURSE
@@ -115,14 +115,14 @@ enum Currency {
 }
 
 model User {
-  id           String   @id @default(uuid())
+  id           String  @id @default(uuid())
   fullName     String
-  email        String   @unique
-  phone        String   @unique
+  email        String  @unique
+  phone        String  @unique
   passwordHash String
-  role         Role     @default(STUDENT)
+  role         Role    @default(STUDENT)
   avatarUrl    String?
-  country      String   @default("India")
+  country      String  @default("India")
   countryCode  String?
   address      String?
 
@@ -150,43 +150,44 @@ model User {
   attendances           Attendance[]
   batchMemberships      BatchStudent[]
   assignmentSubmissions AssignmentSubmission[]
+  batchesAsTeacher      Batch[]                @relation("BatchTeacher")
 }
 
 model TeacherPermission {
-  id          String     @id @default(uuid())
-  userId      String
-  permission  Permission
+  id         String     @id @default(uuid())
+  userId     String
+  permission Permission
 
-  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, permission])
 }
 
 model Course {
-  id                    String         @id @default(uuid())
-  title                 String
-  slug                  String         @unique
-  description           String
-  category              CourseCategory @default(BASIC)
-  groupFeeINR           Float
-  groupFeeUSD           Float
-  groupClassesCount     String
-  oneToOneFeeINR        Float
-  oneToOneFeeUSD        Float
-  oneToOneClassesCount  String
-  badgeBgColor          String         @default("#76D7C4")
-  borderColor           String         @default("border-[#76D7C4]")
-  published             Boolean        @default(true)
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
+  id                   String         @id @default(uuid())
+  title                String
+  slug                 String         @unique
+  description          String
+  category             CourseCategory @default(BASIC)
+  groupFeeINR          Float
+  groupFeeUSD          Float
+  groupClassesCount    String
+  oneToOneFeeINR       Float
+  oneToOneFeeUSD       Float
+  oneToOneClassesCount String
+  badgeBgColor         String         @default("#76D7C4")
+  borderColor          String         @default("border-[#76D7C4]")
+  published            Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
-  enrollments           Enrollment[]
-  lessons               Lesson[]
-  batches               Batch[]
+  enrollments Enrollment[]
+  lessons     Lesson[]
+  batches     Batch[]
 }
 
 model Lesson {
-  id             String    @id @default(uuid())
+  id             String   @id @default(uuid())
   courseId       String
   title          String
   description    String?
@@ -194,31 +195,33 @@ model Lesson {
   durationSec    Int
   bunnyVideoId   String
   videoLibraryId String
-  isFreePreview  Boolean   @default(false)
-  createdAt      DateTime  @default(now())
+  isFreePreview  Boolean  @default(false)
+  createdAt      DateTime @default(now())
 
-  course         Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 }
 
 model Batch {
-  id            String       @id @default(uuid())
+  id            String   @id @default(uuid())
   name          String
-  code          String       @unique
+  code          String   @unique
   courseId      String?
+  teacherId     String?
   courseName    String
-  level         String       @default("ADVANCED")
-  teacherName   String       @default("Arjun Sharma")
+  level         String   @default("ADVANCED")
+  teacherName   String   @default("Arjun Sharma")
   schedule      String
-  totalStudents Int          @default(0)
-  status        String       @default("Active")
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  totalStudents Int      @default(0)
+  status        String   @default("Active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  course        Course?      @relation(fields: [courseId], references: [id], onDelete: SetNull)
-  students      BatchStudent[]
-  attendances   Attendance[]
-  liveClasses   LiveClass[]
-  assignments   Assignment[]
+  course      Course?        @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  teacher     User?          @relation("BatchTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+  students    BatchStudent[]
+  attendances Attendance[]
+  liveClasses LiveClass[]
+  assignments Assignment[]
 }
 
 model BatchStudent {
@@ -227,56 +230,56 @@ model BatchStudent {
   studentId String
   createdAt DateTime @default(now())
 
-  batch     Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  batch   Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  student User  @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([batchId, studentId])
   @@index([studentId])
 }
 
 model Enrollment {
-  id           String    @id @default(uuid())
-  userId       String
-  courseId     String
-  mode         ClassMode @default(ONLINE)
-  type         String    @default("GROUP")
-  active       Boolean   @default(true)
-  expiresAt    DateTime?
-  createdAt    DateTime  @default(now())
+  id        String    @id @default(uuid())
+  userId    String
+  courseId  String
+  mode      ClassMode @default(ONLINE)
+  type      String    @default("GROUP")
+  active    Boolean   @default(true)
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
 
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  course       Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  payments     Payment[]
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course   Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  payments Payment[]
 }
 
 model Payment {
-  id             String        @id @default(uuid())
-  userId         String
-  enrollmentId   String?
-  amount         Float
-  currency       Currency      @default(INR)
-  gateway        String
-  transactionId  String        @unique
-  orderId        String        @unique
-  status         PaymentStatus @default(PENDING)
-  createdAt      DateTime      @default(now())
+  id            String        @id @default(uuid())
+  userId        String
+  enrollmentId  String?
+  amount        Float
+  currency      Currency      @default(INR)
+  gateway       String
+  transactionId String        @unique
+  orderId       String        @unique
+  status        PaymentStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
 
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  enrollment     Enrollment?   @relation(fields: [enrollmentId], references: [id], onDelete: SetNull)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enrollment Enrollment? @relation(fields: [enrollmentId], references: [id], onDelete: SetNull)
 }
 
 model Inquiry {
-  id           String   @id @default(uuid())
-  userId       String?
-  fullName     String
-  contactInfo  String
-  classMode    String
-  subject      String
-  message      String
-  status       String   @default("NEW")
-  createdAt    DateTime @default(now())
+  id          String   @id @default(uuid())
+  userId      String?
+  fullName    String
+  contactInfo String
+  classMode   String
+  subject     String
+  message     String
+  status      String   @default("NEW")
+  createdAt   DateTime @default(now())
 
-  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
 enum AttendanceStatus {
@@ -305,7 +308,7 @@ model LiveClass {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
-  batch          Batch           @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  batch Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
   @@index([batchId, scheduledStart])
 }
@@ -323,8 +326,8 @@ model Attendance {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  student     User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  batch       Batch?           @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  student User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  batch   Batch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
   @@index([batchId, date, session])
 }
@@ -349,14 +352,14 @@ model Assignment {
   status           String   @default("ACTIVE")
 
   // Teacher fields
-  teacherId        String?
-  teacherName      String?
+  teacherId   String?
+  teacherName String?
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  batch            Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  submissions      AssignmentSubmission[]
+  batch       Batch?                 @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  submissions AssignmentSubmission[]
 
   // Optional: relation to User
   // teacher         User?    @relation(fields: [teacherId], references: [id], onDelete: SetNull)
@@ -374,8 +377,67 @@ model AssignmentSubmission {
   grade        String?
   feedback     String?
 
-  assignment   Assignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  student      User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student    User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([assignmentId, studentId])
+}
+
+enum VideoSubmissionStatus {
+  PENDING
+  REVIEWED
+  NEEDS_IMPROVEMENT
+}
+
+enum PriorityLevel {
+  Low
+  Medium
+  High
+}
+
+model VideoTask {
+  id                   String        @id @default(uuid())
+  title                String
+  category             String        @default("Kathak")
+  course               String        @default("Kathak Advanced")
+  batchId              String?
+  batchName            String        @default("Alpha-2024")
+  priority             PriorityLevel @default(Low)
+  submissionDate       DateTime
+  cutOffTime           String        @default("18:00")
+  strictDeadline       Boolean       @default(false)
+  detailedInstructions String?
+  referenceFileUrl     String?
+
+  creatorRole   Role    @default(ADMIN)
+  createdById   String?
+  createdByName String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  videoSubmissions VideoSubmission[]
+}
+
+model VideoSubmission {
+  id               String                @id @default(uuid())
+  taskId           String?
+  studentId        String
+  studentName      String
+  studentAvatar    String?
+  studentBatch     String                @default("Alpha-2024")
+  submissionDate   DateTime              @default(now())
+  courseAndBatch   String                @default("Kathak Foundations • #402")
+  videoTitle       String
+  fileUrl          String?
+  status           VideoSubmissionStatus @default(PENDING)
+  marks            Float?
+  feedbackNotes    String?
+  correctionNotes  String[]              @default([])
+  evaluationRubric Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task VideoTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
 }

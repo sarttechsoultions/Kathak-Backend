@@ -496,20 +496,49 @@ export const getBatchStudents = async (req: Request, res: Response): Promise<voi
       }
     });
 
+    const mappedStudents = await Promise.all(
+      students.map(async (bs) => {
+        const batchAssignmentsCount = await (prisma as any).assignment.count({
+          where: {
+            OR: [
+              { batchId: bs.batchId },
+              { batchName: bs.batch.name },
+              { batchName: bs.batch.code }
+            ]
+          }
+        });
+
+        const submittedCount = await (prisma as any).assignmentSubmission.count({
+          where: {
+            studentId: bs.student.id,
+            assignment: {
+              OR: [
+                { batchId: bs.batchId },
+                { batchName: bs.batch.name },
+                { batchName: bs.batch.code }
+              ]
+            }
+          }
+        });
+
+        return {
+          id: bs.student.id,
+          fullName: bs.student.fullName,
+          email: bs.student.email,
+          phone: bs.student.phone,
+          avatar: bs.student.avatarUrl || "/Ananya.png",
+          studentId: `#KL-2024-${bs.student.id.slice(0, 4).toUpperCase()}`,
+          batchName: bs.batch.code || bs.batch.name,
+          batchId: bs.batch.id,
+          joiningDate: new Date(bs.student.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+          assignmentsSubmitted: `${submittedCount}/${batchAssignmentsCount} Submitted`
+        };
+      })
+    );
+
     res.json({
       status: "success",
-      data: students.map((bs) => ({
-        id: bs.student.id,
-        fullName: bs.student.fullName,
-        email: bs.student.email,
-        phone: bs.student.phone,
-        avatar: bs.student.avatarUrl || "/Ananya.png",
-        studentId: `#KL-2024-${bs.student.id.slice(0, 4).toUpperCase()}`,
-        batchName: bs.batch.code || bs.batch.name,
-        batchId: bs.batch.id,
-        joiningDate: new Date(bs.student.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-        assignmentsSubmitted: "0/0 Submitted"
-      }))
+      data: mappedStudents
     });
   } catch (error) {
     console.error("Get Batch Students Error:", error);
@@ -997,6 +1026,16 @@ export const updateBatch = async (req: Request, res: Response): Promise<void> =>
       targetStatus = s === "ACTIVE" || s === "ACTIVE" ? "Active" : s === "UPCOMING" ? "Upcoming" : "Completed";
     }
 
+    let matchedCourseId = existingBatch.courseId;
+    if (courseName && courseName.trim()) {
+      const c = await prisma.course.findFirst({
+        where: { title: { equals: courseName.trim(), mode: "insensitive" } }
+      });
+      if (c) {
+        matchedCourseId = c.id;
+      }
+    }
+
     const updated = await prisma.$transaction(async (tx) => {
       if (Array.isArray(studentIds)) {
         await tx.batchStudent.deleteMany({ where: { batchId: id } });
@@ -1021,6 +1060,7 @@ export const updateBatch = async (req: Request, res: Response): Promise<void> =>
           name: name ?? undefined,
           code: code ?? undefined,
           courseName: courseName ?? undefined,
+          courseId: matchedCourseId ?? undefined,
           teacherName: teacherName ?? undefined,
           schedule: schedule ?? undefined,
           level: level ?? undefined,
@@ -1340,7 +1380,7 @@ export const getAssignmentSubmissionsByAssignment = async (
 ) => {
   try {
 const id = req.params.id as string;
-    const submissions = await prisma.assignmentSubmission.findMany({
+    const submissions = await (prisma as any).assignmentSubmission.findMany({
       where: {
         assignmentId: id,
       },
@@ -1355,12 +1395,38 @@ const id = req.params.id as string;
         },
         assignment: true,
       },
+      orderBy: { submittedAt: "desc" },
     });
+
+    const mapped = submissions.map((s: any) => ({
+      id: s.id,
+      assignmentId: s.assignment?.id || s.assignmentId,
+      studentName: s.studentName || s.student?.fullName || "Student",
+      studentId: `#STU-${(s.studentId || s.student?.id || "0000").substring(0, 4).toUpperCase()}`,
+      studentAvatar: s.student?.avatarUrl || "/Ananya.png",
+      assignmentTitle: s.assignment?.title || "Practical Exercise",
+      batch: s.assignment?.batchName || s.assignment?.targetBatch || "Kathak Basics",
+      submittedDate: s.submittedAt
+        ? new Date(s.submittedAt).toLocaleString("en-US", {
+            month: "short",
+            day: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "Aug 05, 2026",
+      status: s.status === "GRADED" ? "Submitted" : "Submitted",
+      grade: s.grade,
+      feedback: s.feedback,
+      notes: s.notes,
+      fileUrl: s.fileUrl,
+    }));
 
     res.json({
       status: "success",
       data: {
-        submissions,
+        submissions: mapped,
+        records: mapped,
       },
     });
   } catch (error) {

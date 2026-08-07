@@ -9,6 +9,7 @@ import {
   validatePortalAccess,
   signUserToken,
 } from "../../lib/authHelpers";
+import { getUserDisplayName, getTeacherBatchNames, getStudentBatchName } from "../../lib/batchHelpers";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -282,9 +283,48 @@ export const getStudentProfile = async (
   res: Response
 ): Promise<void> => {
   try {
+    const requestingUser = req.user!;
+    // If a studentId param is passed (teacher/admin viewing someone else),
+    // use that; otherwise default to viewing own profile
+    const targetStudentId = String(req.params.studentId || requestingUser.id);
+
+    // Access control: students can only view their own profile
+    if (requestingUser.role === "STUDENT" && requestingUser.id !== targetStudentId) {
+      res.status(403).json({
+        status: "error",
+        message: "You can only view your own profile.",
+      });
+      return;
+    }
+
+    // TEACHER: only students in their own assigned batches
+    if (requestingUser.role === "TEACHER") {
+      const teacherName = await getUserDisplayName(requestingUser.id, requestingUser.email);
+      const assignedBatches = await getTeacherBatchNames(requestingUser.id, teacherName);
+
+      if (assignedBatches.length === 0) {
+        res.status(403).json({ status: "error", message: "You have no assigned batches yet." });
+        return;
+      }
+
+      const targetStudentBatch = await getStudentBatchName(targetStudentId);
+      const allowed = assignedBatches.some(
+        (b: string) => b.toLowerCase() === targetStudentBatch.toLowerCase()
+      );
+      if (!allowed) {
+        res.status(403).json({
+          status: "error",
+          message: "You can only view students in your assigned batches.",
+        });
+        return;
+      }
+    }
+
+    // ADMIN → unrestricted
+
     const student = await prisma.user.findUnique({
       where: {
-        id: req.user!.id,
+        id: targetStudentId,
       },
       select: {
         id: true,
@@ -300,7 +340,7 @@ export const getStudentProfile = async (
         createdAt: true,
         dob: true,
         gender: true,
-        skillLevel: true,          // → level
+        skillLevel: true,
         guardianName: true,
         relationship: true,
         emergencyContact: true,
@@ -338,7 +378,6 @@ export const getStudentProfile = async (
 
     const firstBatch = enrolledBatches[0];
 
-    // Guardian ko better handle karo
     let father = null;
     let mother = null;
     if (student.guardianName) {
@@ -347,7 +386,6 @@ export const getStudentProfile = async (
       } else if (student.relationship?.toLowerCase().includes("mother")) {
         mother = student.guardianName;
       } else {
-        // agar relationship clear nahi hai to father mein daal do
         father = student.guardianName;
       }
     }
@@ -366,21 +404,20 @@ export const getStudentProfile = async (
         address: student.address,
         isActive: student.isActive,
         createdAt: student.createdAt,
-   dob: student.dob
-  ? new Date(student.dob).toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    })
-  : null,
+        dob: student.dob
+          ? new Date(student.dob).toLocaleDateString("en-IN", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            })
+          : null,
         gender: student.gender,
-        level: student.skillLevel,                    // frontend "level" expect karta hai
+        level: student.skillLevel,
         batch: firstBatch?.name || firstBatch?.courseName || firstBatch?.code || null,
         guru: firstBatch?.teacherName || null,
         father,
         mother,
         emergencyContact: student.emergencyContact,
-        // extra useful fields (optional)
         city: student.city,
         region: student.region,
         postalCode: student.postalCode,
@@ -1186,14 +1223,7 @@ export const getStudentDashboard = async (req: Request, res: Response): Promise<
 export const getPublicCourses = async (req: Request, res: Response) => {
   try {
     const courses = await prisma.course.findMany({
-      where: { published: true },
-      select: {
-        id: true,
-        title: true,
-        groupFeeINR: true,
-        groupFeeUSD: true,
-        category: true,
-        // batches bhi chahiye to include karo
+      include: {
         batches: {
           select: {
             id: true,
@@ -1206,9 +1236,51 @@ export const getPublicCourses = async (req: Request, res: Response) => {
       orderBy: { createdAt: "asc" },
     });
 
+    const allBatches = await prisma.batch.findMany({
+      select: {
+        id: true,
+        name: true,
+        schedule: true,
+        code: true,
+        courseId: true,
+        courseName: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const mappedCourses = courses.map((c: any) => {
+      const courseBatches = allBatches.filter((b: any) => {
+        const batchName = (b.name || "").toLowerCase();
+        const courseTitle = (c.title || "").toLowerCase();
+        const batchCourseName = (b.courseName || "").toLowerCase();
+
+        // 1. Relational courseId match
+        if (b.courseId && b.courseId === c.id) return true;
+
+        // 2. Explicit courseName match
+        if (batchCourseName && (batchCourseName.includes(courseTitle) || courseTitle.includes(batchCourseName))) return true;
+
+        // 3. Smart Keyword matching (e.g. "Hobby Kathak Morning Batch" -> matches "Hobby Kathak Batch")
+        const courseWords = courseTitle.split(" ").filter((w: string) => w.length > 3 && w !== "batch" && w !== "course");
+        if (courseWords.some((w: string) => batchName.includes(w) || batchCourseName.includes(w))) return true;
+
+        return false;
+      });
+
+      return {
+        id: c.id,
+        title: c.title,
+        groupFeeINR: c.groupFeeINR || 2500,
+        groupFeeUSD: c.groupFeeUSD || 60,
+        level: c.category || c.level || "Beginner",
+        videoUrl: c.promoVideoUrl || "",
+        batches: courseBatches.length > 0 ? courseBatches : allBatches,
+      };
+    });
+
     res.json({
       status: "success",
-      data: { courses },
+      data: { courses: mappedCourses, allBatches },
     });
   } catch (error) {
     res.status(500).json({ status: "error", message: "Failed to fetch courses" });

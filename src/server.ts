@@ -11,6 +11,7 @@ import adminRoutes from "./modules/admin/admin.routes";
 import uploadRoutes from "./modules/upload/upload.routes";
 import studentRoutes from "./modules/student/student.routes";
 import liveClassRoutes from "./modules/liveclass/liveclass.routes";
+import videoRoutes from "./modules/video/video.routes";
 import {
   getCourses,
   createCourse,
@@ -85,6 +86,7 @@ app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/upload", uploadRoutes);
 app.use("/api/v1/student", studentRoutes);
 app.use("/api/v1", liveClassRoutes);
+app.use("/api/v1/video", videoRoutes);
 
 // Public & Universal Module Route Aliases
 app.get("/api/v1/courses", getCourses);
