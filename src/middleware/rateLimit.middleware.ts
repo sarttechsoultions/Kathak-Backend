@@ -25,3 +25,18 @@ export const authRateLimiter = rateLimit({
     message: "Too many login attempts. Please try again in 15 minutes.",
   },
 });
+
+// Tighter limit for unauthenticated uploads (e.g. enroll profile photo).
+// No login is required to hit this route, so it needs its own low ceiling
+// independent of the general API limit to prevent storage-filling abuse.
+export const publicUploadRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: env.isProduction ? 10 : 10000,
+  skip: () => !env.isProduction,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: "error",
+    message: "Too many upload attempts. Please try again in 15 minutes.",
+  },
+});

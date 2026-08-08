@@ -98,6 +98,16 @@ export function signUserToken(payload: {
   return { token, expiresInMs };
 }
 
+/**
+ * Strips passwordHash (and any other server-only fields) from a User record
+ * before it's sent in a response. Several admin endpoints previously
+ * returned the raw Prisma user object, which included the bcrypt hash.
+ */
+export function sanitizeUser<T extends { passwordHash?: unknown }>(user: T): Omit<T, "passwordHash"> {
+  const { passwordHash, ...safe } = user;
+  return safe;
+}
+
 export function roleDisplayName(role: Role): string {
   if (role === Role.ADMIN) return "Admin";
   if (role === Role.TEACHER) return "Teacher";

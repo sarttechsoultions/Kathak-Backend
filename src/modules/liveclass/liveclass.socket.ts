@@ -73,18 +73,25 @@ export function registerLiveClassSocket(io: Server) {
               });
 
               if (liveClass) {
-                // Find student record in DB by studentId, email, or fullName
+                // Find student record in DB, preferring the authoritative
+                // studentId. Only fall back to a name/email match when it
+                // resolves to exactly one student — a findFirst here would
+                // silently mark the wrong person present if two students
+                // share a display name.
                 let dbStudent = null;
                 if (studentId) {
                   dbStudent = await prisma.user.findUnique({ where: { id: studentId } });
                 }
                 if (!dbStudent && userName) {
-                  dbStudent = await prisma.user.findFirst({
-                    where: {
-                      OR: [{ fullName: userName }, { email: userName }],
-                      role: "STUDENT",
-                    },
+                  const candidates = await prisma.user.findMany({
+                    where: { OR: [{ fullName: userName }, { email: userName }], role: "STUDENT" },
+                    take: 2,
                   });
+                  if (candidates.length === 1) {
+                    dbStudent = candidates[0];
+                  } else if (candidates.length > 1) {
+                    console.warn(`Attendance skipped: ambiguous name "${userName}" matches ${candidates.length} students.`);
+                  }
                 }
 
                 if (dbStudent) {
@@ -178,9 +185,11 @@ export function registerLiveClassSocket(io: Server) {
                 dbStudent = await prisma.user.findUnique({ where: { id: studentId } });
               }
               if (!dbStudent && userName) {
-                dbStudent = await prisma.user.findFirst({
+                const candidates = await prisma.user.findMany({
                   where: { OR: [{ fullName: userName }, { email: userName }], role: "STUDENT" },
+                  take: 2,
                 });
+                dbStudent = candidates.length === 1 ? candidates[0] : null;
               }
 
               if (dbStudent) {

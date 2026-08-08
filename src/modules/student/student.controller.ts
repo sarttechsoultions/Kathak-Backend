@@ -247,7 +247,7 @@ const user = await tx.user.create({
       status: "success",
       message: "Student enrolled successfully.",
       data: {
-        token,
+        // Token intentionally omitted from JSON — see auth.controller.ts login for rationale.
         user: {
           id: result.user.id,
           fullName: result.user.fullName,
@@ -669,7 +669,7 @@ export const studentLogin = async (req: Request, res: Response): Promise<void> =
       status: "success",
       message: "Login successful.",
       data: {
-        token,
+        // Token intentionally omitted from JSON — see auth.controller.ts login for rationale.
         user: {
           id: user.id,
           fullName: user.fullName,
@@ -1189,20 +1189,25 @@ export const getStudentDashboard = async (req: Request, res: Response): Promise<
         instructor: todayClass.teacherName || firstBatch?.teacherName || "Faculty Instructor",
         timeStr: new Date(todayClass.scheduledStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         isLive: todayClass.status === "LIVE" || todayClass.status === "SCHEDULED",
-        meetingLink: todayClass.zoomLink || todayClass.roomName || "/student/classes/room"
+        // roomName is the real, always-present join identifier for this
+        // class (zoomLink/description/durationMins don't exist on LiveClass
+        // in the schema, so they were always undefined here).
+        meetingLink: todayClass.roomName || "/student/classes/room"
       } : null,
+      // Attendance has four real states (PRESENT/ABSENT/LATE/LEAVE) — show
+      // the actual status instead of collapsing LATE/LEAVE into "Absent".
       recentClasses: (student.attendances || []).map((att: any) => ({
         title: att.batch?.name || "Practice Session",
         subtitle: att.batch?.courseName || "Kathak Lesson",
-        status: att.status === "PRESENT" ? "Present" : "Absent",
+        status: att.status,
         date: new Date(att.date).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
       })),
       upcomingLiveClass: upcomingClass ? {
         title: upcomingClass.title,
-        subtitle: upcomingClass.description || "Chakkar Techniques",
+        subtitle: `With ${upcomingClass.teacherName || firstBatch?.teacherName || "your instructor"}`,
         timeStr: new Date(upcomingClass.scheduledStart).toLocaleString([], { dateStyle: "short", timeStyle: "short" }),
-        durationStr: `${upcomingClass.durationMins || 60} min`,
-        meetingLink: upcomingClass.zoomLink || upcomingClass.roomName || "https://zoom.us"
+        durationStr: `${Math.max(1, Math.round((new Date(upcomingClass.scheduledEnd).getTime() - new Date(upcomingClass.scheduledStart).getTime()) / 60000))} min`,
+        meetingLink: upcomingClass.roomName || "/student/classes/room"
       } : null,
       courseProgress: courseProgressList,
       metrics: {

@@ -95,11 +95,6 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
           permissions: permissionList,
           displayRole: roleDisplayName(user.role),
         },
-        // ⚠️ SECURITY NOTE: token is duplicated here for Bearer-header auth.
-        // If your frontend now relies only on the HttpOnly cookie, remove this
-        // and drop Bearer-header support in auth.middleware.ts — returning the
-        // token in JSON lets any XSS on the frontend steal it, defeating HttpOnly.
-        token,
       },
     });
   } catch (error) {

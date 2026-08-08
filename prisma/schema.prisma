@@ -139,6 +139,25 @@ model User {
   emergencyContact String?
   paymentMethod    String?
 
+  maritalStatus    String?
+  nationality      String?   @default("Indian")
+  languagesKnown   String?
+  
+  // Legacy bank Details
+  bankDetails      String[]  @default([])
+  // New Structured Bank Accounts
+  bankAccounts     Json[]    @default([])
+  
+  // Legacy ID Proof
+  idProofType      String?
+  idProofUrl       String?
+  // New Multiple Documents
+  documents        Json[]    @default([])
+
+  designation      String?
+  primaryExpertise String?
+  salaryRate       String?
+
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

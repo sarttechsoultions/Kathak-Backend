@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { Role, Permission, PaymentStatus, CourseCategory, AttendanceStatus } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma";
+import { sanitizeUser } from "../../lib/authHelpers";
 
 const mapCategoryToEnum = (cat?: string): CourseCategory => {
   if (!cat) return CourseCategory.BASIC;
@@ -118,9 +119,14 @@ export const getStudents = async (req: Request, res: Response): Promise<void> =>
       avatarUrl: student.avatarUrl,
       avatar: student.avatarUrl || "/Ananya.png",
       country: student.country,
-      course: student.enrollments[0]?.course?.title || "Kathak Beginner",
-      batch: student.batchMemberships[0]?.batch?.name || "Beginners Morning Zen",
-      time: "Mon, Wed (06:00 PM)",
+      // Real values only — no hardcoded "Kathak Beginner" / "Beginners
+      // Morning Zen" / fixed Mon-Wed time shown for every student regardless
+      // of their actual enrollment. null/"" when the student genuinely has
+      // no course or batch assigned yet, which the frontend can render as
+      // "Not enrolled" rather than a fabricated default.
+      course: student.enrollments[0]?.course?.title || null,
+      batch: student.batchMemberships[0]?.batch?.name || null,
+      time: student.batchMemberships[0]?.batch?.schedule || null,
       joiningDate: student.createdAt.toISOString().split("T")[0],
       status: student.isActive ? "Active" : "Inactive",
       isActive: student.isActive,
@@ -175,7 +181,7 @@ export const getStudentById = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    res.json({ status: "success", data: student });
+    res.json({ status: "success", data: sanitizeUser(student) });
   } catch (error) {
     console.error("Get Student Error:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch student." });
@@ -220,7 +226,7 @@ export const createStudent = async (req: Request, res: Response): Promise<void> 
       });
     }
 
-    res.status(201).json({ status: "success", message: "Student account created successfully.", data: newStudent });
+    res.status(201).json({ status: "success", message: "Student account created successfully.", data: sanitizeUser(newStudent) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ status: "error", message: "Failed to create student account." });
@@ -300,7 +306,7 @@ export const updateStudent = async (req: Request, res: Response): Promise<void> 
       return user;
     });
 
-    res.json({ status: "success", message: "Student updated successfully.", data: updatedStudent });
+    res.json({ status: "success", message: "Student updated successfully.", data: sanitizeUser(updatedStudent) });
   } catch (error) {
     console.error("Update Student Error:", error);
     res.status(500).json({ status: "error", message: "Failed to update student." });
@@ -323,7 +329,7 @@ export const changeStudentStatus = async (req: Request, res: Response): Promise<
       data: { isActive: Boolean(isActive) }
     });
 
-    res.json({ status: "success", message: `Student ${updated.isActive ? "activated" : "deactivated"} successfully.`, data: updated });
+    res.json({ status: "success", message: `Student ${updated.isActive ? "activated" : "deactivated"} successfully.`, data: sanitizeUser(updated) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ status: "error", message: "Failed to update student status." });
@@ -552,32 +558,31 @@ export const getTeachers = async (req: Request, res: Response): Promise<void> =>
   try {
     const teachers = await prisma.user.findMany({
       where: { role: Role.TEACHER },
-      include: { permissions: true },
+      include: { permissions: true, batchesAsTeacher: { select: { name: true } } },
       orderBy: { createdAt: "desc" }
     });
 
+    // Only fields backed by real columns/relations are returned. The old
+    // version hardcoded the SAME fake bank details, "ID Verified" status,
+    // qualifications, and a 4.9 rating for every teacher — that's not a
+    // placeholder, it's false data an admin could act on (e.g. believing an
+    // unverified teacher's ID was checked). Fields with no real backing data
+    // are simply omitted rather than invented; add real DB columns if/when
+    // this data needs to be tracked.
     const mapped = teachers.map((teacher) => ({
       id: teacher.id,
       fullName: teacher.fullName,
       name: teacher.fullName,
-      title: "Senior Kathak Faculty",
       email: teacher.email,
       phone: teacher.phone,
       avatarUrl: teacher.avatarUrl,
-      avatar: teacher.avatarUrl || "/Ananya.png",
+      avatar: teacher.avatarUrl ,
       country: teacher.country,
       isActive: teacher.isActive,
       status: teacher.isActive ? "Active" : "Disabled",
       role: teacher.role,
-      designation: "Senior Kathak Faculty",
-      assignedBatches: ["Beginners Morning Zen"],
-      batches: ["Beginners Morning Zen"],
-      id_proof: "Verified",
-      qualifications: ["MA in Kathak", "Sangeet Visharad"],
-      bank_details: ["HDFC Bank **** 4321"],
-      emergency_contact: [9876543210],
-      category: "Kathak",
-      expertise: "Senior Kathak Instructor",
+      assignedBatches: teacher.batchesAsTeacher.map((b) => b.name),
+      batches: teacher.batchesAsTeacher.map((b) => b.name),
       permissions: teacher.permissions.map((p) => p.permission),
       createdAt: teacher.createdAt
     }));
@@ -588,8 +593,7 @@ export const getTeachers = async (req: Request, res: Response): Promise<void> =>
         teachers: mapped,
         metrics: {
           totalTeachers: teachers.length,
-          activeFaculty: teachers.filter((t) => t.isActive).length,
-          avgRating: "4.9"
+          activeFaculty: teachers.filter((t) => t.isActive).length
         }
       }
     });
@@ -615,7 +619,7 @@ export const getTeacherById = async (req: Request, res: Response): Promise<void>
     res.json({
       status: "success",
       data: {
-        ...teacher,
+        ...sanitizeUser(teacher),
         permissions: teacher.permissions.map((p) => p.permission)
       }
     });
@@ -627,26 +631,52 @@ export const getTeacherById = async (req: Request, res: Response): Promise<void>
 
 export const createTeacher = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { fullName, email, phone, password, country, permissions } = req.body;
+    const { 
+      fullName, 
+      email, 
+      phone, 
+      password, 
+      country, 
+      permissions,
+      assignedBatches = [],          // frontend se aayega (batch names ka array)
+      bankAccounts = [],
+      documents = []
+    } = req.body;
 
+    // Validation
     if (!fullName || !email || !phone || !password) {
-      res.status(400).json({ status: "error", message: "FullName, Email, Phone, and Password are required." });
+      res.status(400).json({ 
+        status: "error", 
+        message: "FullName, Email, Phone, and Password are required." 
+      });
       return;
     }
 
+    // Check existing user
     const existingUser = await prisma.user.findFirst({
-      where: { OR: [{ email: email.toLowerCase() }, { phone }] }
+      where: { 
+        OR: [
+          { email: email.toLowerCase() }, 
+          { phone }
+        ] 
+      }
     });
+
     if (existingUser) {
-      res.status(400).json({ status: "error", message: "Email or Phone already exists." });
+      res.status(400).json({ 
+        status: "error", 
+        message: "Email or Phone already exists." 
+      });
       return;
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
+
     const validPermissions: Permission[] = Array.isArray(permissions)
       ? permissions.filter((p: any) => Object.values(Permission).includes(p))
       : [];
 
+    // 1. Teacher create karo
     const newTeacher = await prisma.user.create({
       data: {
         fullName,
@@ -655,12 +685,29 @@ export const createTeacher = async (req: Request, res: Response): Promise<void> 
         passwordHash,
         role: Role.TEACHER,
         country: country || "India",
+        bankAccounts: Array.isArray(bankAccounts) ? bankAccounts : [],
+        documents: Array.isArray(documents) ? documents : [],
         permissions: {
           create: validPermissions.map((perm) => ({ permission: perm }))
         }
       },
-      include: { permissions: true }
+      include: { 
+        permissions: true 
+      }
     });
+
+    // 2. Batches assign karo (Batch table update karke)
+    if (assignedBatches.length > 0) {
+      await prisma.batch.updateMany({
+        where: {
+          name: { in: assignedBatches }     // frontend names bhej raha hai
+        },
+        data: {
+          teacherId: newTeacher.id,
+          teacherName: newTeacher.fullName   // denormalized field bhi update
+        }
+      });
+    }
 
     res.status(201).json({
       status: "success",
@@ -671,21 +718,56 @@ export const createTeacher = async (req: Request, res: Response): Promise<void> 
         email: newTeacher.email,
         phone: newTeacher.phone,
         role: newTeacher.role,
-        permissions: newTeacher.permissions.map((p) => p.permission)
+        permissions: newTeacher.permissions.map((p) => p.permission),
+        assignedBatches: assignedBatches     // jo batches assign kiye
       }
     });
+
   } catch (error) {
     console.error("Create Teacher Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to create teacher." });
+    res.status(500).json({ 
+      status: "error", 
+      message: "Failed to create teacher." 
+    });
   }
 };
 
 export const updateTeacher = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { fullName, email, phone, country, permissions, isActive } = req.body;
+    const {
+      fullName,
+      email,
+      phone,
+      country,
+      permissions,
+      isActive,
+      password,
+      assignedBatches = [],
+      avatarUrl,
+      address,
+      dob,
+      gender,
+      joiningDate,
+      emergencyContact,
+      // New fields
+      maritalStatus,
+      nationality,
+      languagesKnown,
+      bankDetails,
+      bankAccounts,
+      idProofType,
+      idProofFileName,
+      documents,
+      designation,
+      primaryExpertise,
+      salaryRate,
+    } = req.body;
 
-    const teacher = await prisma.user.findFirst({ where: { id, role: Role.TEACHER } });
+    const teacher = await prisma.user.findFirst({
+      where: { id, role: Role.TEACHER },
+    });
+
     if (!teacher) {
       res.status(404).json({ status: "error", message: "Teacher not found." });
       return;
@@ -695,32 +777,101 @@ export const updateTeacher = async (req: Request, res: Response): Promise<void> 
       ? permissions.filter((p: any) => Object.values(Permission).includes(p))
       : [];
 
+    // emergencyContact handle
+    let emergencyContactValue: string | undefined = undefined;
+    if (Array.isArray(emergencyContact) && emergencyContact.length > 0) {
+      emergencyContactValue = String(emergencyContact[0]);
+    } else if (typeof emergencyContact === "string") {
+      emergencyContactValue = emergencyContact;
+    }
+
     await prisma.$transaction(async (tx) => {
+      const updateData: any = {
+        fullName: fullName ?? undefined,
+        email: email ? email.toLowerCase() : undefined,
+        phone: phone ?? undefined,
+        country: country ?? undefined,
+        isActive: typeof isActive === "boolean" ? isActive : undefined,
+        avatarUrl: avatarUrl ?? undefined,
+        address: address ?? undefined,
+        gender: gender ?? undefined,
+        emergencyContact: emergencyContactValue,
+        // New fields
+        maritalStatus: maritalStatus ?? undefined,
+        nationality: nationality ?? undefined,
+        languagesKnown: languagesKnown ?? undefined,
+        bankDetails: Array.isArray(bankDetails) ? bankDetails : undefined,
+        bankAccounts: Array.isArray(bankAccounts) ? bankAccounts : undefined,
+        idProofType: idProofType ?? undefined,
+        idProofUrl: idProofFileName ?? undefined,
+        documents: Array.isArray(documents) ? documents : undefined,
+        designation: designation ?? undefined,
+        primaryExpertise: primaryExpertise ?? undefined,
+        salaryRate: salaryRate ?? undefined,
+      };
+
+      if (dob) updateData.dob = new Date(dob);
+      if (joiningDate) updateData.joiningDate = new Date(joiningDate);
+
+      // Password
+      if (password && typeof password === "string" && password.trim().length >= 6) {
+        updateData.passwordHash = await bcrypt.hash(password, 10);
+      }
+
       await tx.user.update({
         where: { id },
-        data: {
-          fullName: fullName ?? undefined,
-          email: email ? email.toLowerCase() : undefined,
-          phone: phone ?? undefined,
-          country: country ?? undefined,
-          isActive: typeof isActive === "boolean" ? isActive : undefined
-        }
+        data: updateData,
       });
 
+      // Permissions
       if (Array.isArray(permissions)) {
         await tx.teacherPermission.deleteMany({ where: { userId: id } });
         if (validPermissions.length > 0) {
           await tx.teacherPermission.createMany({
-            data: validPermissions.map((perm) => ({ userId: id, permission: perm }))
+            data: validPermissions.map((perm) => ({
+              userId: id,
+              permission: perm,
+            })),
+          });
+        }
+      }
+
+      // Batches assign
+      if (Array.isArray(assignedBatches)) {
+        // Pehle purane batches se hatao
+        await tx.batch.updateMany({
+          where: { teacherId: id },
+          data: {
+            teacherId: null,
+            teacherName: "Unassigned",
+          },
+        });
+
+        // Naye batches assign karo
+        if (assignedBatches.length > 0) {
+          await tx.batch.updateMany({
+            where: {
+              name: { in: assignedBatches },
+            },
+            data: {
+              teacherId: id,
+              teacherName: fullName || teacher.fullName,
+            },
           });
         }
       }
     });
 
-    res.json({ status: "success", message: "Teacher account updated successfully." });
+    res.json({
+      status: "success",
+      message: "Teacher account updated successfully.",
+    });
   } catch (error) {
     console.error("Update Teacher Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to update teacher." });
+    res.status(500).json({
+      status: "error",
+      message: "Failed to update teacher.",
+    });
   }
 };
 
@@ -1362,9 +1513,37 @@ const id = req.params.id as string;
       return;
     }
 
+    let teacherName = assignment.teacherName || "Aswini";
+    let teacherDept = "Classical Dance Dept.";
+    let teacherAvatar = "/Ananya.png";
+    let teacherDesignation = "Senior Faculty";
+
+    if (assignment.teacherId) {
+      const user = await prisma.user.findUnique({
+        where: { id: assignment.teacherId },
+        select: {
+          fullName: true,
+          avatarUrl: true,
+          role: true,
+        },
+      });
+
+      if (user) {
+        teacherName = user.fullName || teacherName;
+        teacherAvatar = user.avatarUrl || teacherAvatar;
+        teacherDesignation = user.role === "ADMIN" ? "Faculty Lead" : "Senior Faculty";
+      }
+    }
+
     res.json({
       status: "success",
-      data: assignment,
+      data: {
+        ...assignment,
+        teacherName,
+        teacherDept,
+        teacherAvatar,
+        teacherDesignation,
+      },
     });
   } catch (error) {
     res.status(500).json({
@@ -1611,21 +1790,27 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
 
     const studentFinanceRecords = students.map((s) => {
       const course = s.enrollments[0]?.course;
-      const courseName = course?.title || "Kathak Dance Basic";
-      const totalFee = course ? (course.groupFeeINR || 12000) : 12000;
+      const courseName = course?.title || null;
+      // A student with no course enrollment has no fee to owe — don't
+      // fabricate a ₹12,000 charge for them (that previously counted every
+      // unenrolled account as a pending debtor and inflated totalFeeAmount /
+      // pendingStudentsCount on the finance dashboard).
+      const totalFee = course?.groupFeeINR ?? 0;
       const paid = s.payments.reduce((acc, p) => acc + p.amount, 0);
       const pending = Math.max(0, totalFee - paid);
 
       totalFeeAmount += totalFee;
       amountReceived += paid;
 
-      if (pending === 0 && totalFee > 0) {
-        paidStudentsCount++;
-      } else {
-        pendingStudentsCount++;
+      if (course) {
+        if (pending === 0) {
+          paidStudentsCount++;
+        } else {
+          pendingStudentsCount++;
+        }
       }
 
-      const batchName = s.batchMemberships[0]?.batch?.name || s.batchMemberships[0]?.batch?.code || "General Batch";
+      const batchName = s.batchMemberships[0]?.batch?.name || s.batchMemberships[0]?.batch?.code || null;
 
       return {
         id: s.id,
@@ -1783,7 +1968,7 @@ export const getAdminProfile = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    res.json({ status: "success", data: user });
+    res.json({ status: "success", data: sanitizeUser(user) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ status: "error", message: "Failed to fetch profile." });
@@ -1803,7 +1988,7 @@ export const updateAdminProfile = async (req: Request, res: Response): Promise<v
       }
     });
 
-    res.json({ status: "success", message: "Admin profile updated.", data: updated });
+    res.json({ status: "success", message: "Admin profile updated.", data: sanitizeUser(updated) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ status: "error", message: "Failed to update profile." });

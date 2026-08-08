@@ -113,14 +113,28 @@ export const listTeacherLiveClasses = async (req: Request, res: Response) => {
   const completedCount = classes.filter(c => c.status === "COMPLETED").length;
   const upcomingCount = classes.filter(c => c.status === "SCHEDULED" || c.status === "LIVE").length;
 
+  // Real attendance rate across this teacher's completed classes, computed
+  // from the Attendance table rather than a hardcoded placeholder. Falls
+  // back to null (not a made-up percentage) when there's no data yet.
+  let overallAttendance: string | null = null;
+  if (batchIds.length > 0) {
+    const [totalAttendance, presentAttendance] = await Promise.all([
+      prisma.attendance.count({ where: { batchId: { in: batchIds } } }),
+      prisma.attendance.count({ where: { batchId: { in: batchIds }, status: "PRESENT" } }),
+    ]);
+    if (totalAttendance > 0) {
+      overallAttendance = `${Math.round((presentAttendance / totalAttendance) * 100)}%`;
+    }
+  }
+
   res.json({
     status: "success",
     data: {
       classes: classes.map(serialise),
       stats: {
-        completedCount: completedCount || 42,
-        upcomingCount: upcomingCount || 12,
-        overallAttendance: "92%"
+        completedCount,
+        upcomingCount,
+        overallAttendance
       }
     }
   });

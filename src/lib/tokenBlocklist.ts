@@ -42,7 +42,7 @@ class RedisBlocklist implements Blocklist {
 
   constructor(redisUrl: string) {
     // Lazy import so `ioredis` is only required when REDIS_URL is actually set.
-    this.clientPromise = import("ioredis").then(({ default: Redis }) => new Redis(redisUrl));
+    this.clientPromise = import("ioredis").then((mod: any) => new (mod.default || mod)(redisUrl));
   }
 
   private key(token: string): string {
