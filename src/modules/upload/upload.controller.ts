@@ -88,7 +88,7 @@ export const uploadImage = async (req: Request, res: Response): Promise<void> =>
 };
 
 /** Creates a video entry in Bunny Stream and uploads the binary. Two calls, per Bunny's API. */
-async function uploadToBunnyStream(buffer: Buffer, title: string): Promise<{ videoId: string; iframeUrl: string; directUrl: string }> {
+async function uploadToBunnyStream(buffer: Buffer, title: string): Promise<{ videoId: string; iframeUrl: string; directUrl: string; thumbnailUrl: string }> {
   const headers = { AccessKey: BUNNY_CONFIG.apiKey, "Content-Type": "application/json" };
 
   const createRes = await axios.post(
@@ -106,17 +106,19 @@ async function uploadToBunnyStream(buffer: Buffer, title: string): Promise<{ vid
       headers: { AccessKey: BUNNY_CONFIG.apiKey, "Content-Type": "application/octet-stream" },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
-      timeout: 5 * 60 * 1000, // large video uploads legitimately take minutes, not 2.5s
+      timeout: 5 * 60 * 1000,
     }
   );
+
+  const thumbnailUrl = `https://${BUNNY_CONFIG.pullZoneHostname}/${videoId}/thumbnail.jpg`;
 
   return {
     videoId,
     iframeUrl: `${BUNNY_CONFIG.iframeBaseUrl}/${BUNNY_CONFIG.libraryId}/${videoId}`,
     directUrl: `${BUNNY_CONFIG.iframeBaseUrl}/${BUNNY_CONFIG.libraryId}/${videoId}`,
+    thumbnailUrl,
   };
 }
-
 export const uploadVideoToBunny = async (req: Request, res: Response): Promise<void> => {
   try {
     const file = req.file || (req.files && Array.isArray(req.files) ? req.files[0] : null);
@@ -125,7 +127,6 @@ export const uploadVideoToBunny = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    // Primary path: Bunny Stream (this is what BUNNY_CONFIG/the function name promise).
     try {
       const bunnyResult = await uploadToBunnyStream(file.buffer, file.originalname);
       res.status(200).json({
@@ -137,12 +138,14 @@ export const uploadVideoToBunny = async (req: Request, res: Response): Promise<v
           directUrl: bunnyResult.directUrl,
           url: bunnyResult.iframeUrl,
           fileUrl: bunnyResult.iframeUrl,
+          thumbnailUrl: bunnyResult.thumbnailUrl,
         },
       });
       return;
     } catch (bunnyErr: any) {
       console.error("Bunny Stream video upload failed:", bunnyErr?.message || bunnyErr);
     }
+    
 
     // Secondary path: Cloudinary video upload. No artificial timeout — a real
     // upload of a multi-hundred-MB file legitimately takes longer than a

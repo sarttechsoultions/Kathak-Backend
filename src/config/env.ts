@@ -44,6 +44,7 @@ export const env = {
   // Bunny Stream — required, no hardcoded fallback (previously leaked in source)
   bunnyLibraryId: requireEnv("BUNNY_LIBRARY_ID"),
   bunnyApiKey: requireEnv("BUNNY_STREAM_API_KEY"),
+  bunnyPullZoneHostname: requireEnv("BUNNY_PULL_ZONE_HOSTNAME"),
 
   // Cloudinary — required, no hardcoded fallback (previously leaked in source)
   cloudinaryCloudName: requireEnv("CLOUDINARY_CLOUD_NAME"),

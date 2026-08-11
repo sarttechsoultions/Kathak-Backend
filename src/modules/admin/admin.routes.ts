@@ -18,12 +18,14 @@ import {
   updateTeacher,
   deleteTeacher,
   getCourses,
+  getCourseById,
   createCourse,
   updateCourse,
   deleteCourse,
   addLesson,
   deleteLesson,
   getBatches,
+  getBatchById,
   createBatch,
   updateBatch,
   deleteBatch,
@@ -78,6 +80,7 @@ router.delete("/teachers/:id", requirePermission(Permission.MANAGE_TEACHERS), de
 
 // 4. Course & Lesson Management
 router.get("/courses", requirePermission(Permission.MANAGE_COURSES), getCourses);
+router.get("/courses/:id", requirePermission(Permission.MANAGE_COURSES), getCourseById);
 router.post("/courses", requirePermission(Permission.MANAGE_COURSES), createCourse);
 router.put("/courses/:id", requirePermission(Permission.MANAGE_COURSES), updateCourse);
 router.delete("/courses/:id", requirePermission(Permission.MANAGE_COURSES), deleteCourse);
@@ -86,6 +89,7 @@ router.delete("/courses/:id/lessons/:lessonId", requirePermission(Permission.MAN
 
 // 5. Batch Management
 router.get("/batches", requirePermission(Permission.MANAGE_BATCHES), getBatches);
+router.get("/batches/:id", requirePermission(Permission.MANAGE_BATCHES), getBatchById); 
 router.post("/batches", requirePermission(Permission.MANAGE_BATCHES), createBatch);
 router.put("/batches/:id", requirePermission(Permission.MANAGE_BATCHES), updateBatch);
 router.delete("/batches/:id", requirePermission(Permission.MANAGE_BATCHES), deleteBatch);

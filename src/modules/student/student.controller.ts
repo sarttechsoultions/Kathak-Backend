@@ -54,29 +54,28 @@ const normalizeForLookup = (input: unknown): string[] => {
 export const enrollStudent = async (req: Request, res: Response): Promise<void> => {
   try {
     const {
-fullName,
-  email,
-  phone,
-  password,
-  courseId,
-  batchId,
-  country,
-  countryCode,
-  address,
-  profileImage,
-  dob,
-  gender,
-  city,
-  region,
-  postalCode,
-  skillLevel,
-  joiningDate,
-  isUnder18,
-  guardianName,
-  relationship,
-  emergencyContact,
-  paymentMethod,
-      // ... other fields
+      fullName,
+      email,
+      phone,
+      password,
+      courseId,
+      batchId,
+      country,
+      countryCode,
+      address,
+      profileImage,
+      dob,
+      gender,
+      city,
+      region,
+      postalCode,
+      skillLevel,
+      joiningDate,
+      isUnder18,
+      guardianName,
+      relationship,
+      emergencyContact,
+      paymentMethod,
     } = req.body;
 
     // ---------- Validation ----------
@@ -176,62 +175,62 @@ fullName,
     }
 
     // ---------- Transaction ----------
-  const result = await prisma.$transaction(async (tx) => {
-  const passwordHash = await bcrypt.hash(password, 10);
+    const result = await prisma.$transaction(async (tx) => {
+      const passwordHash = await bcrypt.hash(password, 10);
 
-const user = await tx.user.create({
-  data: {
-    fullName: fullName.trim(),
-    email: normalizedEmail,
-    phone: e164Phone,
-    countryCode: normalizedCountryCode,
-    passwordHash,
-    role: Role.STUDENT,
-    avatarUrl: profileImage?.trim() || null,
-    country: country?.trim() || "India",
-    address: address?.trim() || null,
-    dob: dob ? new Date(dob) : null,
-    gender: gender?.trim() || null,
-    city: city?.trim() || null,
-    region: region?.trim() || null,
-    postalCode: postalCode?.trim() || null,
-    skillLevel: skillLevel?.trim() || null,
-    joiningDate: joiningDate ? new Date(joiningDate) : null,
-    isUnder18: Boolean(isUnder18),
-    guardianName: guardianName?.trim() || null,
-    relationship: relationship?.trim() || null,
-    emergencyContact: emergencyContact?.trim() || null,
-    paymentMethod: paymentMethod?.trim() || null,
-    isActive: true,
-  },
-});
+      const user = await tx.user.create({
+        data: {
+          fullName: fullName.trim(),
+          email: normalizedEmail,
+          phone: e164Phone,
+          countryCode: normalizedCountryCode,
+          passwordHash,
+          role: Role.STUDENT,
+          avatarUrl: profileImage?.trim() || null,
+          country: country?.trim() || "India",
+          address: address?.trim() || null,
+          dob: dob ? new Date(dob) : null,
+          gender: gender?.trim() || null,
+          city: city?.trim() || null,
+          region: region?.trim() || null,
+          postalCode: postalCode?.trim() || null,
+          skillLevel: skillLevel?.trim() || null,
+          joiningDate: joiningDate ? new Date(joiningDate) : null,
+          isUnder18: Boolean(isUnder18),
+          guardianName: guardianName?.trim() || null,
+          relationship: relationship?.trim() || null,
+          emergencyContact: emergencyContact?.trim() || null,
+          paymentMethod: paymentMethod?.trim() || null,
+          isActive: true,
+        },
+      });
 
-  const enrollment = await tx.enrollment.create({
-    data: {
-      userId: user.id,
-      courseId: String(courseId),
-      mode: ClassMode.ONLINE,
-      type: "GROUP",
-      active: true,
-    },
-  });
+      const enrollment = await tx.enrollment.create({
+        data: {
+          userId: user.id,
+          courseId: String(courseId),
+          mode: ClassMode.ONLINE,
+          type: "GROUP",
+          active: true,
+        },
+      });
 
-  if (batchId) {
-    await tx.batchStudent.create({
-      data: {
-        batchId: String(batchId),
-        studentId: user.id,
-      },
+      if (batchId) {
+        await tx.batchStudent.create({
+          data: {
+            batchId: String(batchId),
+            studentId: user.id,
+          },
+        });
+
+        await tx.batch.update({
+          where: { id: String(batchId) },
+          data: { totalStudents: { increment: 1 } },
+        });
+      }
+
+      return { user, enrollment };
     });
-
-    await tx.batch.update({
-      where: { id: String(batchId) },
-      data: { totalStudents: { increment: 1 } },
-    });
-  }
-
-  return { user, enrollment };
-});
 
     const { token, expiresInMs } = signUserToken({
       id: result.user.id,
@@ -247,7 +246,7 @@ const user = await tx.user.create({
       status: "success",
       message: "Student enrolled successfully.",
       data: {
-        // Token intentionally omitted from JSON — see auth.controller.ts login for rationale.
+        token, // 🔥 FIX: Token explicitly added for local storage in frontend
         user: {
           id: result.user.id,
           fullName: result.user.fullName,
@@ -415,6 +414,7 @@ export const getStudentProfile = async (
         level: student.skillLevel,
         batch: firstBatch?.name || firstBatch?.courseName || firstBatch?.code || null,
         guru: firstBatch?.teacherName || null,
+        schedule: firstBatch?.schedule || null,
         father,
         mother,
         emergencyContact: student.emergencyContact,
@@ -437,7 +437,8 @@ export const updateStudentProfile = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { fullName, phone, country, countryCode, address, avatarUrl, gender } = req.body;
+    // 🔥 FIX: Added guardianName and emergencyContact
+    const { fullName, phone, country, countryCode, address, avatarUrl, gender, guardianName, emergencyContact } = req.body;
 
     const student = await prisma.user.findUnique({
       where: {
@@ -454,77 +455,82 @@ export const updateStudentProfile = async (
     }
 
     const normalizedPhone = phone ? toE164(phone, countryCode ?? student.countryCode) : student.phone;
-const normalizedCountryCode = countryCode
-  ? (String(countryCode).startsWith("+") ? String(countryCode) : `+${String(countryCode)}`)
-  : student.countryCode;
+    const normalizedCountryCode = countryCode
+      ? (String(countryCode).startsWith("+") ? String(countryCode) : `+${String(countryCode)}`)
+      : student.countryCode;
 
-// Duplicate check
-if (phone && normalizedPhone !== student.phone) {
-  const existingPhone = await prisma.user.findFirst({
-    where: {
-      phone: normalizedPhone,
-      NOT: { id: student.id },
-    },
-  });
+    // Duplicate check
+    if (phone && normalizedPhone !== student.phone) {
+      const existingPhone = await prisma.user.findFirst({
+        where: {
+          phone: normalizedPhone,
+          NOT: { id: student.id },
+        },
+      });
 
-  if (existingPhone) {
-    res.status(409).json({ status: "error", message: "Phone number already exists." });
-    return;
-  }
-}
+      if (existingPhone) {
+        res.status(409).json({ status: "error", message: "Phone number already exists." });
+        return;
+      }
+    }
 
     const updatedStudent = await prisma.user.update({
-  where: {
-    id: student.id,
-  },
-  data: {
-    fullName: fullName ?? student.fullName,
-    phone: normalizedPhone,
-    countryCode: normalizedCountryCode,
-    country: country ?? student.country,
-    address: address ?? student.address,
-    avatarUrl: avatarUrl ?? student.avatarUrl,
-    gender: gender ?? student.gender,
-  },
-  select: {
-    id: true,
-    fullName: true,
-    email: true,
-    phone: true,
-    countryCode: true,
-    country: true,
-    address: true,
-    avatarUrl: true,
-    role: true,
-    isActive: true,
-    createdAt: true,
-    dob: true,                    // ← sirf true
-    gender: true,
-    skillLevel: true,
-    guardianName: true,
-    relationship: true,
-    emergencyContact: true,
-  },
-});
+      where: {
+        id: student.id,
+      },
+      data: {
+        fullName: fullName ?? student.fullName,
+        phone: normalizedPhone,
+        countryCode: normalizedCountryCode,
+        country: country ?? student.country,
+        address: address ?? student.address,
+        avatarUrl: avatarUrl ?? student.avatarUrl,
+        gender: gender ?? student.gender,
+        guardianName: guardianName ?? student.guardianName, // 🔥 FIX: Saving guardianName
+        emergencyContact: emergencyContact ?? student.emergencyContact, // 🔥 FIX: Saving emergencyContact
+      },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        countryCode: true,
+        country: true,
+        address: true,
+        avatarUrl: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        dob: true,
+        gender: true,
+        skillLevel: true,
+        guardianName: true,
+        relationship: true,
+        emergencyContact: true,
+      },
+    });
 
-// Format yahan karo
-const formattedStudent = {
-  ...updatedStudent,
-  dob: updatedStudent.dob
-    ? new Date(updatedStudent.dob).toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
-    : null,
-  level: updatedStudent.skillLevel, // frontend "level" expect karta hai
-};
+    // Formatting date and aligning fields to what frontend expects
+    const formattedStudent = {
+      ...updatedStudent,
+      dob: updatedStudent.dob
+        ? new Date(updatedStudent.dob).toLocaleDateString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          })
+        : null,
+      level: updatedStudent.skillLevel,
+      // Mapping Guardian to Father/Mother exactly like `getStudentProfile`
+      father: updatedStudent.relationship?.toLowerCase().includes("mother") ? null : updatedStudent.guardianName,
+      mother: updatedStudent.relationship?.toLowerCase().includes("mother") ? updatedStudent.guardianName : null,
+    };
 
-res.json({
-  status: "success",
-  message: "Profile updated successfully.",
-  data: formattedStudent,
-});
+    res.json({
+      status: "success",
+      message: "Profile updated successfully.",
+      data: formattedStudent,
+    });
 
   } catch (error) {
     console.error(error);
@@ -663,6 +669,9 @@ export const studentLogin = async (req: Request, res: Response): Promise<void> =
       rememberMe: Boolean(rememberMe),
     });
 
+    res.clearCookie("auth_teacher"); 
+    res.clearCookie("auth_admin");
+
     setPortalAuthCookie(res, "student", token, expiresInMs);
 
     res.json({
@@ -691,10 +700,15 @@ export const studentLogin = async (req: Request, res: Response): Promise<void> =
 export const getStudentFinance = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
+    
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
-        enrollments: { include: { course: true } },
+        // Sirf Active enrollment nikalenge
+        enrollments: { 
+          where: { active: true },
+          include: { course: true } 
+        },
         payments: { orderBy: { createdAt: "desc" } }
       }
     });
@@ -704,9 +718,12 @@ export const getStudentFinance = async (req: Request, res: Response): Promise<vo
       return;
     }
 
+    // Dynamic fee extraction based on assigned course
     const course = user.enrollments[0]?.course;
     const courseTitle = course?.title || "Kathak Dance Advanced";
-    const totalFee = course ? (course.groupFeeINR || 12000) : 12000;
+    const totalFee = course?.groupFeeINR || 2200; // Database se actual fee uthayega
+
+    // Dynamic Paid & Pending Calculation
     const successfulPayments = user.payments.filter((p) => p.status === "SUCCESS");
     const paidAmount = successfulPayments.reduce((acc, p) => acc + p.amount, 0);
     const pendingAmount = Math.max(0, totalFee - paidAmount);
@@ -718,14 +735,16 @@ export const getStudentFinance = async (req: Request, res: Response): Promise<vo
         totalFee,
         paidAmount,
         pendingAmount,
-        nextDueDate: pendingAmount > 0 ? "15th Next Month" : "Cleared",
+        nextDueDate: pendingAmount > 0 ? "Pay Immediately" : "Cleared",
         transactions: user.payments.map((p) => ({
           id: p.transactionId || `TRA-${p.id.substring(0, 5).toUpperCase()}`,
           date: new Date(p.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
-          description: `${courseTitle} - Fee Payment`,
+          description: `${courseTitle} - Registration Fee`,
           amount: `₹${p.amount.toLocaleString("en-IN")}`,
           status: p.status,
-          statusBadge: p.status === "SUCCESS" ? "text-rose-700 font-bold" : "bg-[#FDEAE2] text-[#C15C3D] px-2.5 py-0.5 rounded-md font-bold text-[10px]"
+          statusBadge: p.status === "SUCCESS" 
+            ? "text-emerald-600 font-extrabold" // ✅ Success ke liye Green text
+            : "bg-[#FDEAE2] text-[#C15C3D] px-2.5 py-0.5 rounded-md font-bold text-[10px]"
         }))
       }
     });

@@ -170,6 +170,7 @@ model User {
   batchMemberships      BatchStudent[]
   assignmentSubmissions AssignmentSubmission[]
   batchesAsTeacher      Batch[]                @relation("BatchTeacher")
+  recordedClassViews RecordedClassView[]
 }
 
 model TeacherPermission {
@@ -187,19 +188,21 @@ model Course {
   title                String
   slug                 String         @unique
   description          String
+  thumbnail            String?
+  videoUrl             String?
   category             CourseCategory @default(BASIC)
   groupFeeINR          Float
   groupFeeUSD          Float
-  groupClassesCount    String
+  groupClassesCount    String         // Perfect: Store "10 classes per month" etc.
   oneToOneFeeINR       Float
   oneToOneFeeUSD       Float
-  oneToOneClassesCount String
+  oneToOneClassesCount String         // Perfect: Store "Minimum 4 classes per month"
   badgeBgColor         String         @default("#76D7C4")
   borderColor          String         @default("border-[#76D7C4]")
   published            Boolean        @default(true)
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
-
+  recordedClasses RecordedClass[]
   enrollments Enrollment[]
   lessons     Lesson[]
   batches     Batch[]
@@ -224,12 +227,12 @@ model Batch {
   id            String   @id @default(uuid())
   name          String
   code          String   @unique
-  courseId      String?
+  courseId      String?  
   teacherId     String?
   courseName    String
-  level         String   @default("ADVANCED")
-  teacherName   String   @default("Arjun Sharma")
-  schedule      String
+  level         String   @default("BEGINNER") // Ya isko default hatakar required kar dein
+  teacherName   String   @default("Unassigned") // "Arjun Sharma" ki jagah "Unassigned" best hai
+  schedule      String?  // Isko optional (?) kar dein taaki bina schedule ke bhi batch ban sake
   totalStudents Int      @default(0)
   status        String   @default("Active")
   createdAt     DateTime @default(now())
@@ -240,7 +243,50 @@ model Batch {
   students    BatchStudent[]
   attendances Attendance[]
   liveClasses LiveClass[]
+  recordedClasses RecordedClass[]
   assignments Assignment[]
+}
+
+
+model RecordedClass {
+  id             String   @id @default(uuid())
+  title          String
+  description    String?
+  videoUrl       String
+  thumbnail      String?
+  videoId        String?
+  duration       String?
+  resources      String[] @default([])
+  tags           String[] @default([])
+  isPublic       Boolean  @default(true)
+  isDownloadable Boolean  @default(true)
+
+  courseId       String?
+  course         Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  viewsCount      Int                 @default(0) // Cache for quick total views
+  viewHistory     RecordedClassView[] // Relation to tracking table
+  batchId        String?
+  batch          Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model RecordedClassView {
+  id              String        @id @default(uuid())
+  recordedClassId String
+  userId          String
+  viewedAt        DateTime      @default(now())
+  deviceType      String?       // "Mobile", "Desktop", "Tablet"
+  browser         String?       // "Chrome", "Safari"
+  ipAddress       String?       // "103.11.22.33"
+  location        String?       // "Kanpur, Uttar Pradesh, India"
+  watchTimeSec    Int           @default(0) // Kitne seconds video dekhi
+
+  recordedClass   RecordedClass @relation(fields: [recordedClassId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([recordedClassId, userId])
 }
 
 model BatchStudent {

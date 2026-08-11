@@ -5,4 +5,5 @@ export const BUNNY_CONFIG = {
   apiKey: env.bunnyApiKey,
   streamBaseUrl: "https://video.bunnycdn.com/library",
   iframeBaseUrl: "https://iframe.mediadelivery.net/embed",
+  pullZoneHostname: process.env.BUNNY_PULL_ZONE_HOSTNAME!,
 };

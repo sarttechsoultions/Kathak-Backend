@@ -558,17 +558,10 @@ export const getTeachers = async (req: Request, res: Response): Promise<void> =>
   try {
     const teachers = await prisma.user.findMany({
       where: { role: Role.TEACHER },
-      include: { permissions: true, batchesAsTeacher: { select: { name: true } } },
+      include: { batchesAsTeacher: { select: { name: true } } },   // permissions include hataya
       orderBy: { createdAt: "desc" }
     });
 
-    // Only fields backed by real columns/relations are returned. The old
-    // version hardcoded the SAME fake bank details, "ID Verified" status,
-    // qualifications, and a 4.9 rating for every teacher — that's not a
-    // placeholder, it's false data an admin could act on (e.g. believing an
-    // unverified teacher's ID was checked). Fields with no real backing data
-    // are simply omitted rather than invented; add real DB columns if/when
-    // this data needs to be tracked.
     const mapped = teachers.map((teacher) => ({
       id: teacher.id,
       fullName: teacher.fullName,
@@ -576,15 +569,15 @@ export const getTeachers = async (req: Request, res: Response): Promise<void> =>
       email: teacher.email,
       phone: teacher.phone,
       avatarUrl: teacher.avatarUrl,
-      avatar: teacher.avatarUrl ,
+      avatar: teacher.avatarUrl,
       country: teacher.country,
       isActive: teacher.isActive,
       status: teacher.isActive ? "Active" : "Disabled",
       role: teacher.role,
       assignedBatches: teacher.batchesAsTeacher.map((b) => b.name),
       batches: teacher.batchesAsTeacher.map((b) => b.name),
-      permissions: teacher.permissions.map((p) => p.permission),
       createdAt: teacher.createdAt
+      // permissions field hata diya
     }));
 
     res.json({
@@ -608,7 +601,7 @@ export const getTeacherById = async (req: Request, res: Response): Promise<void>
     const id = req.params.id as string;
     const teacher = await prisma.user.findFirst({
       where: { id, role: Role.TEACHER },
-      include: { permissions: true }
+      include: { batchesAsTeacher: { select: { name: true } } }
     });
 
     if (!teacher) {
@@ -620,7 +613,8 @@ export const getTeacherById = async (req: Request, res: Response): Promise<void>
       status: "success",
       data: {
         ...sanitizeUser(teacher),
-        permissions: teacher.permissions.map((p) => p.permission)
+        assignedBatches: teacher.batchesAsTeacher.map((b) => b.name),
+        batches: teacher.batchesAsTeacher.map((b) => b.name)
       }
     });
   } catch (error) {
@@ -637,13 +631,12 @@ export const createTeacher = async (req: Request, res: Response): Promise<void> 
       phone, 
       password, 
       country, 
-      permissions,
-      assignedBatches = [],          // frontend se aayega (batch names ka array)
+      assignedBatches = [],
       bankAccounts = [],
       documents = []
+      // permissions destructure hataya
     } = req.body;
 
-    // Validation
     if (!fullName || !email || !phone || !password) {
       res.status(400).json({ 
         status: "error", 
@@ -652,7 +645,6 @@ export const createTeacher = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // Check existing user
     const existingUser = await prisma.user.findFirst({
       where: { 
         OR: [
@@ -672,11 +664,6 @@ export const createTeacher = async (req: Request, res: Response): Promise<void> 
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const validPermissions: Permission[] = Array.isArray(permissions)
-      ? permissions.filter((p: any) => Object.values(Permission).includes(p))
-      : [];
-
-    // 1. Teacher create karo
     const newTeacher = await prisma.user.create({
       data: {
         fullName,
@@ -686,25 +673,19 @@ export const createTeacher = async (req: Request, res: Response): Promise<void> 
         role: Role.TEACHER,
         country: country || "India",
         bankAccounts: Array.isArray(bankAccounts) ? bankAccounts : [],
-        documents: Array.isArray(documents) ? documents : [],
-        permissions: {
-          create: validPermissions.map((perm) => ({ permission: perm }))
-        }
-      },
-      include: { 
-        permissions: true 
+        documents: Array.isArray(documents) ? documents : []
+        // permissions create block hataya
       }
     });
 
-    // 2. Batches assign karo (Batch table update karke)
     if (assignedBatches.length > 0) {
       await prisma.batch.updateMany({
         where: {
-          name: { in: assignedBatches }     // frontend names bhej raha hai
+          name: { in: assignedBatches }
         },
         data: {
           teacherId: newTeacher.id,
-          teacherName: newTeacher.fullName   // denormalized field bhi update
+          teacherName: newTeacher.fullName
         }
       });
     }
@@ -718,8 +699,8 @@ export const createTeacher = async (req: Request, res: Response): Promise<void> 
         email: newTeacher.email,
         phone: newTeacher.phone,
         role: newTeacher.role,
-        permissions: newTeacher.permissions.map((p) => p.permission),
-        assignedBatches: assignedBatches     // jo batches assign kiye
+        assignedBatches: assignedBatches
+        // permissions field hataya
       }
     });
 
@@ -740,7 +721,6 @@ export const updateTeacher = async (req: Request, res: Response): Promise<void> 
       email,
       phone,
       country,
-      permissions,
       isActive,
       password,
       assignedBatches = [],
@@ -750,18 +730,19 @@ export const updateTeacher = async (req: Request, res: Response): Promise<void> 
       gender,
       joiningDate,
       emergencyContact,
-      // New fields
       maritalStatus,
       nationality,
       languagesKnown,
       bankDetails,
       bankAccounts,
       idProofType,
+      idProofUrl,
       idProofFileName,
       documents,
       designation,
       primaryExpertise,
       salaryRate,
+      // permissions destructure hataya
     } = req.body;
 
     const teacher = await prisma.user.findFirst({
@@ -773,11 +754,6 @@ export const updateTeacher = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const validPermissions: Permission[] = Array.isArray(permissions)
-      ? permissions.filter((p: any) => Object.values(Permission).includes(p))
-      : [];
-
-    // emergencyContact handle
     let emergencyContactValue: string | undefined = undefined;
     if (Array.isArray(emergencyContact) && emergencyContact.length > 0) {
       emergencyContactValue = String(emergencyContact[0]);
@@ -796,14 +772,13 @@ export const updateTeacher = async (req: Request, res: Response): Promise<void> 
         address: address ?? undefined,
         gender: gender ?? undefined,
         emergencyContact: emergencyContactValue,
-        // New fields
         maritalStatus: maritalStatus ?? undefined,
         nationality: nationality ?? undefined,
         languagesKnown: languagesKnown ?? undefined,
         bankDetails: Array.isArray(bankDetails) ? bankDetails : undefined,
         bankAccounts: Array.isArray(bankAccounts) ? bankAccounts : undefined,
         idProofType: idProofType ?? undefined,
-        idProofUrl: idProofFileName ?? undefined,
+        idProofUrl: idProofUrl ?? undefined,
         documents: Array.isArray(documents) ? documents : undefined,
         designation: designation ?? undefined,
         primaryExpertise: primaryExpertise ?? undefined,
@@ -813,7 +788,6 @@ export const updateTeacher = async (req: Request, res: Response): Promise<void> 
       if (dob) updateData.dob = new Date(dob);
       if (joiningDate) updateData.joiningDate = new Date(joiningDate);
 
-      // Password
       if (password && typeof password === "string" && password.trim().length >= 6) {
         updateData.passwordHash = await bcrypt.hash(password, 10);
       }
@@ -823,22 +797,9 @@ export const updateTeacher = async (req: Request, res: Response): Promise<void> 
         data: updateData,
       });
 
-      // Permissions
-      if (Array.isArray(permissions)) {
-        await tx.teacherPermission.deleteMany({ where: { userId: id } });
-        if (validPermissions.length > 0) {
-          await tx.teacherPermission.createMany({
-            data: validPermissions.map((perm) => ({
-              userId: id,
-              permission: perm,
-            })),
-          });
-        }
-      }
+      // Permissions block poora hataya
 
-      // Batches assign
       if (Array.isArray(assignedBatches)) {
-        // Pehle purane batches se hatao
         await tx.batch.updateMany({
           where: { teacherId: id },
           data: {
@@ -847,7 +808,6 @@ export const updateTeacher = async (req: Request, res: Response): Promise<void> 
           },
         });
 
-        // Naye batches assign karo
         if (assignedBatches.length > 0) {
           await tx.batch.updateMany({
             where: {
@@ -924,25 +884,97 @@ export const getCourses = async (req: Request, res: Response): Promise<void> => 
     res.status(500).json({ status: "error", message: "Failed to fetch courses." });
   }
 };
+export const getCourseById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // URL parameter se ID nikalenge (e.g., /api/v1/courses/123)
+    const id = req.params.id as string;
 
+    // Database se specific course fetch 
+    const course = await prisma.course.findUnique({
+      where: { id },
+      include: { 
+        lessons: { orderBy: { orderIndex: "asc" } }, 
+        batches: true 
+      }
+    });
+
+    if (!course) {
+      res.status(404).json({ 
+        status: "error", 
+        message: "Course not found." 
+      });
+      return;
+    }
+
+    const formattedCourse = {
+      ...course,
+      code: course.slug ? `CRS-${course.slug.slice(0, 6).toUpperCase()}` : `CRS-${course.id.slice(-4).toUpperCase()}`,
+      level: course.category || "BEGINNER",
+      duration: course.groupClassesCount || "12 Sessions",
+      status: course.published !== false ? "Active" : "Draft",
+      thumbnail: (course as any).thumbnail || "/Ananya.png" // Agar Prisma schema me thumbnail add nahi hai toh as any
+    };
+
+    // Final response bhejenge
+    res.json({
+      status: "success",
+      data: formattedCourse
+    });
+
+  } catch (error) {
+    console.error("Get Course By ID Error:", error);
+    res.status(500).json({ 
+      status: "error", 
+      message: "Failed to fetch course details." 
+    });
+  }
+};
 export const createCourse = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { title, description, category, groupFeeINR, groupFeeUSD, oneToOneFeeINR, oneToOneFeeUSD } = req.body;
-    const baseSlug = (title || "course").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
+    const { 
+      title, 
+      description, 
+      category, 
+      groupFeeINR, 
+      groupFeeUSD, 
+      oneToOneFeeINR, 
+      oneToOneFeeUSD,
+      groupClassesCount,     
+      oneToOneClassesCount,
+      thumbnail,
+       videoUrl   
+    } = req.body;
+
+    // 1. Strict Validation
+    if (!title || !title.trim()) {
+      res.status(400).json({ status: "error", message: "Course title is required." });
+      return;
+    }
+
+    // 2. Slug Generation
+    const baseSlug = title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
     const slug = `${baseSlug}-${Date.now().toString(36)}`;
 
+    // 3. Database Creation
     const newCourse = await prisma.course.create({
       data: {
-        title: title || "New Course",
+        title: title.trim(),
         slug,
         description: description || "",
         category: mapCategoryToEnum(category),
-        groupFeeINR: Number(groupFeeINR) || 4999,
-        groupFeeUSD: Number(groupFeeUSD) || 99,
-        groupClassesCount: "12 Sessions",
-        oneToOneFeeINR: Number(oneToOneFeeINR) || 12999,
-        oneToOneFeeUSD: Number(oneToOneFeeUSD) || 249,
-        oneToOneClassesCount: "12 Sessions",
+        
+        // Fees: Default to 0 instead of random numbers like 4999
+        groupFeeINR: Number(groupFeeINR) || 0,
+        groupFeeUSD: Number(groupFeeUSD) || 0,
+        oneToOneFeeINR: Number(oneToOneFeeINR) || 0,
+        oneToOneFeeUSD: Number(oneToOneFeeUSD) || 0,
+        
+        // Class Counts: Taking dynamic values from frontend based on client's data
+        groupClassesCount: groupClassesCount || "", 
+        oneToOneClassesCount: oneToOneClassesCount || "",
+        thumbnail: thumbnail || null, // Default thumbnail if not provided
+        videoUrl: videoUrl || null, // Default empty if not provided
+        
         published: true
       }
     });
@@ -957,7 +989,19 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
 export const updateCourse = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { title, description, category, groupFeeINR, groupFeeUSD, published } = req.body;
+    const { 
+           title, 
+      description, 
+      category, 
+      groupFeeINR, 
+      groupFeeUSD, 
+      oneToOneFeeINR, 
+      oneToOneFeeUSD,
+      groupClassesCount,     
+      oneToOneClassesCount,
+      thumbnail,
+       videoUrl  
+    } = req.body;
 
     const updated = await prisma.course.update({
       where: { id },
@@ -967,7 +1011,13 @@ export const updateCourse = async (req: Request, res: Response): Promise<void> =
         category: category ? mapCategoryToEnum(category) : undefined,
         groupFeeINR: groupFeeINR ? Number(groupFeeINR) : undefined,
         groupFeeUSD: groupFeeUSD ? Number(groupFeeUSD) : undefined,
-        published: typeof published === "boolean" ? published : undefined
+        oneToOneFeeINR: oneToOneFeeINR ? Number(oneToOneFeeINR) : undefined,
+        oneToOneFeeUSD: oneToOneFeeUSD ? Number(oneToOneFeeUSD) : undefined,
+        groupClassesCount: groupClassesCount ?? undefined,
+        oneToOneClassesCount: oneToOneClassesCount ?? undefined,
+        thumbnail: thumbnail ?? undefined,
+        videoUrl: videoUrl ?? undefined,
+        // published: typeof published === "boolean" ? published : undefined
       }
     });
 
@@ -1031,46 +1081,18 @@ export const deleteLesson = async (req: Request, res: Response): Promise<void> =
 };
 
 // ================= 5. BATCH MANAGEMENT =================
-
 export const getBatches = async (req: Request, res: Response): Promise<void> => {
   try {
     const batches = await prisma.batch.findMany({
       include: {
-        students: { include: { student: { select: { id: true, fullName: true, email: true, phone: true } } } },
-        course: true
+        students: { include: { student: { select: { id: true, fullName: true, email: true, phone: true, avatarUrl: true } } } },
+        course: true,
+        teacher: { select: { id: true, fullName: true, avatarUrl: true } }
       },
       orderBy: { createdAt: "desc" }
     });
 
     const computeBatchStatus = (schedule?: string, dbStatus?: string) => {
-      if (schedule && schedule.includes("|")) {
-        const parts = schedule.split("|");
-        const startDateStr = parts[2];
-        const endDateStr = parts[3];
-
-        if (startDateStr) {
-          const now = new Date();
-          now.setHours(0, 0, 0, 0);
-
-          const start = new Date(startDateStr);
-          start.setHours(0, 0, 0, 0);
-
-          if (!isNaN(start.getTime()) && start > now) {
-            return "Upcoming";
-          }
-
-          if (endDateStr) {
-            const end = new Date(endDateStr);
-            end.setHours(23, 59, 59, 999);
-            if (!isNaN(end.getTime()) && now > end) {
-              return "Completed";
-            }
-          }
-
-          return "Active";
-        }
-      }
-
       if (!dbStatus) return "Active";
       const s = dbStatus.toUpperCase();
       return s === "ACTIVE" || s === "ACTIVE" ? "Active" : s === "UPCOMING" ? "Upcoming" : "Completed";
@@ -1081,14 +1103,13 @@ export const getBatches = async (req: Request, res: Response): Promise<void> => 
       name: b.name,
       code: b.code,
       courseId: b.courseId || b.course?.id,
-      course: b.courseName || b.course?.title || "Kathak Foundations",
-      courseName: b.courseName || b.course?.title || "Kathak Foundations",
-      teacher: b.teacherName || "Guru Meenakshi",
-      teacherName: b.teacherName || "Guru Meenakshi",
-      schedule: b.schedule || "Mon, Wed, Fri (6:00 PM)",
-      level: b.level || "ADVANCED",
+      courseName: b.courseName || b.course?.title || "Unassigned Course",
+      teacherId: b.teacherId,
+      teacherName: b.teacherName || b.teacher?.fullName || "Unassigned",
+      schedule: b.schedule || "Not Scheduled",
+      level: b.level || "BEGINNER",
       totalStudents: b.totalStudents || b.students.length || 0,
-      status: computeBatchStatus(b.schedule, b.status)
+      status: computeBatchStatus(b.schedule || undefined, b.status)
     }));
 
     const activeCount = mapped.filter((b) => b.status === "Active").length;
@@ -1101,45 +1122,85 @@ export const getBatches = async (req: Request, res: Response): Promise<void> => 
         metrics: {
           totalBatches: batches.length,
           activeBatches: activeCount,
-          totalStudents: batches.reduce((acc, b) => acc + (b.totalStudents || b.students.length || 0), 0),
+          totalStudents: batches.reduce((acc, b) => acc + (b.totalStudents || b.students?.length || 0), 0),
           completedBatches: completedCount,
-          batchesA: batches.length,
-          batchesB: 0,
-          batchesC: 0
         }
       }
     });
   } catch (error) {
-    console.error(error);
+    console.error("Get Batches Error:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch batches." });
+  }
+};
+
+// 🔥 NEW: Controller to fetch a specific batch by ID
+export const getBatchById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const batch = await prisma.batch.findUnique({
+      where: { id },
+      include: {
+        course: true,
+        teacher: { select: { id: true, fullName: true, email: true, avatarUrl: true } },
+        students: {
+          include: { student: { select: { id: true, fullName: true, email: true, phone: true, avatarUrl: true } } }
+        }
+      }
+    });
+
+    if (!batch) {
+      res.status(404).json({ status: "error", message: "Batch not found." });
+      return;
+    }
+
+    res.json({ status: "success", data: batch });
+  } catch (error) {
+    console.error("Get Batch By ID Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch batch details." });
   }
 };
 
 export const createBatch = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, code, courseId, courseName, teacherName, schedule, level, studentIds } = req.body;
+    const { name, code, courseId, teacherId, schedule, level, studentIds } = req.body;
 
     if (!name || !name.trim()) {
       res.status(400).json({ status: "error", message: "Batch name is required." });
       return;
     }
+    if (!courseId) {
+      res.status(400).json({ status: "error", message: "Course selection is required." });
+      return;
+    }
 
-    const batchCode = code || `KTH-${Date.now().toString().slice(-4)}`;
+    const batchCode = code || `KTH-${Date.now().toString().slice(-4).toUpperCase()}`;
 
     const newBatch = await prisma.$transaction(async (tx) => {
+      // 1. Fetch exact details to maintain data integrity
+      const course = await tx.course.findUnique({ where: { id: courseId } });
+      let teacherName = "Unassigned";
+      
+      if (teacherId) {
+        const teacher = await tx.user.findUnique({ where: { id: teacherId } });
+        if (teacher) teacherName = teacher.fullName;
+      }
+
+      // 2. Create the batch
       const created = await tx.batch.create({
         data: {
           name: name.trim(),
           code: batchCode,
-          courseId: courseId || undefined,
-          courseName: courseName || "Kathak Foundations",
-          teacherName: teacherName || "Guru Meenakshi",
-          schedule: schedule || "Mon, Wed, Fri (6:00 PM)",
-          level: level || "ADVANCED",
+          courseId: courseId,
+          courseName: course?.title || "Unknown Course",
+          teacherId: teacherId || null,
+          teacherName: teacherName,
+          schedule: schedule || null,
+          level: level || "BEGINNER",
           totalStudents: Array.isArray(studentIds) ? studentIds.length : 0
         }
       });
 
+      // 3. Assign students if any are provided
       if (Array.isArray(studentIds) && studentIds.length > 0) {
         await tx.batchStudent.createMany({
           data: studentIds.map((sid: string) => ({
@@ -1163,7 +1224,7 @@ export const createBatch = async (req: Request, res: Response): Promise<void> =>
 export const updateBatch = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { name, code, courseName, teacherName, schedule, level, status, studentIds } = req.body;
+    const { name, code, courseId, teacherId, schedule, level, status, studentIds } = req.body;
 
     const existingBatch = await prisma.batch.findUnique({ where: { id } });
     if (!existingBatch) {
@@ -1171,23 +1232,8 @@ export const updateBatch = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    let targetStatus: string | undefined = undefined;
-    if (status) {
-      const s = String(status).toUpperCase();
-      targetStatus = s === "ACTIVE" || s === "ACTIVE" ? "Active" : s === "UPCOMING" ? "Upcoming" : "Completed";
-    }
-
-    let matchedCourseId = existingBatch.courseId;
-    if (courseName && courseName.trim()) {
-      const c = await prisma.course.findFirst({
-        where: { title: { equals: courseName.trim(), mode: "insensitive" } }
-      });
-      if (c) {
-        matchedCourseId = c.id;
-      }
-    }
-
     const updated = await prisma.$transaction(async (tx) => {
+      // Update student assignments if a new array is provided
       if (Array.isArray(studentIds)) {
         await tx.batchStudent.deleteMany({ where: { batchId: id } });
         if (studentIds.length > 0) {
@@ -1201,21 +1247,33 @@ export const updateBatch = async (req: Request, res: Response): Promise<void> =>
         }
       }
 
-      const totalCount = Array.isArray(studentIds)
-        ? studentIds.length
-        : await tx.batchStudent.count({ where: { batchId: id } });
+      const totalCount = Array.isArray(studentIds) ? studentIds.length : await tx.batchStudent.count({ where: { batchId: id } });
+
+      // Fetch names for denormalized fields if IDs changed
+      let newCourseName = existingBatch.courseName;
+      if (courseId && courseId !== existingBatch.courseId) {
+        const c = await tx.course.findUnique({ where: { id: courseId } });
+        if (c) newCourseName = c.title;
+      }
+
+      let newTeacherName = existingBatch.teacherName;
+      if (teacherId && teacherId !== existingBatch.teacherId) {
+        const t = await tx.user.findUnique({ where: { id: teacherId } });
+        if (t) newTeacherName = t.fullName;
+      }
 
       return await tx.batch.update({
         where: { id },
         data: {
           name: name ?? undefined,
           code: code ?? undefined,
-          courseName: courseName ?? undefined,
-          courseId: matchedCourseId ?? undefined,
-          teacherName: teacherName ?? undefined,
+          courseId: courseId ?? undefined,
+          courseName: newCourseName,
+          teacherId: teacherId ?? undefined,
+          teacherName: newTeacherName,
           schedule: schedule ?? undefined,
           level: level ?? undefined,
-          status: targetStatus ?? status ?? undefined,
+          status: status ?? undefined,
           totalStudents: totalCount
         }
       });
