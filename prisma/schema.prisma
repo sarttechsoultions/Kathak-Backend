@@ -171,6 +171,8 @@ model User {
   assignmentSubmissions AssignmentSubmission[]
   batchesAsTeacher      Batch[]                @relation("BatchTeacher")
   recordedClassViews RecordedClassView[]
+  createdExams          Exam[]
+  examResults            ExamResult[]
 }
 
 model TeacherPermission {
@@ -206,6 +208,7 @@ model Course {
   enrollments Enrollment[]
   lessons     Lesson[]
   batches     Batch[]
+  exams        Exam[]
 }
 
 model Lesson {
@@ -245,6 +248,7 @@ model Batch {
   liveClasses LiveClass[]
   recordedClasses RecordedClass[]
   assignments Assignment[]
+  exams        Exam[]
 }
 
 
@@ -505,4 +509,65 @@ model VideoSubmission {
   updatedAt DateTime @updatedAt
 
   task VideoTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+}
+// ================= EXAM MANAGEMENT =================
+
+enum ExamType {
+  THEORY
+  PRACTICAL
+  VIVA
+}
+
+enum ExamStatus {
+  SCHEDULED
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+model Exam {
+  id            String     @id @default(uuid())
+  title         String
+  description   String?    // Extra instructions or JSON payload
+  examCode      String     @unique
+  type          ExamType   @default(THEORY)
+  date          DateTime   // Scheduled date and start time
+  durationMins  Int        @default(120)
+  totalMarks    Float      @default(100)
+  passingMarks  Float      @default(40)
+  status        ExamStatus @default(SCHEDULED)
+  questionsData  Json?
+
+  // Relations
+  batchId       String?
+  batch         Batch?     @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  courseId      String?
+  course        Course?    @relation(fields: [courseId], references: [id], onDelete: SetNull)
+
+  // Tracker for who created it (Admin or Teacher)
+  createdById   String?
+  createdBy     User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  results       ExamResult[]
+
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+model ExamResult {
+  id            String   @id @default(uuid())
+  examId        String
+  studentId     String
+  marksObtained Float?
+  grade         String?
+  status        String   @default("PENDING") // PASS, FAIL, PENDING
+  feedback      String?
+  fileUrl       String?  // If they need to upload a video/document for practicals
+  submittedAt   DateTime @default(now())
+  answersData    Json?
+
+  exam          Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student       User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, studentId]) // Ek student ek exam ek hi baar de sakta hai
 }

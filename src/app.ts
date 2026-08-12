@@ -11,6 +11,8 @@ import studentRoutes from "./modules/student/student.routes";
 import liveClassRoutes from "./modules/liveclass/liveclass.routes";
 import videoRoutes from "./modules/video/video.routes";
 import recordedClassRoutes from "./modules/admin/recordedClass.routes";
+import exmRoutes from "./modules/admin/exam.routes";
+import studentExamRoutes from "./modules/student/student.exam.routes";
 import {
   getCourses,
   createCourse,
@@ -86,7 +88,8 @@ app.use("/api/v1/student", studentRoutes);
 app.use("/api/v1", liveClassRoutes);
 app.use("/api/v1/video", videoRoutes);
 app.use("/api/v1", recordedClassRoutes);
-
+app.use("/api/v1/admin/exams", exmRoutes);
+app.use("/api/v1/student/exams", studentExamRoutes);
 // Public & Universal Module Route Aliases
 app.get("/api/v1/courses", getCourses);
 app.post("/api/v1/courses", authenticate, createCourse);
@@ -103,6 +106,7 @@ app.get("/api/v1/batches", authenticate, getBatches);
 app.get("/api/v1/attendance", authenticate, getAttendanceRecords);
 app.get("/api/v1/finance", authenticate, getPayments);
 app.get("/api/v1/payments", authenticate, getPayments);
+app.use("/api/v1/exams", exmRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

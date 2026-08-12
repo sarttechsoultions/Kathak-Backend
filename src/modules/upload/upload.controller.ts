@@ -42,6 +42,7 @@ export const uploadImage = async (req: Request, res: Response): Promise<void> =>
       const fileBase64 = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
       const result = await cloudinary.uploader.upload(fileBase64, {
         folder: "kathak_courses",
+        resource_type: "auto",
       });
 
       if (result && result.secure_url) {

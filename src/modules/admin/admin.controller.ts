@@ -172,7 +172,11 @@ export const getStudentById = async (req: Request, res: Response): Promise<void>
         batchMemberships: { include: { batch: true } },
         enrollments: { include: { course: true } },
         attendances: { orderBy: { date: "desc" }, take: 20 },
-        payments: { orderBy: { createdAt: "desc" } }
+        payments: { orderBy: { createdAt: "desc" } },
+        assignmentSubmissions: {                          // 👈 fix
+          include: { assignment: true },
+          orderBy: { submittedAt: "desc" }
+        }
       }
     });
 
@@ -181,7 +185,35 @@ export const getStudentById = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    res.json({ status: "success", data: sanitizeUser(student) });
+    const sanitized = sanitizeUser(student);
+    const assignmentSubmissions = (student as any).assignmentSubmissions || [];
+
+    const attendances = (student as any).attendances || [];
+    const totalAttendances = attendances.length;
+    const presentCount = attendances.filter(
+      (a: any) => a.status === "PRESENT" || a.status === "present" || a.status === true
+    ).length;
+    const attendanceRate = totalAttendances > 0 ? `${Math.round((presentCount / totalAttendances) * 100)}%` : "0%";
+
+    const totalSubmissions = assignmentSubmissions.length;
+    const gradedCount = assignmentSubmissions.filter(
+      (s: any) => s.status === "GRADED" || s.grade
+    ).length;
+    const assignmentsScore = `${gradedCount} / ${totalSubmissions || 10}`;
+
+    res.json({
+      status: "success",
+      data: {
+        ...sanitized,
+        batchMemberships: (student as any).batchMemberships,
+        enrollments: (student as any).enrollments,
+        attendances,
+        payments: (student as any).payments || [],
+        submissions: assignmentSubmissions,
+        attendanceRate,
+        assignmentsScore
+      }
+    });
   } catch (error) {
     console.error("Get Student Error:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch student." });
@@ -236,7 +268,25 @@ export const createStudent = async (req: Request, res: Response): Promise<void> 
 export const updateStudent = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { fullName, email, phone, country, avatarUrl, batchId } = req.body;
+    const { 
+      fullName, 
+      email, 
+      phone, 
+      country, 
+      avatarUrl, 
+      batchId,
+      // 👇 YE NAYE FIELDS ADD KARIYE JO FRONTEND SE AA RAHE HAIN
+      dob,
+      gender,
+      address,
+      city,
+      region,
+      postalCode,
+      guardianName,
+      relationship,
+      emergencyContact,
+      isActive
+    } = req.body;
 
     const student = await prisma.user.findFirst({ where: { id, role: Role.STUDENT } });
     if (!student) {
@@ -272,7 +322,18 @@ export const updateStudent = async (req: Request, res: Response): Promise<void> 
           email: email ? email.toLowerCase() : undefined,
           phone: phone ?? undefined,
           country: country ?? undefined,
-          avatarUrl: avatarUrl ?? undefined
+          avatarUrl: avatarUrl ?? undefined,
+          // 👇 YAHAN BHI DATABASE DATA MEIN MAP KARIYE
+          dob: dob ? new Date(dob) : undefined,
+          gender: gender ?? undefined,
+          address: address ?? undefined,
+          city: city ?? undefined,
+          region: region ?? undefined,
+          postalCode: postalCode ?? undefined,
+          guardianName: guardianName ?? undefined,
+          relationship: relationship ?? undefined,
+          emergencyContact: emergencyContact ?? undefined,
+          isActive: typeof isActive === "boolean" ? isActive : undefined
         }
       });
 
@@ -310,6 +371,36 @@ export const updateStudent = async (req: Request, res: Response): Promise<void> 
   } catch (error) {
     console.error("Update Student Error:", error);
     res.status(500).json({ status: "error", message: "Failed to update student." });
+  }
+};
+
+export const updateStudentPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.trim().length < 6) {
+      res.status(400).json({ status: "error", message: "Password must be at least 6 characters long." });
+      return;
+    }
+
+    const student = await prisma.user.findFirst({ where: { id, role: Role.STUDENT } });
+    if (!student) {
+      res.status(404).json({ status: "error", message: "Student not found." });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+
+    await prisma.user.update({
+      where: { id },
+      data: { passwordHash }
+    });
+
+    res.json({ status: "success", message: "Student password updated successfully." });
+  } catch (error) {
+    console.error("Update Student Password Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to update password." });
   }
 };
 
@@ -2086,159 +2177,3 @@ export const changeAdminPassword = async (req: Request, res: Response): Promise<
   }
 };
 
-// ================= EXAM MANAGEMENT =================
-
-export const getExams = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const exams = await (prisma as any).assignment.findMany({
-      where: {
-        OR: [
-          { typeTag: { startsWith: "EXAM" } },
-          { typeTag: { startsWith: "Exam" } },
-          { typeTag: "Practical Assessment" }
-        ]
-      },
-      orderBy: { createdAt: "desc" }
-    });
-
-    const mapped = exams.map((ex: any) => {
-      let extraData: any = {};
-      if (ex.description && ex.description.startsWith("{")) {
-        try {
-          extraData = JSON.parse(ex.description);
-        } catch {
-          // ignore
-        }
-      }
-
-      const formattedDate = new Date(ex.dueDate).toLocaleDateString("en-US", {
-        month: "short",
-        day: "2-digit",
-        year: "numeric"
-      });
-
-      return {
-        id: ex.id,
-        examCode: extraData.examCode || `EX-${ex.id.substring(0, 6).toUpperCase()}`,
-        title: ex.title,
-        batchCourse: ex.batchName || "All Batches",
-        dateTime: extraData.dateTime || `${formattedDate} • 10:00 AM`,
-        duration: extraData.durationMins ? `${extraData.durationMins} Mins` : "120 Mins",
-        status: extraData.status || "SCHEDULED",
-        passingMark: extraData.passingMark || 60,
-        questions: extraData.questions || []
-      };
-    });
-
-    res.json({ status: "success", data: { exams: mapped } });
-  } catch (error) {
-    console.error("Get Exams Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to fetch exams." });
-  }
-};
-
-export const createExam = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { title, examCode, batchCourse, examDate, startTime, durationMins, passingMark, autoGrading, randomizeQuestions, questions, status } = req.body;
-
-    if (!title || !title.trim()) {
-      res.status(400).json({ status: "error", message: "Exam title is required." });
-      return;
-    }
-
-    const payload = JSON.stringify({
-      examCode: examCode || `EX-2024-${Math.floor(100 + Math.random() * 900)}`,
-      durationMins: durationMins || "120",
-      passingMark: passingMark || 60,
-      autoGrading: autoGrading ?? true,
-      randomizeQuestions: randomizeQuestions ?? true,
-      questions: questions || [],
-      dateTime: `${examDate || "Upcoming"} • ${startTime || "10:00 AM"}`,
-      status: status || "SCHEDULED"
-    });
-
-    const created = await (prisma as any).assignment.create({
-      data: {
-        title: title.trim(),
-        description: payload,
-        typeTag: "EXAM",
-        batchName: batchCourse || "All Batches",
-        dueDate: examDate ? new Date(examDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        totalPoints: 100
-      }
-    });
-
-    res.status(201).json({ status: "success", message: "Exam created successfully.", data: created });
-  } catch (error) {
-    console.error("Create Exam Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to create exam." });
-  }
-};
-
-export const getExamResults = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const submissions = await (prisma as any).assignmentSubmission.findMany({
-      include: {
-        assignment: true,
-        student: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
-      },
-      orderBy: { submittedAt: "desc" }
-    });
-
-    const mapped = submissions.map((s: any) => {
-      let scoreStr = s.grade ? `${s.grade}/100` : "--";
-      let statusStr = "Passed";
-      const numericGrade = parseInt(s.grade || "0", 10);
-      if (!s.grade || s.grade === "0") {
-        statusStr = s.notes === "Absent" ? "Absent" : "Failed";
-      } else if (numericGrade < 40) {
-        statusStr = "Failed";
-      } else {
-        statusStr = "Passed";
-      }
-
-      return {
-        id: s.id,
-        examId: s.assignment?.id,
-        studentName: s.studentName || s.student?.fullName || "Student",
-        studentEmail: s.student?.email || "student@institution.edu",
-        studentAvatar: s.student?.avatarUrl || "/Ananya.png",
-        studentIdCode: `#STU-${s.studentId.substring(0, 4).toUpperCase()}`,
-        batchName: s.assignment?.batchName || "Kathak Batch",
-        examTitle: s.assignment?.title || "Kathak Exam",
-        score: scoreStr,
-        status: statusStr,
-        feedback: s.feedback,
-        notes: s.notes,
-        fileUrl: s.fileUrl,
-        submittedAt: new Date(s.submittedAt).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })
-      };
-    });
-
-    res.json({ status: "success", data: { results: mapped } });
-  } catch (error) {
-    console.error("Get Exam Results Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to fetch exam results." });
-  }
-};
-
-export const evaluateExamResult = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const id = req.params.id as string;
-    const { grade, feedback, status } = req.body;
-
-    const updated = await (prisma as any).assignmentSubmission.update({
-      where: { id },
-      data: {
-        grade: String(grade),
-        feedback,
-        status: status || "GRADED"
-      }
-    });
-
-    res.json({ status: "success", message: "Exam evaluation saved successfully.", data: updated });
-  } catch (error) {
-    console.error("Evaluate Exam Result Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to save exam evaluation." });
-  }
-};  

@@ -35,10 +35,6 @@ import {
   gradeAssignmentSubmission,
   getAssignmentDetails,
   getAssignmentSubmissionsByAssignment,
-  getExams,
-  createExam,
-  getExamResults,
-  evaluateExamResult,
   getAttendanceRecords,
   saveAttendance,
   getPayments,
@@ -49,7 +45,8 @@ import {
   deleteInquiry,
   getAdminProfile,
   updateAdminProfile,
-  changeAdminPassword
+  changeAdminPassword,
+  updateStudentPassword
 } from "./admin.controller";
 import { authenticate, requirePermission } from "../../middleware/auth.middleware";
 
@@ -65,6 +62,7 @@ router.get("/students", requirePermission(Permission.MANAGE_STUDENTS), getStuden
 router.post("/students", requirePermission(Permission.MANAGE_STUDENTS), createStudent);
 router.get("/students/:id", requirePermission(Permission.MANAGE_STUDENTS), getStudentById);
 router.put("/students/:id", requirePermission(Permission.MANAGE_STUDENTS), updateStudent);
+router.post("/students/:id/reset-password", requirePermission(Permission.MANAGE_STUDENTS), updateStudentPassword);
 router.patch("/students/:id/status", requirePermission(Permission.MANAGE_STUDENTS), changeStudentStatus);
 router.post("/students/:id/reset-password", requirePermission(Permission.MANAGE_STUDENTS), resetStudentPassword);
 router.delete("/students/:id", requirePermission(Permission.MANAGE_STUDENTS), deleteStudent);
@@ -107,11 +105,7 @@ router.get(
   getAssignmentSubmissionsByAssignment
 );
 
-// 5.8 Exam Management
-router.get("/exams", requirePermission(Permission.VIEW_EXAMS), getExams);
-router.post("/exams", requirePermission(Permission.CREATE_EXAM), createExam);
-router.get("/exams/results", requirePermission(Permission.VIEW_EXAM_RESULTS), getExamResults);
-router.post("/exams/results/:id/evaluate", requirePermission(Permission.GRADE_EXAMS), evaluateExamResult);
+
 
 // 6. Attendance Management
 router.get("/attendance", requirePermission(Permission.MANAGE_ATTENDANCE), getAttendanceRecords);
