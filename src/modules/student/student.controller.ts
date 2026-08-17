@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
-import { Role, ClassMode } from "@prisma/client";
+import { Role, ClassMode, PaymentStatus } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import jwt, { SignOptions } from "jsonwebtoken";
 import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
@@ -10,6 +11,7 @@ import {
   signUserToken,
 } from "../../lib/authHelpers";
 import { getUserDisplayName, getTeacherBatchNames, getStudentBatchName } from "../../lib/batchHelpers";
+import { sendEmail } from "../../lib/mailer";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -76,9 +78,28 @@ export const enrollStudent = async (req: Request, res: Response): Promise<void> 
       relationship,
       emergencyContact,
       paymentMethod,
+      razorpay_payment_id,
+      razorpay_order_id,
+      razorpay_signature,
     } = req.body;
 
-    // ---------- Validation ----------
+    // ---------- Payment Signature Validation ----------
+    if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
+      res.status(400).json({ status: "error", message: "Payment verification failed. Missing Razorpay signature." });
+      return;
+    }
+
+    const generated_signature = crypto
+      .createHmac("sha256", env.razorpayKeySecret)
+      .update(razorpay_order_id + "|" + razorpay_payment_id)
+      .digest("hex");
+
+    if (generated_signature !== razorpay_signature) {
+      res.status(400).json({ status: "error", message: "Payment verification failed. Invalid signature." });
+      return;
+    }
+
+    // ---------- Form Validation ----------
     if (!fullName?.trim()) {
       res.status(400).json({ status: "error", message: "Full Name is required." });
       return;
@@ -215,6 +236,22 @@ export const enrollStudent = async (req: Request, res: Response): Promise<void> 
         },
       });
 
+      // Find course fee to record the exact payment amount
+      const course = await tx.course.findUnique({ where: { id: String(courseId) } });
+      const feePaid = course?.groupFeeINR || 0;
+
+      const payment = await tx.payment.create({
+        data: {
+          userId: user.id,
+          amount: feePaid,
+          currency: "INR",
+          gateway: "RAZORPAY",
+          transactionId: razorpay_payment_id,
+          orderId: razorpay_order_id,
+          status: PaymentStatus.SUCCESS
+        }
+      });
+
       if (batchId) {
         await tx.batchStudent.create({
           data: {
@@ -241,6 +278,33 @@ export const enrollStudent = async (req: Request, res: Response): Promise<void> 
     });
 
     setPortalAuthCookie(res, "student", token, expiresInMs);
+
+    // --- SEND REGISTRATION WELCOME EMAIL ---
+    try {
+      await sendEmail({
+        to: result.user.email,
+        subject: "Welcome to Kathak Academy!",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <h2 style="color: #900C27; text-align: center;">Welcome to Kathak Academy</h2>
+            <p>Hi ${result.user.fullName},</p>
+            <p>Thank you for registering with us! Your enrollment has been successfully processed.</p>
+            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="margin-top: 0; color: #1B1B24;">Your Login Details</h3>
+              <p><strong>Login URL:</strong> <a href="${env.frontendUrl}/student/login">${env.frontendUrl}/student/login</a></p>
+              <p><strong>Email:</strong> ${result.user.email}</p>
+              <p><strong>Password:</strong> ${password}</p>
+            </div>
+            <p>You can log in anytime to view your classes, assignments, and payments.</p>
+            <br/>
+            <p>Warm Regards,</p>
+            <p><strong>Kathak Academy Team</strong></p>
+          </div>
+        `
+      });
+    } catch (emailErr) {
+      console.error("Failed to send registration welcome email:", emailErr);
+    }
 
     res.status(201).json({
       status: "success",

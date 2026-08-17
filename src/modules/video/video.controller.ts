@@ -187,10 +187,27 @@ export async function getVideoTasks(req: Request, res: Response): Promise<void> 
     if (user.role === "ADMIN") {
       whereClause = {};
     } else if (user.role === "TEACHER") {
-      whereClause = { createdById: user.id };
+      const teacherName = await getUserDisplayName(user.id, user.email);
+      const assignedBatches = await getTeacherBatchNames(user.id, teacherName);
+      whereClause = {
+        OR: [
+          { createdById: user.id },
+          { batchName: { in: assignedBatches } },
+          { batchName: { equals: "all batches", mode: "insensitive" } },
+          { batchName: { equals: "All Batches", mode: "insensitive" } },
+          { batchName: "" },
+        ]
+      };
     } else {
       const studentBatch = await getStudentBatchName(user.id);
-      whereClause = studentBatch ? { batchName: studentBatch } : {};
+      whereClause = studentBatch ? { 
+        OR: [
+          { batchName: studentBatch },
+          { batchName: { equals: "all batches", mode: "insensitive" } },
+          { batchName: { equals: "All Batches", mode: "insensitive" } },
+          { batchName: "" },
+        ]
+      } : {};
     }
 
     if (search) {
@@ -611,19 +628,14 @@ export async function getTaskSubmissionsDetail(req: Request, res: Response): Pro
     }
 
     if (user.role === "TEACHER") {
+      const isCreator = task.createdById === user.id;
       const teacherName = await getUserDisplayName(user.id, user.email);
       const assignedBatches = await getTeacherBatchNames(user.id, teacherName);
 
-      if (assignedBatches.length === 0) {
-        res.status(403).json({
-          status: "error",
-          message: "You have no assigned batches yet.",
-        });
-        return;
-      }
-
       const taskBatch = (task.batchName || "").toLowerCase();
-      const allowed = assignedBatches.some((b) => b.toLowerCase() === taskBatch);
+      const allowed = isCreator || 
+                      taskBatch === "all batches" || 
+                      assignedBatches.some((b) => b.toLowerCase() === taskBatch);
 
       if (!allowed) {
         res.status(403).json({

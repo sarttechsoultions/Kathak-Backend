@@ -40,9 +40,10 @@ export const uploadImage = async (req: Request, res: Response): Promise<void> =>
 
     try {
       const fileBase64 = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+      const isPdf = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
       const result = await cloudinary.uploader.upload(fileBase64, {
         folder: "kathak_courses",
-        resource_type: "auto",
+        resource_type: isPdf ? "raw" : "auto",
       });
 
       if (result && result.secure_url) {
@@ -128,25 +129,7 @@ export const uploadVideoToBunny = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    try {
-      const bunnyResult = await uploadToBunnyStream(file.buffer, file.originalname);
-      res.status(200).json({
-        status: "success",
-        message: "Video uploaded successfully.",
-        data: {
-          videoId: bunnyResult.videoId,
-          iframeUrl: bunnyResult.iframeUrl,
-          directUrl: bunnyResult.directUrl,
-          url: bunnyResult.iframeUrl,
-          fileUrl: bunnyResult.iframeUrl,
-          thumbnailUrl: bunnyResult.thumbnailUrl,
-        },
-      });
-      return;
-    } catch (bunnyErr: any) {
-      console.error("Bunny Stream video upload failed:", bunnyErr?.message || bunnyErr);
-    }
-    
+    // Removed Bunny.net upload logic to provide instant playback using Cloudinary
 
     // Secondary path: Cloudinary video upload. No artificial timeout — a real
     // upload of a multi-hundred-MB file legitimately takes longer than a

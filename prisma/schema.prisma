@@ -114,6 +114,30 @@ enum Currency {
   EUR
 }
 
+
+enum EventCategory {
+  Workshop
+  Competition
+  Seminar
+}
+
+enum EventStatus {
+  DRAFT
+  SCHEDULED
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum EventLevel {
+  Beginner
+  Intermediate
+  Advanced
+  All_Levels
+}
+
+
+
 model User {
   id           String  @id @default(uuid())
   fullName     String
@@ -153,6 +177,8 @@ model User {
   idProofUrl       String?
   // New Multiple Documents
   documents        Json[]    @default([])
+  // User Preferences
+  notificationPrefs Json?
 
   designation      String?
   primaryExpertise String?
@@ -173,6 +199,12 @@ model User {
   recordedClassViews RecordedClassView[]
   createdExams          Exam[]
   examResults            ExamResult[]
+
+  eventsAsInstructor Event[]             @relation("EventInstructor")
+  createdEvents      Event[]             @relation("EventCreator")
+  eventRegistrations EventRegistration[]
+  notifications      Notification[]
+  competitionParticipations CompetitionParticipant[] @relation("CompetitionParticipant")
 }
 
 model TeacherPermission {
@@ -565,9 +597,146 @@ model ExamResult {
   fileUrl       String?  // If they need to upload a video/document for practicals
   submittedAt   DateTime @default(now())
   answersData    Json?
+  flagged             Boolean @default(false)
+  questionEvaluations Json?
 
   exam          Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
   student       User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([examId, studentId]) // Ek student ek exam ek hi baar de sakta hai
+}
+
+
+model Event {
+  id               String        @id @default(uuid())
+  title            String
+  category         EventCategory @default(Workshop)
+  description      String        @db.Text
+  
+  // Schedule Details
+  startDate        DateTime      @db.Date
+  endDate          DateTime      @db.Date
+  startTime        String        // e.g., "10:00"
+  durationMins     Int           @default(60)
+  
+  // Instructor & Capacity
+  leadInstructorId String?
+  leadInstructor   User?         @relation("EventInstructor", fields: [leadInstructorId], references: [id], onDelete: SetNull)
+  capacity         Int
+  level            EventLevel    @default(Beginner)
+  
+  // Pricing & Venue
+  registrationFee  Float         @default(0.0)
+  locationOrLink   String
+  
+  status           EventStatus   @default(DRAFT)
+  
+  // Audit & Relations
+  createdById      String?
+  createdBy        User?         @relation("EventCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  
+  registrations    EventRegistration[]
+
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  isFeatured     Boolean  @default(false) // Hero banner ke liye (MOST ANTICIPATED wala event)
+  badgeTag       String?  // e.g. "MOST ANTICIPATED" — hero badge label, null ho to hide ho jayega
+  bannerImage    String?  // Hero banner background image
+  thumbnailImage String?  // Workshop card thumbnail image
+}
+
+model EventRegistration {
+  id               String        @id @default(uuid())
+  eventId          String
+  studentId        String
+  
+  // Payment tracking for paid events
+  paymentStatus    PaymentStatus @default(PENDING)
+  paymentId        String?       // Optional link to your existing Payment model
+  
+  registeredAt     DateTime      @default(now())
+
+  event            Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  student          User          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, studentId]) // Ek student ek event mein ek hi baar register ho sakta hai
+}
+
+// ==========================================================
+// NEW MODELS — Competition Track
+// ==========================================================
+model Competition {
+  id           String                    @id @default(uuid())
+  title        String
+  status       String                    @default("ACTIVE") // ACTIVE | COMPLETED
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+
+  updates      CompetitionUpdate[]
+  participants CompetitionParticipant[]
+}
+
+// Personalized info per student (performance slot, stage, etc.)
+// studentId -> User.id (same pattern as EventRegistration.studentId in your schema;
+// there's no separate Student model, User itself carries the student role)
+model CompetitionParticipant {
+  id              String       @id @default(uuid())
+  competitionId   String
+  competition     Competition  @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  studentId       String
+  student         User         @relation("CompetitionParticipant", fields: [studentId], references: [id], onDelete: Cascade)
+
+  performanceSlot DateTime?    // e.g. "5th Aug 10:30 AM"
+  stageLocation   String?      // e.g. "Auditorium Main Stage"
+
+  createdAt       DateTime     @default(now())
+
+  @@unique([competitionId, studentId])
+}
+
+// Generic timeline items visible to all participants (Costume Fitting, Final Rehearsal, etc.)
+model CompetitionUpdate {
+  id            String      @id @default(uuid())
+  competitionId String
+  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+
+  title         String
+  description   String
+  dueDate       DateTime?
+  timeLabel     String?     // Optional custom display label e.g. "3rd Aug • 2:00 PM"
+  order         Int         @default(0)
+
+  createdAt     DateTime    @default(now())
+}
+
+// ==========================================================
+// NEW MODEL — Promotional Offer Banner (Masterclass Pass etc.)
+// ==========================================================
+model Offer {
+  id              String    @id @default(uuid())
+  badgeLabel      String    // "EARLY BIRD SPECIAL"
+  title           String    // "Masterclass Series Pass"
+  description     String    // "Get 25% off when you book 3 or more workshops this month."
+  ctaLabel        String    @default("Claim Offer")
+  ctaLink         String?
+  discountPercent Int?
+  isActive        Boolean   @default(true)
+  startDate       DateTime?
+  endDate         DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  message   String
+  isUnread  Boolean  @default(true)
+  link      String?
+  createdAt DateTime @default(now())
 }

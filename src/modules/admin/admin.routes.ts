@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { Permission } from "@prisma/client";
+import eventRoutes from './event.routes';
 import {
   getDashboardStats,
   getStudents,
@@ -46,12 +47,17 @@ import {
   getAdminProfile,
   updateAdminProfile,
   changeAdminPassword,
-  updateStudentPassword
+  updateStudentPassword,
+  replyToInquiry
 } from "./admin.controller";
+import { getReportsOverview } from "./admin.reports.controller";
 import { authenticate, requirePermission } from "../../middleware/auth.middleware";
 
 const router = Router();
 
+
+
+router.use('/events', eventRoutes);
 router.use(authenticate);
 
 // 1. Dashboard Overview
@@ -120,11 +126,15 @@ router.post("/payments/:id/refund", requirePermission(Permission.VIEW_PAYMENTS),
 // 8. Inquiries
 router.get("/inquiries", requirePermission(Permission.MANAGE_COMMUNICATION), getInquiries);
 router.patch("/inquiries/:id", requirePermission(Permission.MANAGE_COMMUNICATION), updateInquiryStatus);
+router.post("/inquiries/:id/reply", requirePermission(Permission.MANAGE_COMMUNICATION), replyToInquiry);
 router.delete("/inquiries/:id", requirePermission(Permission.MANAGE_COMMUNICATION), deleteInquiry);
 
 // 9. Admin Self-Profile
 router.get("/profile", getAdminProfile);
 router.put("/profile", updateAdminProfile);
 router.post("/profile/change-password", changeAdminPassword);
+
+// 10. Reports & Analytics
+router.get("/reports/overview", getReportsOverview);
 
 export default router;

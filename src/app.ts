@@ -8,11 +8,18 @@ import authRoutes from "./modules/auth/auth.routes";
 import adminRoutes from "./modules/admin/admin.routes";
 import uploadRoutes from "./modules/upload/upload.routes";
 import studentRoutes from "./modules/student/student.routes";
+import supportRoutes from "./modules/support/support.routes";
+import studentEventRoutes from "./modules/student/student.event.routes";
+import studentCompetitionRoutes from "./modules/student/student.competition.routes";
+import studentOfferRoutes from "./modules/student/student.offer.routes";
+import teacherRoutes from "./modules/teacher/teacher.routes";
 import liveClassRoutes from "./modules/liveclass/liveclass.routes";
 import videoRoutes from "./modules/video/video.routes";
 import recordedClassRoutes from "./modules/admin/recordedClass.routes";
 import exmRoutes from "./modules/admin/exam.routes";
 import studentExamRoutes from "./modules/student/student.exam.routes";
+import { notificationRoutes } from "./modules/notification/notification.routes";
+import paymentRoutes from "./modules/payment/payment.routes";
 import {
   getCourses,
   createCourse,
@@ -27,53 +34,29 @@ import {
   getAttendanceRecords,
   getPayments
 } from "./modules/admin/admin.controller";
-import { authenticate } from "./middleware/auth.middleware";
 import { env } from "./config/env";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware";
-import { generalRateLimiter } from "./middleware/rateLimit.middleware";
+import { authenticate } from "./middleware/auth.middleware";
 
 const app = express();
 
-app.disable("x-powered-by");
-
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" },
+app.use(helmet());
+app.use(cors({
+  origin: env.frontendUrl,
+  credentials: true,
 }));
 
-const allowedOrigins = [
-  env.frontendUrl,
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-];
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("CORS policy violation: Access denied."));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
-
-app.use(generalRateLimiter);
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-
-// Ensure uploads directory exists and is served statically
-const uploadsDir = path.join(process.cwd(), "uploads");
+const uploadsDir = path.join(__dirname, "../uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 app.use("/uploads", express.static(uploadsDir));
 
-app.get("/api/v1/health", (_req: Request, res: Response) => {
-  res.status(200).json({
+app.get("/api/v1/health", (req: Request, res: Response) => {
+  res.json({
     status: "success",
     message: "Kathak Next Express Backend API is running smoothly!",
     timestamp: new Date().toISOString(),
@@ -85,11 +68,19 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/upload", uploadRoutes);
 app.use("/api/v1/student", studentRoutes);
+app.use("/api/v1/student/events", studentEventRoutes);
+app.use("/api/v1/student/competition", studentCompetitionRoutes);
+app.use("/api/v1/student/offers", studentOfferRoutes);
+app.use("/api/v1/teacher", teacherRoutes);
+app.use("/api/v1/support", supportRoutes);
 app.use("/api/v1", liveClassRoutes);
 app.use("/api/v1/video", videoRoutes);
 app.use("/api/v1", recordedClassRoutes);
 app.use("/api/v1/admin/exams", exmRoutes);
 app.use("/api/v1/student/exams", studentExamRoutes);
+app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1/payment", paymentRoutes);
+
 // Public & Universal Module Route Aliases
 app.get("/api/v1/courses", getCourses);
 app.post("/api/v1/courses", authenticate, createCourse);

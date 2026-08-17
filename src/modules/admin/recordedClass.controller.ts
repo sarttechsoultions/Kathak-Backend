@@ -84,6 +84,47 @@ const newClass = await prisma.recordedClass.create({
   },
 });
 
+    // --- BROADCAST NOTIFICATION ---
+    try {
+      if (batchId) {
+        // Send only to students in this specific batch
+        const studentsInBatch = await prisma.batchStudent.findMany({
+          where: { batchId },
+          select: { studentId: true },
+        });
+
+        if (studentsInBatch.length > 0) {
+          const notifications = studentsInBatch.map(s => ({
+            userId: s.studentId,
+            type: "CLASS",
+            title: `New Recorded Class: ${newClass.title}`,
+            message: `A new video "${newClass.title}" has been uploaded for your batch.`,
+            link: "/student/live-classes", // Using live-classes route as standard class portal
+          }));
+          await prisma.notification.createMany({ data: notifications });
+        }
+      } else if (courseId) {
+        // Broadcast to all active students in this course
+        const enrollments = await prisma.enrollment.findMany({
+          where: { courseId, active: true },
+          select: { userId: true },
+        });
+
+        if (enrollments.length > 0) {
+          const notifications = enrollments.map(e => ({
+            userId: e.userId,
+            type: "CLASS",
+            title: `New Video: ${newClass.title}`,
+            message: `A new video "${newClass.title}" has been uploaded to your course.`,
+            link: "/student/live-classes",
+          }));
+          await prisma.notification.createMany({ data: notifications });
+        }
+      }
+    } catch (notifErr) {
+      console.error("Failed to send recorded class notifications:", notifErr);
+    }
+
     res.status(201).json({ 
       status: "success", 
       message: "Recorded class uploaded successfully.", 

@@ -37,8 +37,6 @@ router.get("/finance", ...studentOnly, getStudentFinance);
 router.get("/assignments", ...studentOnly, getStudentAssignments);
 router.post("/assignments/submit", ...studentOnly, submitStudentAssignment);
 
-router.get("/exams", ...studentOnly, getStudentExams);
-router.get("/exams/:id", ...studentOnly, getStudentExamById);
-router.post("/exams/submit", ...studentOnly, submitStudentExam);
+// Legacy exam routes removed to prevent shadowing studentExamRoutes in app.ts
 
 export default router;

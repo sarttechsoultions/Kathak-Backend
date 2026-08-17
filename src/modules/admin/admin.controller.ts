@@ -3,6 +3,8 @@ import { Role, Permission, PaymentStatus, CourseCategory, AttendanceStatus } fro
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma";
 import { sanitizeUser } from "../../lib/authHelpers";
+import { sendEmail } from "../../lib/mailer";
+import { env } from "../../config/env";
 
 const mapCategoryToEnum = (cat?: string): CourseCategory => {
   if (!cat) return CourseCategory.BASIC;
@@ -256,6 +258,33 @@ export const createStudent = async (req: Request, res: Response): Promise<void> 
         where: { id: String(batchId) },
         data: { totalStudents: { increment: 1 } }
       });
+    }
+
+    // --- SEND WELCOME EMAIL ---
+    try {
+      await sendEmail({
+        to: newStudent.email,
+        subject: "Welcome to Kathak Academy!",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <h2 style="color: #900C27; text-align: center;">Welcome to Kathak Academy</h2>
+            <p>Hi ${newStudent.fullName},</p>
+            <p>Your student account has been successfully created by the administration. We are thrilled to have you join us on this beautiful journey of Kathak!</p>
+            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="margin-top: 0; color: #1B1B24;">Your Login Credentials</h3>
+              <p><strong>Login URL:</strong> <a href="${env.frontendUrl}/student/login">${env.frontendUrl}/student/login</a></p>
+              <p><strong>Email:</strong> ${newStudent.email}</p>
+              <p><strong>Password:</strong> ${password}</p>
+            </div>
+            <p>Please log in and change your password as soon as possible.</p>
+            <br/>
+            <p>Warm Regards,</p>
+            <p><strong>Kathak Academy Team</strong></p>
+          </div>
+        `
+      });
+    } catch (emailErr) {
+      console.error("Failed to send welcome email:", emailErr);
     }
 
     res.status(201).json({ status: "success", message: "Student account created successfully.", data: sanitizeUser(newStudent) });
@@ -781,6 +810,33 @@ export const createTeacher = async (req: Request, res: Response): Promise<void> 
       });
     }
 
+    // --- SEND WELCOME EMAIL ---
+    try {
+      await sendEmail({
+        to: newTeacher.email,
+        subject: "Welcome to Kathak Academy, Teacher!",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <h2 style="color: #900C27; text-align: center;">Welcome to the Faculty</h2>
+            <p>Hi ${newTeacher.fullName},</p>
+            <p>Your Teacher account has been successfully created by the administration. We are thrilled to have you lead our students.</p>
+            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="margin-top: 0; color: #1B1B24;">Your Login Credentials</h3>
+              <p><strong>Login URL:</strong> <a href="${env.frontendUrl}/admin/login">${env.frontendUrl}/admin/login</a></p>
+              <p><strong>Email:</strong> ${newTeacher.email}</p>
+              <p><strong>Password:</strong> ${password}</p>
+            </div>
+            <p>Please log in and change your password as soon as possible.</p>
+            <br/>
+            <p>Warm Regards,</p>
+            <p><strong>Kathak Academy Admin</strong></p>
+          </div>
+        `
+      });
+    } catch (emailErr) {
+      console.error("Failed to send teacher welcome email:", emailErr);
+    }
+
     res.status(201).json({
       status: "success",
       message: "Teacher account created successfully.",
@@ -794,7 +850,6 @@ export const createTeacher = async (req: Request, res: Response): Promise<void> 
         // permissions field hataya
       }
     });
-
   } catch (error) {
     console.error("Create Teacher Error:", error);
     res.status(500).json({ 
@@ -1537,17 +1592,15 @@ const data: any = {
 
     if (batchId) {
       const targetB = await (prisma as any).batch.findUnique({ where: { id: batchId } });
-      if (
-        targetB &&
-        targetB.status &&
-        targetB.status.toLowerCase() !== "active" &&
-        targetB.status.toLowerCase() !== "started"
-      ) {
-        res.status(400).json({
-          status: "error",
-          message: `Cannot assign assignment. Batch "${targetB.name}" has not started yet (Status: ${targetB.status}).`,
-        });
-        return;
+      if (targetB && targetB.status) {
+        const s = targetB.status.toLowerCase();
+        if (s === "upcoming" || s === "not started" || s === "pending") {
+          res.status(400).json({
+            status: "error",
+            message: `Cannot assign assignment. Batch "${targetB.name}" has not started yet (Status: ${targetB.status}).`,
+          });
+          return;
+        }
       }
       data.batch = { connect: { id: batchId } };
     }
@@ -1558,6 +1611,46 @@ const data: any = {
     // }
 
     const assignment = await (prisma as any).assignment.create({ data });
+
+    // --- BROADCAST NOTIFICATION ---
+    try {
+      if (batchId) {
+        // Send only to students in this specific batch
+        const studentsInBatch = await (prisma as any).batchStudent.findMany({
+          where: { batchId },
+          select: { studentId: true },
+        });
+
+        if (studentsInBatch.length > 0) {
+          const notifications = studentsInBatch.map((s: any) => ({
+            userId: s.studentId,
+            type: "ANNOUNCEMENT",
+            title: `New Assignment: ${assignment.title}`,
+            message: `A new assignment "${assignment.title}" has been posted for your batch.`,
+            link: "/student/assignments",
+          }));
+          await (prisma as any).notification.createMany({ data: notifications });
+        }
+      } else {
+        // Broadcast to all active students if no batch specified
+        const allStudents = await (prisma as any).user.findMany({
+          where: { role: "STUDENT", isActive: true },
+          select: { id: true },
+        });
+        if (allStudents.length > 0) {
+          const notifications = allStudents.map((s: any) => ({
+            userId: s.id,
+            type: "ANNOUNCEMENT",
+            title: `New Assignment: ${assignment.title}`,
+            message: `A new global assignment "${assignment.title}" has been posted.`,
+            link: "/student/assignments",
+          }));
+          await (prisma as any).notification.createMany({ data: notifications });
+        }
+      }
+    } catch (notifErr) {
+      console.error("Failed to send assignment notifications:", notifErr);
+    }
 
     res.status(201).json({
       status: "success",
@@ -1618,7 +1711,8 @@ export const gradeAssignmentSubmission = async (req: Request, res: Response): Pr
       where: { id },
       data: {
         grade: String(grade),
-        feedback,
+        // Feedback ko parse and format karte hain securely (stringify format)
+        feedback: typeof feedback === "object" ? JSON.stringify(feedback) : feedback,
         status: "GRADED"
       }
     });
@@ -2033,6 +2127,48 @@ export const recordFeePayment = async (req: Request, res: Response): Promise<voi
       }
     });
 
+    // Fetch student to send email
+    const student = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: { fullName: true, email: true }
+    });
+
+    if (student && student.email) {
+      try {
+        await sendEmail({
+          to: student.email,
+          subject: "Kathak Academy - Payment Receipt",
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+              <h2 style="color: #900C27; text-align: center;">Payment Receipt</h2>
+              <p>Hi ${student.fullName},</p>
+              <p>We have successfully received your payment. Thank you!</p>
+              <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 10px 0;"><strong>Amount Paid:</strong></td>
+                  <td style="padding: 10px 0; text-align: right;">₹${amount}</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 10px 0;"><strong>Transaction ID:</strong></td>
+                  <td style="padding: 10px 0; text-align: right;">${txId}</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 10px 0;"><strong>Method:</strong></td>
+                  <td style="padding: 10px 0; text-align: right;">${gateway || "MANUAL_CASH"}</td>
+                </tr>
+              </table>
+              <p>You can view and download your full digital receipt anytime from your Student Dashboard under the Finance section.</p>
+              <br/>
+              <p>Warm Regards,</p>
+              <p><strong>Kathak Academy Team</strong></p>
+            </div>
+          `
+        });
+      } catch (emailErr) {
+        console.error("Failed to send payment receipt:", emailErr);
+      }
+    }
+
     res.status(201).json({ status: "success", message: "Fee payment recorded successfully.", data: payment });
   } catch (error) {
     console.error("Record Payment Error:", error);
@@ -2101,6 +2237,52 @@ export const deleteInquiry = async (req: Request, res: Response): Promise<void> 
   } catch (error) {
     console.error(error);
     res.status(500).json({ status: "error", message: "Failed to delete inquiry." });
+  }
+};
+
+export const replyToInquiry = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { message } = req.body;
+
+    if (!message) {
+      res.status(400).json({ status: "error", message: "Reply message is required." });
+      return;
+    }
+
+    // Update status to RESOLVED since we've replied
+    const updated = await prisma.inquiry.update({
+      where: { id },
+      data: { status: "RESOLVED" }
+    });
+
+    const emailSent = await sendEmail({
+      to: updated.contactInfo,
+      subject: `Re: ${updated.subject}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+          <h2 style="color: #900C27;">Support Response</h2>
+          <p>Hi ${updated.fullName},</p>
+          <p>Thank you for reaching out. Here is our response regarding your inquiry: <strong>"${updated.subject}"</strong></p>
+          <div style="background-color: #f9f9f9; border-left: 4px solid #900C27; padding: 15px; margin: 20px 0;">
+            <p style="white-space: pre-wrap; margin: 0;">${message}</p>
+          </div>
+          <p>If you have any further questions, feel free to submit another ticket or reply to this email.</p>
+          <br />
+          <p>Best regards,</p>
+          <p><strong>Kathak Academy Team</strong></p>
+        </div>
+      `
+    });
+
+    res.json({ 
+      status: "success", 
+      message: emailSent ? "Reply sent successfully via Email." : "Status updated, but failed to send email.", 
+      data: updated 
+    });
+  } catch (error) {
+    console.error("Reply to Inquiry Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to send reply." });
   }
 };
 

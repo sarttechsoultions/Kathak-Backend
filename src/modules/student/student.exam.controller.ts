@@ -12,30 +12,20 @@ export const getMyExams = async (req: Request, res: Response): Promise<void> => 
   try {
     // 1. Get Logged-in User ID
     const userId = (req as any).user?.id;
+    if (!userId) {
+      res.status(401).json({ status: "error", message: "Unauthorized" });
+      return;
+    }
+    
     let myBatchIds: string[] = [];
 
-    // 2. Fetch Student Profile to get direct batchId
-    // Hum OR use kar rahe hain in case aapki foreign key `userId` ho
-    const student = await (prisma as any).student.findFirst({
-      where: {
-        OR: [{ id: userId }, { userId: userId }]
-      }
+    // Students are stored in User table. Batch memberships are in BatchStudent table.
+    const memberships = await prisma.batchStudent.findMany({
+      where: { studentId: userId },
+      select: { batchId: true }
     });
-
-    if (student?.batchId) {
-      myBatchIds.push(student.batchId); // Direct relation se batch mil gaya!
-    }
-
-    // 3. Agar aapke paas batchStudent ki alag table hai toh use bhi check kar lete hain (Safe side ke liye)
-    try {
-      const memberships = await prisma.batchStudent.findMany({
-        where: { studentId: student?.id || userId },
-        select: { batchId: true }
-      });
-      memberships.forEach(m => myBatchIds.push(m.batchId));
-    } catch (e) {
-      // Ignore if table doesn't exist in your schema
-    }
+    
+    memberships.forEach(m => myBatchIds.push(m.batchId));
 
     // Remove duplicates
     myBatchIds = [...new Set(myBatchIds)];
@@ -52,7 +42,7 @@ export const getMyExams = async (req: Request, res: Response): Promise<void> => 
         course: { select: { title: true } },
         batch: { select: { name: true } },
         results: {
-          where: { studentId: student?.id || userId },
+          where: { studentId: userId },
           select: { status: true, marksObtained: true, id: true }
         }
       },
@@ -105,6 +95,11 @@ export const getExamToAttempt = async (req: Request, res: Response): Promise<voi
   try {
     const examId = normalizeParam(req.params.id);
     const studentId = (req as any).user?.id;
+    
+    if (!studentId) {
+      res.status(401).json({ status: "error", message: "Unauthorized" });
+      return;
+    }
 
     // Check if already submitted
     const existingResult = await prisma.examResult.findFirst({
@@ -158,6 +153,12 @@ export const submitExam = async (req: Request, res: Response): Promise<void> => 
   try {
     const examId = normalizeParam(req.params.id);
     const studentId = (req as any).user?.id;
+    
+    if (!studentId) {
+      res.status(401).json({ status: "error", message: "Unauthorized" });
+      return;
+    }
+
     const { answers } = req.body;
 
     const exam = await prisma.exam.findUnique({
@@ -221,7 +222,8 @@ export const submitExam = async (req: Request, res: Response): Promise<void> => 
 // 4. Get Student's Individual Exam Result Details
 export const getMyResultDetails = async (req: Request, res: Response): Promise<void> => {
   try {
-    const resultId = normalizeParam(req.params.resultId);
+    // FIX 1: Explicitly cast to string
+    const resultId = req.params.resultId as string; 
     const studentId = (req as any).user?.id;
 
     const result = await prisma.examResult.findUnique({
@@ -238,7 +240,34 @@ export const getMyResultDetails = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    res.json({ status: "success", data: { result } });
+    
+    const totalAttempts = await prisma.examResult.count({
+      where: { examId: result.examId }
+    });
+
+    const belowOrEqualCount = await prisma.examResult.count({
+      where: {
+        examId: result.examId,
+        marksObtained: {
+          // FIX 2: Fallback to 0 if marksObtained is null
+          lte: result.marksObtained ?? 0 
+        }
+      }
+    });
+
+    let percentile = 0;
+    if (totalAttempts > 1) { 
+      percentile = (belowOrEqualCount / totalAttempts) * 100;
+    } else if (totalAttempts === 1) {
+      percentile = 100; 
+    }
+
+    const finalResult = {
+      ...result,
+      percentile: parseFloat(percentile.toFixed(1)) 
+    };
+
+    res.json({ status: "success", data: { result: finalResult } });
   } catch (error) {
     console.error("Get Result Details Error:", error);
     res.status(500).json({ status: "error", message: "Failed to load result details." });
