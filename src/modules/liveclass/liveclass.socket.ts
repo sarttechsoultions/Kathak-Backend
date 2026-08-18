@@ -25,10 +25,10 @@ export function registerLiveClassSocket(io: Server) {
         userRole?: string;
         studentId?: string;
       }) => {
-        if (!roomName) return;
+        if (!roomName || !userName) return;
+
         socket.join(roomName);
 
-        // Send room chat history snapshot to joining user
         if (roomChatHistory[roomName]) {
           socket.emit("liveclass:chat-history", roomChatHistory[roomName]);
         } else {
@@ -36,110 +36,100 @@ export function registerLiveClassSocket(io: Server) {
           socket.emit("liveclass:chat-history", []);
         }
 
-        if (userName) {
-          const joinTime = new Date();
-          participantJoinTimes[socket.id] = joinTime;
+        const joinTime = new Date();
+        participantJoinTimes[socket.id] = joinTime;
 
-          socket.data.roomName = roomName;
-          socket.data.userName = userName;
-          socket.data.userRole = userRole || "Student";
-          socket.data.studentId = studentId;
+        socket.data.roomName = roomName;
+        socket.data.userName = userName;
+        socket.data.userRole = userRole || "Student";
+        socket.data.studentId = studentId;
 
-          if (!roomParticipants[roomName]) {
-            roomParticipants[roomName] = new Map();
-          }
+        if (!roomParticipants[roomName]) {
+          roomParticipants[roomName] = new Map();
+        }
 
-          const participant: Participant = {
-            id: socket.id,
-            userName,
-            userRole: userRole || "Student",
-            joinedAt: joinTime.toISOString(),
-            studentId,
-          };
+        const participant: Participant = {
+          id: socket.id,
+          userName,
+          userRole: userRole || "Student",
+          joinedAt: joinTime.toISOString(),
+          studentId,
+        };
 
-          roomParticipants[roomName].set(userName, participant);
+        // ✅ socket.id se key — har physical connection unique entry rakhta hai,
+        // isliye same "Admin"/"User" naam wale multiple connections overwrite nahi karte
+        roomParticipants[roomName].set(socket.id, participant);
 
-          // Emit room participants snapshot to all users in room
-          const currentList = Array.from(roomParticipants[roomName].values());
-          io.to(roomName).emit("liveclass:room-users", currentList);
-          io.to(roomName).emit("liveclass:user-joined", participant);
+        broadcastRoomUsers(io, roomName);
+        io.to(roomName).emit("liveclass:user-joined", participant);
 
-          // AUTO-MARK ATTENDANCE FOR STUDENTS IN DATABASE
-          if (userRole === "Student" || !userRole || userRole.toLowerCase() === "student") {
-            try {
-              const liveClass = await prisma.liveClass.findUnique({
-                where: { roomName },
-                include: { batch: true },
-              });
+        // AUTO-MARK ATTENDANCE FOR STUDENTS IN DATABASE
+        if (userRole === "Student" || !userRole || userRole.toLowerCase() === "student") {
+          try {
+            const liveClass = await prisma.liveClass.findUnique({
+              where: { roomName },
+              include: { batch: true },
+            });
 
-              if (liveClass) {
-                // Find student record in DB, preferring the authoritative
-                // studentId. Only fall back to a name/email match when it
-                // resolves to exactly one student — a findFirst here would
-                // silently mark the wrong person present if two students
-                // share a display name.
-                let dbStudent = null;
-                if (studentId) {
-                  dbStudent = await prisma.user.findUnique({ where: { id: studentId } });
-                }
-                if (!dbStudent && userName) {
-                  const candidates = await prisma.user.findMany({
-                    where: { OR: [{ fullName: userName }, { email: userName }], role: "STUDENT" },
-                    take: 2,
-                  });
-                  if (candidates.length === 1) {
-                    dbStudent = candidates[0];
-                  } else if (candidates.length > 1) {
-                    console.warn(`Attendance skipped: ambiguous name "${userName}" matches ${candidates.length} students.`);
-                  }
-                }
+            if (liveClass) {
+              if ((userRole === "Teacher" || userRole === "Admin") && liveClass.status === "SCHEDULED") {
+                await prisma.liveClass.update({
+                  where: { id: liveClass.id },
+                  data: { status: "LIVE" },
+                });
+                io.to(roomName).emit("liveclass:status-changed", "LIVE");
+              }
 
-                if (dbStudent) {
-                  const joinTimeString = joinTime.toLocaleTimeString("en-US", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    hour12: true,
-                  });
+              let dbUser = null;
+              if (studentId) {
+                dbUser = await prisma.user.findUnique({ where: { id: studentId } });
+              }
+              if (!dbUser && userName) {
+                const candidates = await prisma.user.findMany({
+                  where: { OR: [{ fullName: userName }, { email: userName }] },
+                  take: 1,
+                });
+                dbUser = candidates.length > 0 ? candidates[0] : null;
+              }
 
-                  // Check if student joined > 15 minutes after class start
-                  const startDiffMinutes = (joinTime.getTime() - liveClass.scheduledStart.getTime()) / (1000 * 60);
-                  const attendanceStatus = startDiffMinutes > 15 ? AttendanceStatus.LATE : AttendanceStatus.PRESENT;
+              if (dbUser) {
+                const joinTimeString = joinTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+                const startDiffMinutes = (joinTime.getTime() - liveClass.scheduledStart.getTime()) / (1000 * 60);
+                const attendanceStatus = startDiffMinutes > 15 ? AttendanceStatus.LATE : AttendanceStatus.PRESENT;
 
-                  const todayStart = new Date();
-                  todayStart.setHours(0, 0, 0, 0);
-                  const todayEnd = new Date();
-                  todayEnd.setHours(23, 59, 59, 999);
+                const todayStart = new Date();
+                todayStart.setHours(0, 0, 0, 0);
+                const todayEnd = new Date();
+                todayEnd.setHours(23, 59, 59, 999);
 
-                  // Check if attendance already exists for today's live class session
-                  const existingAttendance = await prisma.attendance.findFirst({
-                    where: {
-                      studentId: dbStudent.id,
+                const existingAttendance = await prisma.attendance.findFirst({
+                  where: {
+                    studentId: dbUser.id,
+                    batchId: liveClass.batchId,
+                    date: { gte: todayStart, lte: todayEnd },
+                    session: liveClass.title,
+                  },
+                });
+
+                if (!existingAttendance) {
+                  await prisma.attendance.create({
+                    data: {
+                      studentId: dbUser.id,
+                      studentName: dbUser.fullName,
                       batchId: liveClass.batchId,
-                      date: { gte: todayStart, lte: todayEnd },
+                      batchName: liveClass.batch.name,
                       session: liveClass.title,
+                      date: new Date(),
+                      status: attendanceStatus,
+                      remarks: `[${userRole}] Auto-marked: Joined live class at ${joinTimeString}.`,
                     },
                   });
-
-                  if (!existingAttendance) {
-                    await prisma.attendance.create({
-                      data: {
-                        studentId: dbStudent.id,
-                        studentName: dbStudent.fullName,
-                        batchId: liveClass.batchId,
-                        batchName: liveClass.batch.name,
-                        session: liveClass.title,
-                        date: new Date(),
-                        status: attendanceStatus,
-                        remarks: `Auto-marked: Joined live class at ${joinTimeString}.`,
-                      },
-                    });
-                    console.log(`✅ Auto-marked attendance [${attendanceStatus}] for student ${dbStudent.fullName} in ${liveClass.title}`);
-                  }
+                  console.log(`✅ Auto-marked attendance [${attendanceStatus}] for ${userRole} ${dbUser.fullName}`);
                 }
               }
-            } catch (err) {
-              console.error("Auto-Attendance Join Recording Error:", err);
             }
+          } catch (err) {
+            console.error("Auto-Attendance Join Recording Error:", err);
           }
         }
       }
@@ -153,31 +143,29 @@ export function registerLiveClassSocket(io: Server) {
       const joinTime = participantJoinTimes[socket.id];
 
       if (roomName && roomParticipants[roomName]) {
-        if (userName) {
-          roomParticipants[roomName].delete(userName);
-        }
-        for (const [key, p] of roomParticipants[roomName].entries()) {
-          if (p.id === socket.id) {
-            roomParticipants[roomName].delete(key);
-          }
-        }
-        const currentList = Array.from(roomParticipants[roomName].values());
-        io.to(roomName).emit("liveclass:room-users", currentList);
-        io.to(roomName).emit("liveclass:user-left", {
-          id: socket.id,
-          userName: userName || "User",
-        });
+        // ✅ direct delete by socket.id — no loop, no ambiguity
+        const removed = roomParticipants[roomName].delete(socket.id);
 
-        // UPDATE DURATION & LEAVE TIME IN DATABASE ATTENDANCE RECORD
+        if (removed) {
+          broadcastRoomUsers(io, roomName);
+          io.to(roomName).emit("liveclass:user-left", {
+            id: socket.id,
+            userName: userName || "User",
+          });
+        }
+
+        // Room khaali ho gaya toh memory clean karo
+        if (roomParticipants[roomName].size === 0) {
+          delete roomParticipants[roomName];
+        }
+
         if (joinTime && (userRole === "Student" || !userRole || userRole.toLowerCase() === "student")) {
           try {
             const leaveTime = new Date();
             const durationMinutes = Math.max(1, Math.round((leaveTime.getTime() - joinTime.getTime()) / (1000 * 60)));
             delete participantJoinTimes[socket.id];
 
-            const liveClass = await prisma.liveClass.findUnique({
-              where: { roomName },
-            });
+            const liveClass = await prisma.liveClass.findUnique({ where: { roomName } });
 
             if (liveClass) {
               let dbStudent = null;
@@ -225,6 +213,9 @@ export function registerLiveClassSocket(io: Server) {
             console.error("Auto-Attendance Leave Recording Error:", err);
           }
         }
+      } else {
+        // Room reference nahi mila socket.data mein, phir bhi stale timer clean karo
+        delete participantJoinTimes[socket.id];
       }
     };
 
@@ -242,7 +233,7 @@ export function registerLiveClassSocket(io: Server) {
       if (!roomChatHistory[payload.roomName]) {
         roomChatHistory[payload.roomName] = [];
       }
-      
+
       if (!roomChatHistory[payload.roomName].some((m) => m.id === payload.message.id)) {
         roomChatHistory[payload.roomName].push(payload.message);
       }
@@ -262,6 +253,42 @@ export function registerLiveClassSocket(io: Server) {
     socket.on("disconnect", () => {
       handleUserLeave(socket);
     });
-
   });
+
+  // ✅ Production safety net: har 30 sec pe verify karo ki roomParticipants
+  // mein jo socket.id hain wo actually abhi bhi Socket.IO se connected hain.
+  // Agar koi 'disconnect' event kisi wajah se miss ho gaya (network blip,
+  // process crash mid-cleanup), ye sweep use apne aap remove kar dega
+  // aur sabko updated list bhej dega — bina server restart ke.
+  setInterval(() => {
+    for (const roomName of Object.keys(roomParticipants)) {
+      const liveRoom = io.sockets.adapter.rooms.get(roomName);
+      const liveSocketIds = liveRoom ? new Set(liveRoom) : new Set<string>();
+
+      let changed = false;
+      for (const socketId of Array.from(roomParticipants[roomName].keys())) {
+        if (!liveSocketIds.has(socketId)) {
+          roomParticipants[roomName].delete(socketId);
+          delete participantJoinTimes[socketId];
+          changed = true;
+        }
+      }
+
+      if (roomParticipants[roomName].size === 0) {
+        delete roomParticipants[roomName];
+        continue;
+      }
+
+      if (changed) {
+        broadcastRoomUsers(io, roomName);
+      }
+    }
+  }, 30000);
+}
+
+function broadcastRoomUsers(io: Server, roomName: string) {
+  const currentList = roomParticipants[roomName]
+    ? Array.from(roomParticipants[roomName].values())
+    : [];
+  io.to(roomName).emit("liveclass:room-users", currentList);
 }

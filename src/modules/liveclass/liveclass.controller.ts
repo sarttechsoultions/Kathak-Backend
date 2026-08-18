@@ -1,6 +1,8 @@
 import { LiveClassStatus, Role } from "@prisma/client";
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
+import crypto from "crypto";
+import { getIO } from "../../lib/socket";
 import { agoraKeyReady, buildAgoraToken, numericUidFromString } from "./agoraToken";
 
 const serialise = (liveClass: any) => ({ ...liveClass, batchName: liveClass.batch.name, batchCode: liveClass.batch.code, courseName: liveClass.batch.courseName });
@@ -54,28 +56,49 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
     return;
   }
 
-  // ✅ Extra safety: never let a blank/undefined appId leak into a successful response
   if (!process.env.AGORA_APP_ID) {
     res.status(503).json({ status: "error", message: "AGORA_APP_ID is missing on the server. Video cannot start." });
     return;
   }
 
   const liveClass = await prisma.liveClass.findUnique({ where: { id: String(req.params.id) }, include: { batch: true } });
-  if (!liveClass || liveClass.status !== "LIVE") {
-    res.status(404).json({ status: "error", message: "This class is not live." });
+
+  if (!liveClass || (liveClass.status !== "LIVE" && liveClass.status !== "SCHEDULED")) {
+    res.status(404).json({ status: "error", message: "This class is not available to join." });
     return;
   }
 
   const user = req.user!;
   const isAdmin = user.role === Role.ADMIN;
   const isTeacher = user.role === Role.TEACHER;
+  const now = new Date();
 
-  // When a class is LIVE, allow all authenticated students/teachers/admins to join smoothly
+  // ✅ Scheduled class ka end time nikal chuka hai — auto-expire karo
+  if (liveClass.status === "SCHEDULED" && now > liveClass.scheduledEnd) {
+    const updated = await prisma.liveClass.update({
+      where: { id: liveClass.id },
+      data: { status: "COMPLETED" },
+      include: { batch: { select: { name: true, code: true, courseName: true } } },
+    });
+    getIO().emit("liveclass:class-updated", serialise(updated)); // ✅ real-time broadcast
+    res.status(410).json({ status: "error", message: "This class has ended." });
+    return;
+  }
 
-  // All active participants (Teacher, Admin, Student) get publisher role
-  // so video and audio streams publish and transmit bidirectionally to all users.
+  // ✅ LIVE class ka end time bahut nikal chuka hai aur student try kar raha hai — block karo
+  if (liveClass.status === "LIVE" && now > liveClass.scheduledEnd && !isTeacher && !isAdmin) {
+    res.status(410).json({ status: "error", message: "This class has ended." });
+    return;
+  }
+
+  // Scheduled class abhi start hi nahi hui — sirf teacher/admin ko allow karo
+  if (liveClass.status === "SCHEDULED" && !isTeacher && !isAdmin) {
+    res.status(403).json({ status: "error", message: "The class has not started yet." });
+    return;
+  }
+
   const agoraClientRole: "publisher" | "subscriber" = "publisher";
-  const uid = isTeacher ? 1 : isAdmin ? 999999 : numericUidFromString(user.id);
+  const uid = crypto.randomInt(100000, 999999);
 
   const token = buildAgoraToken(liveClass.roomName, uid, agoraClientRole);
 
@@ -86,6 +109,7 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
       appId: process.env.AGORA_APP_ID,
       channelName: liveClass.roomName,
       uid,
+      isMainSpeaker: isTeacher || isAdmin,
       role: isAdmin ? "admin" : isTeacher ? "teacher" : "student",
       agoraRole: agoraClientRole,
       liveClass: serialise(liveClass),

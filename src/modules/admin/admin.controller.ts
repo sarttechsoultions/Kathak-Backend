@@ -18,62 +18,176 @@ const mapCategoryToEnum = (cat?: string): CourseCategory => {
 
 export const getDashboardStats = async (req: Request, res: Response): Promise<void> => {
   try {
-    const totalStudents = await prisma.user.count({ where: { role: Role.STUDENT } });
-    const totalTeachers = await prisma.user.count({ where: { role: Role.TEACHER } });
-    const activeCourses = await prisma.course.count({ where: { published: true } });
-    const totalBatches = await prisma.batch.count();
-
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
-    const liveClassesToday = await prisma.liveClass.count({
-      where: {
-        scheduledStart: {
-          gte: startOfDay,
-          lte: endOfDay
-        }
+    // ==========================================
+    // 1. TOP OVERVIEW STATS
+    // ==========================================
+    const [totalStudents, totalTeachers, activeCourses, liveClassesToday] = await Promise.all([
+      prisma.user.count({ where: { role: Role.STUDENT } }),
+      prisma.user.count({ where: { role: Role.TEACHER } }),
+      prisma.course.count({ where: { published: true } }),
+      prisma.liveClass.count({
+        where: { scheduledStart: { gte: startOfDay, lte: endOfDay } }
+      })
+    ]);
+
+    // ==========================================
+    // 2. REVENUE OVERVIEW (Last 6 Months)
+    // ==========================================
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
+    sixMonthsAgo.setDate(1);
+    sixMonthsAgo.setHours(0, 0, 0, 0);
+
+    const payments = await prisma.payment.findMany({
+      where: { 
+        status: PaymentStatus.SUCCESS,
+        createdAt: { gte: sixMonthsAgo } 
+      },
+      select: { amount: true, createdAt: true }
+    });
+
+    const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const monthlyRevenueData: Record<string, number> = {};
+    let totalRevenue = 0;
+
+    // Initialize last 6 months with 0
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      monthlyRevenueData[monthNames[d.getMonth()]] = 0;
+    }
+
+    payments.forEach(p => {
+      totalRevenue += p.amount;
+      const month = monthNames[p.createdAt.getMonth()];
+      if (monthlyRevenueData[month] !== undefined) {
+        monthlyRevenueData[month] += p.amount;
       }
     });
 
-    const revenueResult = await prisma.payment.aggregate({
-      where: { status: PaymentStatus.SUCCESS },
-      _sum: { amount: true }
+    const revenueChart = Object.keys(monthlyRevenueData).map(month => ({
+      month,
+      revenue: monthlyRevenueData[month]
+    }));
+
+    // Calculate Growth (Comparing current month vs last month)
+    const currentMonth = new Date().getMonth();
+    const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+    const currentMonthRevenue = monthlyRevenueData[monthNames[currentMonth]] || 0;
+    const lastMonthRevenue = monthlyRevenueData[monthNames[lastMonth]] || 0;
+    let growth = 0;
+    if (lastMonthRevenue > 0) {
+      growth = ((currentMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100;
+    }
+
+    // ==========================================
+    // 3. ATTENDANCE SUMMARY (For Today)
+    // ==========================================
+    const todayAttendances = await prisma.attendance.groupBy({
+      by: ['status'],
+      _count: true,
+      where: { date: { gte: startOfDay, lte: endOfDay } }
     });
-    const revenueVal = revenueResult._sum.amount || 0;
 
-    const totalAttendanceCount = await prisma.attendance.count();
-    const presentAttendanceCount = await prisma.attendance.count({ where: { status: "PRESENT" } });
-    const attendanceRateNum = totalAttendanceCount > 0 ? Math.round((presentAttendanceCount / totalAttendanceCount) * 100) : 95;
-
-    const recentInquiries = await prisma.inquiry.findMany({
-      take: 5,
-      orderBy: { createdAt: "desc" }
+    let present = 0, absent = 0, leave = 0, totalAtt = 0;
+    todayAttendances.forEach(a => {
+      totalAtt += a._count;
+      if (a.status === "PRESENT" || a.status === "LATE") present += a._count;
+      if (a.status === "ABSENT") absent += a._count;
+      if (a.status === "LEAVE") leave += a._count;
     });
 
-    const recentStudents = await prisma.user.findMany({
+    const attendanceSummary = {
+      presentPercent: totalAtt > 0 ? Math.round((present / totalAtt) * 100) : 0,
+      absentPercent: totalAtt > 0 ? Math.round((absent / totalAtt) * 100) : 0,
+      leavePercent: totalAtt > 0 ? Math.round((leave / totalAtt) * 100) : 0,
+    };
+
+    // ==========================================
+    // 4. TODAY'S SCHEDULE
+    // ==========================================
+    const scheduleRaw = await prisma.liveClass.findMany({
+      where: { scheduledStart: { gte: startOfDay, lte: endOfDay } },
+      include: { batch: { select: { totalStudents: true } } },
+      orderBy: { scheduledStart: "asc" },
+      take: 4
+    });
+
+    const todaysSchedule = scheduleRaw.map(cls => {
+      const start = new Date(cls.scheduledStart).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const end = new Date(cls.scheduledEnd).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      return {
+        id: cls.id,
+        title: cls.title,
+        subtitle: cls.teacherName,
+        time: `${start} - ${end}`,
+        studentsCount: cls.batch?.totalStudents || 0,
+        status: cls.status
+      };
+    });
+
+    // ==========================================
+    // 5. RECENT STUDENTS (With Today's Attendance)
+    // ==========================================
+    const recentStudentsRaw = await prisma.user.findMany({
       where: { role: Role.STUDENT },
       take: 5,
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
         fullName: true,
-        email: true,
-        phone: true,
-        createdAt: true
+        avatarUrl: true,
+        attendances: {
+          where: { date: { gte: startOfDay, lte: endOfDay } },
+          select: { status: true },
+          take: 1
+        }
       }
     });
 
-    const recentPayments = await prisma.payment.findMany({
-      take: 5,
-      orderBy: { createdAt: "desc" },
-      include: {
-        user: { select: { fullName: true, email: true } },
-        enrollment: { include: { course: { select: { title: true } } } }
-      }
+    const recentStudents = recentStudentsRaw.map(s => ({
+      id: s.id,
+      name: s.fullName,
+      avatar: s.avatarUrl,
+      // Default to "Present" visually if no attendance marked yet for new students
+      status: s.attendances.length > 0 ? s.attendances[0].status : "PRESENT"
+    }));
+
+    // ==========================================
+    // 6. UNIFIED RECENT ACTIVITIES LOG
+    // ==========================================
+    const [newStudents, recentSubs, recentPays, recentClasses] = await Promise.all([
+      prisma.user.findMany({ where: { role: Role.STUDENT }, orderBy: { createdAt: 'desc' }, take: 2, select: { id: true, fullName: true, createdAt: true, enrollments: { select: { course: { select: { title: true } } }, take: 1 } } }),
+      prisma.assignmentSubmission.findMany({ orderBy: { submittedAt: 'desc' }, take: 2, select: { id: true, studentName: true, assignment: { select: { title: true } }, submittedAt: true } }),
+      prisma.payment.findMany({ where: { status: 'SUCCESS' }, orderBy: { createdAt: 'desc' }, take: 2, select: { id: true, amount: true, user: { select: { fullName: true } }, createdAt: true } }),
+      prisma.liveClass.findMany({ where: { status: 'LIVE' }, orderBy: { updatedAt: 'desc' }, take: 2, select: { id: true, title: true, teacherName: true, updatedAt: true } })
+    ]);
+
+    let activities: any[] = [];
+
+    newStudents.forEach(s => activities.push({ id: `stu_${s.id}`, type: "STUDENT", title: `New student ${s.fullName} registered`, subtitle: `Course: ${s.enrollments[0]?.course?.title || 'Basics'}`, time: s.createdAt }));
+    recentSubs.forEach(s => activities.push({ id: `sub_${s.id}`, type: "ASSIGNMENT", title: `Assignment submitted by ${s.studentName}`, subtitle: `Topic: ${s.assignment?.title}`, time: s.submittedAt }));
+    recentPays.forEach(p => activities.push({ id: `pay_${p.id}`, type: "PAYMENT", title: `Fee payment received from ${p.user.fullName}`, subtitle: `Amount: ₹${p.amount.toLocaleString('en-IN')}`, time: p.createdAt }));
+    recentClasses.forEach(c => activities.push({ id: `cls_${c.id}`, type: "CLASS", title: `Live class '${c.title}' started`, subtitle: `By ${c.teacherName}`, time: c.updatedAt }));
+
+    // Sort all combined activities by date descending and take top 4
+    activities = activities.sort((a, b) => b.time.getTime() - a.time.getTime()).slice(0, 4);
+
+    const formattedActivities = activities.map(a => {
+      const diffMins = Math.floor((new Date().getTime() - a.time.getTime()) / 60000);
+      let timeAgo = diffMins < 60 ? `${diffMins} mins ago` : `${Math.floor(diffMins/60)} hours ago`;
+      if (diffMins === 0) timeAgo = "Just now";
+      return { id: a.id, type: a.type, title: a.title, subtitle: `${a.subtitle} • ${timeAgo}` };
     });
 
+    // ==========================================
+    // FINAL RESPONSE
+    // ==========================================
     res.status(200).json({
       status: "success",
       data: {
@@ -81,14 +195,15 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
           totalStudents,
           totalTeachers,
           activeCourses,
-          totalBatches,
           liveClassesToday,
-          totalRevenue: `₹${revenueVal.toLocaleString("en-IN")}`,
-          attendanceRate: `${attendanceRateNum}%`
+          totalRevenue: totalRevenue,
+          revenueGrowth: parseFloat(growth.toFixed(1)),
         },
+        revenueChart,
+        attendanceSummary,
+        todaysSchedule,
         recentStudents,
-        recentInquiries,
-        recentPayments
+        recentActivities: formattedActivities
       }
     });
   } catch (error: any) {

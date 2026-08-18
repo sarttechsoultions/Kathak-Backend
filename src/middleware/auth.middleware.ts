@@ -39,9 +39,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
   try {
     revoked = await isTokenRevoked(token);
   } catch (err) {
-    // Redis (or other blocklist backend) unavailable — surface as a server
-    // error via the error middleware rather than letting the rejection go
-    // unhandled, and rather than silently treating the token as valid.
+
     next(err);
     return;
   }
