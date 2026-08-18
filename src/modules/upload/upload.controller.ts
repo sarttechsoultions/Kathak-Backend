@@ -7,15 +7,6 @@ import cloudinary from "../../config/cloudinary.config";
 import { BUNNY_CONFIG } from "../../config/bunny.config";
 import { env } from "../../config/env";
 
-/**
- * Local file storage fallback — DEV ONLY.
- *
- * In production this is deliberately disabled (see callers below): most prod
- * hosts run multiple instances and/or an ephemeral filesystem, so a file
- * written to local disk can vanish on redeploy/restart or simply not exist
- * on the instance that later serves it. Silently "succeeding" in that case
- * hides real Cloudinary outages from the caller instead of surfacing them.
- */
 function saveFileLocally(buffer: Buffer, originalName: string, subfolder: string = "media"): string {
   const uploadsDir = path.join(process.cwd(), "uploads", subfolder);
   if (!fs.existsSync(uploadsDir)) {

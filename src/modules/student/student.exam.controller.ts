@@ -33,10 +33,7 @@ export const getMyExams = async (req: Request, res: Response): Promise<void> => 
     // 4. Fetch Exams
     const exams = await prisma.exam.findMany({
       where: {
-        OR: [
-          { batchId: { in: myBatchIds } },
-          { batchId: null } // Global exams ke liye
-        ]
+        batchId: { in: myBatchIds }
       },
       include: {
         course: { select: { title: true } },
@@ -187,11 +184,14 @@ export const submitExam = async (req: Request, res: Response): Promise<void> => 
     let marksObtained = 0;
     const questions = Array.isArray(exam.questionsData) ? exam.questionsData : [];
 
-    (questions as any[]).forEach(q => {
-      const studentSelectedOptionId = answers[q.id];
+    (questions as any[]).forEach((q, idx) => {
+      const qId = q.id || idx.toString();
+      const studentSelectedOptionId = answers[qId] || answers[q.id];
       const correctOption = q.options?.find((opt: any) => opt.isCorrect === true);
+      const correctOptionIndex = q.options?.findIndex((opt: any) => opt.isCorrect === true);
+      const correctOptionFallbackId = `opt-${correctOptionIndex}`;
       
-      if (q.questionType === "Multiple Choice" && correctOption && studentSelectedOptionId === correctOption.id) {
+      if (q.questionType === "Multiple Choice" && correctOption && (studentSelectedOptionId === correctOption.id || studentSelectedOptionId === correctOptionFallbackId)) {
         marksObtained += (q.marks || 1);
       }
     });

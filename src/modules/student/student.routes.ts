@@ -15,7 +15,10 @@ import {
   getStudentExamById,
   submitStudentExam,
   getStudentDashboard,
-  getPublicCourses
+  getPublicCourses,
+  getStudentAttendance,
+  applyStudentLeave,
+  getStudentProgress
 } from "./student.controller";
 
 const router = Router();
@@ -29,7 +32,17 @@ const studentOnly = [authenticate, requireRole(Role.STUDENT)];
 
 router.post("/logout", ...studentOnly, logoutUser);
 
+router.get("/exams/:id", ...studentOnly, getStudentExamById);
+router.post("/exams/:id/submit", ...studentOnly, submitStudentExam);
+
+// Dashboard & Analytics
 router.get("/dashboard", ...studentOnly, getStudentDashboard);
+
+// Attendance, Progress & Leave
+router.get("/attendance", ...studentOnly, getStudentAttendance);
+router.post("/leave", ...studentOnly, applyStudentLeave);
+router.get("/progress", ...studentOnly, getStudentProgress);
+
 router.get("/profile", ...studentOnly, getStudentProfile);
 router.put("/profile", ...studentOnly, updateStudentProfile);
 router.post("/profile/change-password", ...studentOnly, changeStudentPassword);

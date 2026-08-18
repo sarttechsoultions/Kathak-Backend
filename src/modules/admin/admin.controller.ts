@@ -1370,7 +1370,8 @@ export const getBatches = async (req: Request, res: Response): Promise<void> => 
       schedule: b.schedule || "Not Scheduled",
       level: b.level || "BEGINNER",
       totalStudents: b.totalStudents || b.students.length || 0,
-      status: computeBatchStatus(b.schedule || undefined, b.status)
+      status: computeBatchStatus(b.schedule || undefined, b.status),
+      createdAt: b.createdAt
     }));
 
     const activeCount = mapped.filter((b) => b.status === "Active").length;
@@ -2038,9 +2039,14 @@ export const getAttendanceRecords = async (req: Request, res: Response): Promise
       allBatches.map(async (b) => {
         const total = await prisma.batchStudent.count({ where: { batchId: b.id } });
         const presentCount = await prisma.attendance.count({
-          where: { batchId: b.id, status: { in: ["PRESENT", "LATE"] } }
+          where: { 
+            batchId: b.id, 
+            status: { in: ["PRESENT", "LATE"] },
+            date: { gte: dayStart, lte: dayEnd },
+            session: sessionStr ? String(sessionStr) : undefined
+          }
         });
-        const rate = total > 0 ? Math.round((presentCount / total) * 100) : 85;
+        const rate = total > 0 ? Math.round((presentCount / total) * 100) : 0;
         return { id: b.id, name: b.name, rate };
       })
     );
@@ -2069,15 +2075,51 @@ export const saveAttendance = async (req: Request, res: Response): Promise<void>
     }
 
     const batch = await prisma.batch.findUnique({ where: { id: batchId } });
+    if (!batch) {
+      res.status(404).json({ status: "error", message: "Batch not found." });
+      return;
+    }
+
     const targetDate = date ? new Date(date) : new Date();
     const dayStart = new Date(targetDate);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(targetDate);
     dayEnd.setHours(23, 59, 59, 999);
 
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    if (dayStart > todayStart) {
+      res.status(400).json({ status: "error", message: "Cannot mark attendance for a future date." });
+      return;
+    }
+
+    const batchStartOfDay = new Date(batch.createdAt);
+    batchStartOfDay.setHours(0, 0, 0, 0);
+
+    if (dayStart < batchStartOfDay) {
+      res.status(400).json({ status: "error", message: "Cannot mark attendance for a date before the batch was created." });
+      return;
+    }
+
+    const batchStudents = await prisma.batchStudent.findMany({ where: { batchId } });
+    const studentEnrollmentMap = new Map();
+    for (const bs of batchStudents) {
+      const d = new Date(bs.createdAt);
+      d.setHours(0, 0, 0, 0);
+      studentEnrollmentMap.set(bs.studentId, d);
+    }
+
+    let savedCount = 0;
+
     for (const r of records) {
       const studentId = r.rawStudentId || r.studentId;
       if (!studentId || r.status === "U") continue;
+
+      const enrolledDate = studentEnrollmentMap.get(studentId);
+      if (enrolledDate && dayStart < enrolledDate) {
+         continue; // Skip marking attendance for dates before student was enrolled
+      }
 
       let dbStatus: AttendanceStatus = AttendanceStatus.PRESENT;
       if (r.status === "A") dbStatus = AttendanceStatus.ABSENT;

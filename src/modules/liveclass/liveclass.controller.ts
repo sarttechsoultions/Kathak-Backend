@@ -22,13 +22,37 @@ export const listStudentLiveClasses = async (req: Request, res: Response) => {
 
   const classes = await prisma.liveClass.findMany({
     where: {
-      ...(batchIds.length > 0 ? { batchId: { in: batchIds } } : {}),
-      status: { in: ["SCHEDULED", "LIVE"] }
+      ...(batchIds.length > 0 ? { batchId: { in: batchIds } } : {})
     },
     include: { batch: { select: { name: true, code: true, courseName: true } } },
     orderBy: { scheduledStart: "asc" }
   });
-  res.json({ status: "success", data: { classes: classes.map(serialise) } });
+
+  const completedCount = classes.filter(c => c.status === "COMPLETED").length;
+  const upcomingCount = classes.filter(c => c.status === "SCHEDULED" || c.status === "LIVE").length;
+
+  let overallAttendance: string | null = null;
+  if (batchIds.length > 0) {
+    const [totalAttendance, presentAttendance] = await Promise.all([
+      prisma.attendance.count({ where: { studentId, batchId: { in: batchIds } } }),
+      prisma.attendance.count({ where: { studentId, batchId: { in: batchIds }, status: "PRESENT" } }),
+    ]);
+    if (totalAttendance > 0) {
+      overallAttendance = `${Math.round((presentAttendance / totalAttendance) * 100)}%`;
+    }
+  }
+
+  res.json({ 
+    status: "success", 
+    data: { 
+      classes: classes.map(serialise),
+      stats: {
+        completedCount,
+        upcomingCount,
+        overallAttendance
+      }
+    } 
+  });
 };
 
 export const createLiveClass = async (req: Request, res: Response) => {
@@ -101,6 +125,37 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
   const uid = crypto.randomInt(100000, 999999);
 
   const token = buildAgoraToken(liveClass.roomName, uid, agoraClientRole);
+
+  // Auto-capture attendance for students when they join
+  if (!isAdmin && !isTeacher) {
+    // Check if attendance already recorded today for this batch/student
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const existingAttendance = await prisma.attendance.findFirst({
+      where: {
+        studentId: user.id,
+        batchId: liveClass.batchId,
+        date: { gte: today }
+      }
+    });
+
+    if (!existingAttendance) {
+      const studentName = user.fullName?.trim() || "Student";
+
+      await prisma.attendance.create({
+        data: {
+          studentId: user.id,
+          studentName,
+          batchId: liveClass.batchId,
+          batchName: liveClass.batch.name,
+          session: liveClass.title,
+          status: "PRESENT",
+          date: new Date()
+        }
+      });
+    }
+  }
 
   res.json({
     status: "success",
