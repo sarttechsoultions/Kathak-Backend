@@ -63,14 +63,10 @@ export const env = {
   razorpayKeyId: process.env.RAZORPAY_KEY_ID || "",
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || "",
 
-  // Optional: when set, token blocklist and socket state use Redis instead of
-  // in-memory storage, which is required for any multi-instance deployment.
+
   redisUrl: process.env.REDIS_URL?.trim(),
 
-  // Public base URL of this backend, used to build absolute URLs for files
-  // saved to local disk (upload.controller.ts fallback). Required in
-  // production — "http://localhost:PORT" is never reachable by real users,
-  // so a missing value there is a bug, not something to default around.
+
   publicUrl: isProduction
     ? requireEnv("PUBLIC_BACKEND_URL")
     : (process.env.PUBLIC_BACKEND_URL?.trim() || `http://localhost:${Number(process.env.PORT) || 5000}`),

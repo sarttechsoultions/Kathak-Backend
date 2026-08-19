@@ -205,6 +205,8 @@ model User {
   eventRegistrations EventRegistration[]
   notifications      Notification[]
   competitionParticipations CompetitionParticipant[] @relation("CompetitionParticipant")
+  leaveRequests      LeaveRequest[]
+  uploadedResources  ContentResource[]  @relation("UploadedResources")
 }
 
 model TeacherPermission {
@@ -281,6 +283,7 @@ model Batch {
   recordedClasses RecordedClass[]
   assignments Assignment[]
   exams        Exam[]
+  contentResources ContentResource[]
 }
 
 
@@ -431,6 +434,29 @@ model Attendance {
   batch   Batch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
   @@index([batchId, date, session])
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model LeaveRequest {
+  id          String      @id @default(uuid())
+  userId      String
+  userName    String
+  leaveType   String
+  startDate   DateTime
+  endDate     DateTime
+  totalDays   Int
+  reason      String
+  attachment  String?
+  status      LeaveStatus @default(PENDING)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 enum SubmissionStatus {
@@ -739,4 +765,41 @@ model Notification {
   isUnread  Boolean  @default(true)
   link      String?
   createdAt DateTime @default(now())
+}
+
+// ==========================================================
+// NEW MODELS — Content Library
+// ==========================================================
+
+enum ResourceType {
+  PDF
+  AUDIO
+  VIDEO
+  DOCUMENT
+  IMAGE
+  OTHER
+}
+
+model ContentResource {
+  id          String       @id @default(uuid())
+  title       String
+  description String?      @db.Text
+  type        ResourceType @default(DOCUMENT)
+  fileUrl     String
+  category    String       @default("General") // Folder-like grouping
+  
+  // Visibility
+  isGlobal    Boolean      @default(true) // If true, visible to everyone
+  batchId     String?      // If not global, visible only to specific batch
+  batch       Batch?       @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  // Audit
+  uploadedById String
+  uploadedBy   User        @relation("UploadedResources", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([category])
+  @@index([batchId])
 }

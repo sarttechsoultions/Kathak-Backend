@@ -1374,3 +1374,289 @@ export const getPublicCourses = async (req: Request, res: Response) => {
     res.status(500).json({ status: "error", message: "Failed to fetch courses" });
   }
 };
+
+export const getStudentAttendance = async (req: Request, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const student = await prisma.user.findUnique({
+      where: { id: studentId },
+      include: {
+        batchMemberships: { include: { batch: true } }
+      }
+    });
+
+    if (!student) {
+      return res.status(404).json({ status: "error", message: "Student not found" });
+    }
+
+    const batchIds = student.batchMemberships.map((m) => m.batchId);
+
+    // Fetch all attendance logs for this student
+    const attendanceLogs = await prisma.attendance.findMany({
+      where: { studentId },
+      orderBy: { date: "desc" }
+    });
+
+    // Fetch leave requests for this student
+    const leaveRequests = await prisma.leaveRequest.findMany({
+      where: { userId: studentId },
+      orderBy: { startDate: "desc" }
+    });
+
+    // We also map Leave Requests into the unified logs array for the frontend
+    const logs = [
+      ...attendanceLogs.map((a) => ({
+        id: a.id,
+        date: a.date,
+        type: "attendance",
+        className: a.session || a.batchName || "Class Session",
+        time: a.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        status: a.status,
+      })),
+      ...leaveRequests.map((l) => ({
+        id: l.id,
+        date: l.startDate,
+        type: "leave",
+        className: `${l.leaveType} Leave`,
+        time: "-",
+        status: l.status === "APPROVED" ? "LEAVE" : (l.status === "PENDING" ? "PENDING" : "REJECTED"),
+      }))
+    ].sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    const presentCount = attendanceLogs.filter(a => a.status === "PRESENT").length;
+    const absentCount = attendanceLogs.filter(a => a.status === "ABSENT").length;
+    const lateCount = attendanceLogs.filter(a => a.status === "LATE").length;
+    const leaveCount = attendanceLogs.filter(a => a.status === "LEAVE").length + leaveRequests.reduce((acc, curr) => acc + curr.totalDays, 0);
+
+    const totalDays = presentCount + absentCount + lateCount + leaveCount;
+    const overallAttendance = totalDays > 0 ? Math.round((presentCount / totalDays) * 100) : 100;
+
+    // Calculate current streak
+    let currentStreak = 0;
+    const sortedAttendance = [...attendanceLogs].sort((a, b) => b.date.getTime() - a.date.getTime());
+    for (const log of sortedAttendance) {
+      if (log.status === "PRESENT") currentStreak++;
+      else break;
+    }
+
+    res.json({
+      status: "success",
+      data: {
+        logs,
+        stats: {
+          overallAttendance,
+          totalWorkingDays: totalDays || 0,
+          presentDays: presentCount,
+          totalAbsent: absentCount,
+          totalLeaves: leaveCount,
+          currentStreak
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("Error fetching student attendance:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch attendance" });
+  }
+};
+
+export const applyStudentLeave = async (req: Request, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const { leaveType, startDate, endDate, totalDays, reason, attachment } = req.body;
+
+    if (!startDate || !endDate || !leaveType || !reason) {
+      return res.status(400).json({ status: "error", message: "Missing required fields" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: studentId } });
+    const studentName = user?.fullName || "Student";
+
+    const leaveRequest = await prisma.leaveRequest.create({
+      data: {
+        userId: studentId,
+        userName: studentName,
+        leaveType,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        totalDays: Number(totalDays),
+        reason,
+        attachment
+      }
+    });
+
+    res.json({
+      status: "success",
+      message: "Leave application submitted successfully",
+      data: leaveRequest
+    });
+  } catch (error) {
+    console.error("Error applying for leave:", error);
+    return res.status(500).json({ status: "error", message: "Failed to submit leave application" });
+  }
+};
+
+export const getStudentProgress = async (req: Request, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    
+    // 1. Get Attendance
+    const attendanceRecords = await prisma.attendance.findMany({
+      where: { studentId },
+      orderBy: { date: "desc" },
+    });
+    
+    let presentCount = 0;
+    attendanceRecords.forEach(a => {
+      if (a.status === "PRESENT" || a.status === "LATE") presentCount++;
+    });
+    const attendanceRate = attendanceRecords.length > 0 
+      ? Math.round((presentCount / attendanceRecords.length) * 100) 
+      : 100;
+      
+    // 2. Get Assignments
+    const assignmentSubmissions = await prisma.assignmentSubmission.findMany({
+      where: { studentId },
+      include: { assignment: true },
+      orderBy: { submittedAt: "desc" }
+    });
+    
+    let totalAssignmentMarks = 0;
+    let gradedAssignments = 0;
+    
+    const formattedAssignments = assignmentSubmissions.map(sub => {
+       if (sub.status === "GRADED" && sub.grade) {
+          gradedAssignments++;
+          totalAssignmentMarks += Number(sub.grade) || 0;
+       }
+       return {
+         id: sub.assignmentId,
+         title: sub.assignment.title,
+         assignedDate: sub.assignment.createdAt.toISOString(),
+         deadline: sub.assignment.dueDate.toISOString(),
+         status: sub.status,
+         marks: sub.grade || "--",
+         totalMarks: sub.assignment.totalPoints
+       };
+    });
+    
+    const avgAssignmentScore = gradedAssignments > 0 
+      ? Math.round(totalAssignmentMarks / gradedAssignments)
+      : 0;
+      
+    // Get pending assignments
+    const batchStudent = await prisma.batchStudent.findFirst({
+      where: { studentId }
+    });
+    
+    if (batchStudent) {
+      const pendingAssignments = await prisma.assignment.findMany({
+        where: {
+          batchId: batchStudent.batchId,
+          submissions: { none: { studentId } }
+        }
+      });
+      
+      pendingAssignments.forEach(a => {
+        formattedAssignments.push({
+          id: a.id,
+          title: a.title,
+          assignedDate: a.createdAt.toISOString(),
+          deadline: a.dueDate.toISOString(),
+          status: "PENDING",
+          marks: "--",
+          totalMarks: a.totalPoints
+        });
+      });
+    }
+
+    // 3. Get Tasks
+    const examResults = await prisma.examResult.findMany({
+      where: { studentId },
+      include: { exam: true },
+      orderBy: { submittedAt: "desc" }
+    });
+    
+    const formattedTasks = examResults.map(er => ({
+      id: er.examId,
+      title: er.exam.title,
+      assignedDate: er.exam.date.toISOString(),
+      completedDate: er.submittedAt.toISOString(),
+      status: er.status === "PENDING" ? "SUBMITTED" : er.status,
+      marks: er.marksObtained !== null ? er.marksObtained : "--",
+      totalMarks: er.exam.totalMarks
+    }));
+    
+    const videoSubmissions = await prisma.videoSubmission.findMany({
+      where: { studentId },
+      include: { task: true },
+      orderBy: { submissionDate: "desc" }
+    });
+    
+    videoSubmissions.forEach(vs => {
+       formattedTasks.push({
+         id: vs.id,
+         title: vs.task?.title || vs.videoTitle,
+         assignedDate: vs.task?.submissionDate.toISOString() || vs.submissionDate.toISOString(),
+         completedDate: vs.submissionDate.toISOString(),
+         status: vs.status === "PENDING" ? "SUBMITTED" : (vs.status === "REVIEWED" ? "GRADED" : vs.status),
+         marks: vs.marks !== null ? vs.marks : "--",
+         totalMarks: 100
+       });
+    });
+    
+    // Sort combined tasks & assignments
+    formattedAssignments.sort((a, b) => new Date(b.assignedDate).getTime() - new Date(a.assignedDate).getTime());
+    formattedTasks.sort((a, b) => new Date(b.assignedDate).getTime() - new Date(a.assignedDate).getTime());
+
+    // Task Completion Rate
+    const totalAssignedTasks = formattedAssignments.length + formattedTasks.length;
+    const completedTasks = formattedAssignments.filter(a => a.status !== "PENDING").length + formattedTasks.length;
+    
+    const taskCompletionRate = totalAssignedTasks > 0 
+      ? Math.round((completedTasks / totalAssignedTasks) * 100)
+      : 100;
+      
+    // Overall Progress (Weighted Avg: 30% attendance, 30% task completion, 40% assignments)
+    // If no assignments, fallback to 50/50 attendance and tasks.
+    let overallProgress = 0;
+    if (formattedAssignments.length > 0) {
+      overallProgress = Math.round((attendanceRate * 0.3) + (taskCompletionRate * 0.3) + (avgAssignmentScore * 0.4));
+    } else {
+      overallProgress = Math.round((attendanceRate * 0.5) + (taskCompletionRate * 0.5));
+    }
+    
+    // Format Attendance History for UI
+    const formattedAttendanceHistory = attendanceRecords.slice(0, 5).map(a => ({
+      id: a.id,
+      date: a.date.toISOString(),
+      class: a.session,
+      instructor: a.teacherName || "Unknown",
+      status: a.status
+    }));
+
+    return res.status(200).json({
+      status: "success",
+      data: {
+        metrics: {
+          overallProgress,
+          attendanceRate,
+          taskCompletionRate,
+          avgAssignmentScore,
+          totalTasks: totalAssignedTasks,
+          completedTasks,
+          presentDays: presentCount,
+          totalDays: attendanceRecords.length,
+          pendingAssignments: formattedAssignments.filter(a => a.status === "PENDING").length
+        },
+        attendanceHistory: formattedAttendanceHistory,
+        assignments: formattedAssignments,
+        tasks: formattedTasks
+      }
+    });
+
+  } catch (error: any) {
+    console.error("Error fetching progress:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch student progress" });
+  }
+};

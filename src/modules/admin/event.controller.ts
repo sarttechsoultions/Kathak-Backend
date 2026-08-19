@@ -376,6 +376,48 @@ export const getAllEvents = async (req: Request, res: Response) => {
   try {
     const { category, status } = req.query;
 
+    // --- AUTO UPDATE STATUS LOGIC ---
+    const now = new Date();
+    const activeEvents = await prisma.event.findMany({
+      where: {
+        status: { in: ['SCHEDULED', 'LIVE'] }
+      }
+    });
+
+    const updates = [];
+    for (const ev of activeEvents) {
+      if (!ev.startTime) continue;
+      
+      const [hours, minutes] = ev.startTime.split(':').map(Number);
+      
+      // Combine startDate and startTime. Assuming startDate is stored at midnight UTC.
+      // We'll treat it as local time to match the UI's simple date/time input.
+      const eventStart = new Date(ev.startDate);
+      eventStart.setHours(hours, minutes, 0, 0);
+      
+      const eventEnd = new Date(eventStart.getTime() + ev.durationMins * 60000);
+      
+      let newStatus = ev.status;
+      
+      if (now > eventEnd) {
+        newStatus = 'COMPLETED';
+      } else if (now >= eventStart && now <= eventEnd) {
+        newStatus = 'LIVE';
+      }
+      
+      if (newStatus !== ev.status) {
+        updates.push(prisma.event.update({
+          where: { id: ev.id },
+          data: { status: newStatus }
+        }));
+      }
+    }
+    
+    if (updates.length > 0) {
+      await Promise.all(updates);
+    }
+    // --------------------------------
+
     const filter: any = {};
     if (category && category !== 'All') filter.category = category;
     if (status && status !== 'All Statuses') filter.status = status;
@@ -383,20 +425,18 @@ export const getAllEvents = async (req: Request, res: Response) => {
     const events = await prisma.event.findMany({
       where: filter,
       include: {
-        // UI mein instructor ka naam aur image dikhane ke liye
         leadInstructor: {
           select: {
             fullName: true,
             avatarUrl: true,
           },
         },
-        // UI mein "REG." column mein count dikhane ke liye
         _count: {
           select: { registrations: true },
         },
       },
       orderBy: {
-        startDate: "desc", // Newest events first
+        startDate: "desc", 
       },
     });
 
