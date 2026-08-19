@@ -51,6 +51,7 @@ import {
   replyToInquiry
 } from "./admin.controller";
 import { getReportsOverview } from "./admin.reports.controller";
+import { forwardToDeveloper } from "../support/support.controller";
 import { authenticate, requirePermission } from "../../middleware/auth.middleware";
 
 const router = Router();
@@ -127,7 +128,9 @@ router.post("/payments/:id/refund", requirePermission(Permission.VIEW_PAYMENTS),
 router.get("/inquiries", requirePermission(Permission.MANAGE_COMMUNICATION), getInquiries);
 router.patch("/inquiries/:id", requirePermission(Permission.MANAGE_COMMUNICATION), updateInquiryStatus);
 router.post("/inquiries/:id/reply", requirePermission(Permission.MANAGE_COMMUNICATION), replyToInquiry);
+router.post("/inquiries/:id/forward-dev", requirePermission(Permission.MANAGE_COMMUNICATION), forwardToDeveloper);
 router.delete("/inquiries/:id", requirePermission(Permission.MANAGE_COMMUNICATION), deleteInquiry);
+
 
 // 9. Admin Self-Profile
 router.get("/profile", getAdminProfile);

@@ -21,6 +21,7 @@ import exmRoutes from "./modules/admin/exam.routes";
 import studentExamRoutes from "./modules/student/student.exam.routes";
 import { notificationRoutes } from "./modules/notification/notification.routes";
 import paymentRoutes from "./modules/payment/payment.routes";
+import attendanceRoutes from "./modules/attendance/attendance.routes"; 
 import {
   getCourses,
   createCourse,
@@ -82,7 +83,7 @@ app.use("/api/v1/admin/exams", exmRoutes);
 app.use("/api/v1/student/exams", studentExamRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/payment", paymentRoutes);
-
+app.use("/api/v1/attendance", attendanceRoutes); // Attendance routes
 // Public & Universal Module Route Aliases
 app.get("/api/v1/courses", getCourses);
 app.post("/api/v1/courses", authenticate, createCourse);

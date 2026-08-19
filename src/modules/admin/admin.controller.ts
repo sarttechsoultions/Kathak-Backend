@@ -6,6 +6,7 @@ import { sanitizeUser } from "../../lib/authHelpers";
 import { sendEmail } from "../../lib/mailer";
 import { env } from "../../config/env";
 
+
 const mapCategoryToEnum = (cat?: string): CourseCategory => {
   if (!cat) return CourseCategory.BASIC;
   const upper = cat.toUpperCase();
