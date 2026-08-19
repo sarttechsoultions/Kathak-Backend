@@ -13,6 +13,7 @@ const allowedOrigins = [
   env.frontendUrl,
   "http://localhost:3000",
   "http://127.0.0.1:3000",
+  "https://kathak-theta.vercel.app"
 ];
 
 const io = new Server(httpServer, {
