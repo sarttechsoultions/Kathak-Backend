@@ -43,10 +43,27 @@ import { authenticate } from "./middleware/auth.middleware";
 const app = express();
 
 app.use(helmet());
+const allowedOrigins = [
+  env.frontendUrl,
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "https://kathak-theta.vercel.app"
+];
+
 app.use(cors({
-  origin: env.frontendUrl,
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
+app.options("*", cors());
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
