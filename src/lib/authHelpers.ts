@@ -38,19 +38,17 @@ export function setPortalAuthCookie(
   maxAgeMs: number
 ): void {
   const name = portal === "admin" ? ADMIN_COOKIE : STUDENT_COOKIE;
-  const secure = env.isProduction ? "; Secure" : "";
   res.append(
     "Set-Cookie",
-    `${name}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(maxAgeMs / 1000)}${secure}`
+    `${name}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${Math.floor(maxAgeMs / 1000)}`
   );
 }
 
 export function clearPortalAuthCookies(res: Response): void {
-  const secure = env.isProduction ? "; Secure" : "";
   for (const name of [ADMIN_COOKIE, STUDENT_COOKIE]) {
     res.append(
       "Set-Cookie",
-      `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`
+      `${name}=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0`
     );
   }
 }
