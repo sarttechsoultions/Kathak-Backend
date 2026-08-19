@@ -32,8 +32,7 @@ const studentOnly = [authenticate, requireRole(Role.STUDENT)];
 
 router.post("/logout", ...studentOnly, logoutUser);
 
-router.get("/exams/:id", ...studentOnly, getStudentExamById);
-router.post("/exams/:id/submit", ...studentOnly, submitStudentExam);
+
 
 // Dashboard & Analytics
 router.get("/dashboard", ...studentOnly, getStudentDashboard);
