@@ -1631,7 +1631,7 @@ export const getStudentProgress = async (req: Request, res: Response) => {
       id: a.id,
       date: a.date.toISOString(),
       class: a.session,
-      instructor: a.teacherName || "Unknown",
+      instructor: "Faculty Instructor",
       status: a.status
     }));
 
