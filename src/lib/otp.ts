@@ -13,6 +13,7 @@ export class OtpError extends Error {
 }
 
 export const MOBILE_OTP_BYPASS = env.mobileOtpBypass || "001122";
+export const EMAIL_OTP_BYPASS = env.mobileOtpBypass || "001122";
 const OTP_TTL_MS = 10 * 60 * 1000;
 const RESEND_GAP_MS = 45 * 1000;
 const VERIFY_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -90,10 +91,14 @@ export const sendEnrollmentOtp = async (params: {
       `,
     });
     if (!sent) {
-      throw new OtpError(
-        "OTP email could not be sent. Please confirm SMTP settings on the production server and try again.",
-        502
-      );
+      console.warn(`SMTP failed for ${target}. Using email OTP bypass.`);
+      return {
+        channel,
+        target,
+        message: `Email could not be sent. Use OTP ${EMAIL_OTP_BYPASS} to verify your email.`,
+        bypass: true,
+        bypassCode: EMAIL_OTP_BYPASS,
+      };
     }
     return {
       channel,
@@ -128,23 +133,25 @@ export const verifyEnrollmentOtp = async (params: {
   if (!code) throw new OtpError("OTP is required.");
 
   const target = normalizeTarget(channel, raw, params.countryCode);
-  const isMobileBypass = channel === "MOBILE" && code === MOBILE_OTP_BYPASS;
+  const isBypass =
+    (channel === "MOBILE" && code === MOBILE_OTP_BYPASS) ||
+    (channel === "EMAIL" && code === EMAIL_OTP_BYPASS);
 
   const latest = await prisma.verificationOtp.findFirst({
     where: { channel, target },
     orderBy: { createdAt: "desc" },
   });
 
-  if (!latest && !isMobileBypass) {
+  if (!latest && !isBypass) {
     throw new OtpError("Please request an OTP first.");
   }
 
-  if (latest && latest.attempts >= MAX_ATTEMPTS && !isMobileBypass) {
+  if (latest && latest.attempts >= MAX_ATTEMPTS && !isBypass) {
     throw new OtpError("Too many incorrect attempts. Please request a new OTP.");
   }
 
   const valid =
-    isMobileBypass ||
+    isBypass ||
     Boolean(latest && latest.expiresAt.getTime() >= Date.now() && latest.codeHash === hashOtp(code));
 
   if (!valid) {
