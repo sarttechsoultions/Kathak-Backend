@@ -41,6 +41,8 @@ import {
   getPayments,
   recordFeePayment,
   refundPayment,
+  getPaymentInvoice,
+  exportFinanceCsv,
   getInquiries,
   updateInquiryStatus,
   deleteInquiry,
@@ -121,6 +123,8 @@ router.post("/attendance", requirePermission(Permission.MANAGE_ATTENDANCE), save
 // 7. Payments & Finance
 router.get("/payments", requirePermission(Permission.VIEW_PAYMENTS), getPayments);
 router.get("/finance", requirePermission(Permission.VIEW_PAYMENTS), getPayments);
+router.get("/finance/export.csv", requirePermission(Permission.VIEW_PAYMENTS), exportFinanceCsv);
+router.get("/payments/:id/invoice", requirePermission(Permission.VIEW_PAYMENTS), getPaymentInvoice);
 router.post("/payments", requirePermission(Permission.VIEW_PAYMENTS), recordFeePayment);
 router.post("/payments/:id/refund", requirePermission(Permission.VIEW_PAYMENTS), refundPayment);
 

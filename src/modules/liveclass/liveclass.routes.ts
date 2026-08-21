@@ -9,6 +9,7 @@ router.post("/admin/classes", authenticate, requirePermission(Permission.MANAGE_
 router.patch("/admin/classes/:id/status", authenticate, requirePermission(Permission.START_LIVE_CLASS), setLiveClassStatus);
 
 router.get("/teacher/classes", authenticate, requireRole(Role.TEACHER, Role.ADMIN), listTeacherLiveClasses);
+router.patch("/teacher/classes/:id/status", authenticate, requireRole(Role.TEACHER, Role.ADMIN), setLiveClassStatus);
 router.get("/student/classes", authenticate, requireRole(Role.STUDENT), listStudentLiveClasses);
 
 router.get("/classes/:id/join-token", authenticate, requireRole(Role.ADMIN, Role.TEACHER, Role.STUDENT), getLiveClassToken);

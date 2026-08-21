@@ -5,6 +5,7 @@ import { prisma } from "../../lib/prisma";
 import { sanitizeUser } from "../../lib/authHelpers";
 import { sendEmail } from "../../lib/mailer";
 import { env } from "../../config/env";
+import { buildInvoiceHtml, InvoiceData } from "../../lib/invoice";
 
 
 const mapCategoryToEnum = (cat?: string): CourseCategory => {
@@ -2169,17 +2170,32 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
   try {
     const payments = await prisma.payment.findMany({
       include: {
-        user: { select: { id: true, fullName: true, email: true, phone: true } },
-        enrollment: { include: { course: true } }
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+            country: true,
+            city: true,
+            region: true,
+            address: true,
+            postalCode: true,
+            paymentMethod: true,
+            joiningDate: true,
+            batchMemberships: { include: { batch: { select: { name: true, code: true } } } },
+          },
+        },
+        enrollment: { include: { course: true } },
       },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
     });
 
     const students = await prisma.user.findMany({
       where: { role: Role.STUDENT },
       include: {
         enrollments: { include: { course: true } },
-        payments: { where: { status: PaymentStatus.SUCCESS } },
+        payments: { where: { status: PaymentStatus.SUCCESS }, orderBy: { createdAt: "desc" } },
         batchMemberships: { include: { batch: true } }
       }
     });
@@ -2212,12 +2228,22 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
       }
 
       const batchName = s.batchMemberships[0]?.batch?.name || s.batchMemberships[0]?.batch?.code || null;
+      const lastPayment = s.payments[0];
+      const statusLabel = !course ? "No Enrollment" : pending === 0 ? "Paid" : paid > 0 ? "Partial" : "Pending";
 
       return {
         id: s.id,
         studentIdCode: `STU-${s.id.substring(0, 4).toUpperCase()}`,
         studentName: s.fullName,
         studentAvatar: s.avatarUrl || "/Ananya.png",
+        email: s.email,
+        phone: s.phone,
+        country: s.country,
+        city: s.city,
+        region: s.region,
+        address: s.address,
+        joiningDate: s.joiningDate,
+        paymentMethod: s.paymentMethod,
         course: courseName,
         batch: batchName,
         totalFees: `₹${totalFee.toLocaleString("en-IN")}`,
@@ -2225,7 +2251,12 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
         pendingAmount: `₹${pending.toLocaleString("en-IN")}`,
         rawTotal: totalFee,
         rawPaid: paid,
-        rawPending: pending
+        rawPending: pending,
+        statusLabel,
+        lastPaymentId: lastPayment?.id || null,
+        lastTransactionId: lastPayment?.transactionId || null,
+        lastPaymentDate: lastPayment?.createdAt || null,
+        lastGateway: lastPayment?.gateway || null,
       };
     });
 
@@ -2346,6 +2377,165 @@ export const refundPayment = async (req: Request, res: Response): Promise<void> 
   } catch (error) {
     console.error(error);
     res.status(500).json({ status: "error", message: "Failed to process refund." });
+  }
+};
+
+const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+
+const paymentToInvoice = (payment: {
+  id: string;
+  amount: number;
+  currency: string;
+  gateway: string;
+  transactionId: string;
+  orderId: string;
+  status: string;
+  createdAt: Date;
+  user?: {
+    fullName: string;
+    email: string;
+    phone: string;
+    address?: string | null;
+    paymentMethod?: string | null;
+    batchMemberships?: { batch?: { name?: string | null; code?: string | null } | null }[];
+  } | null;
+  enrollment?: { course?: { title?: string | null } | null } | null;
+}): InvoiceData => ({
+  invoiceNumber: `INV-${(payment.transactionId || payment.id).slice(-10).toUpperCase()}`,
+  issuedAt: payment.createdAt,
+  studentName: payment.user?.fullName || "Student",
+  studentEmail: payment.user?.email || "",
+  studentPhone: payment.user?.phone || "",
+  studentAddress: payment.user?.address,
+  courseTitle: payment.enrollment?.course?.title || "Kathak Course Enrollment",
+  batchName: payment.user?.batchMemberships?.[0]?.batch?.name || payment.user?.batchMemberships?.[0]?.batch?.code || null,
+  amount: payment.amount,
+  currency: String(payment.currency || "INR"),
+  gateway: payment.gateway,
+  paymentMethod: payment.user?.paymentMethod || payment.gateway,
+  transactionId: payment.transactionId,
+  orderId: payment.orderId,
+  status: payment.status,
+});
+
+export const getPaymentInvoice = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = String(req.params.id || "");
+    const payment = await prisma.payment.findUnique({
+      where: { id },
+      include: {
+        user: {
+          include: { batchMemberships: { include: { batch: true } } },
+        },
+        enrollment: { include: { course: true } },
+      },
+    });
+
+    if (!payment) {
+      res.status(404).json({ status: "error", message: "Payment not found." });
+      return;
+    }
+
+    const html = buildInvoiceHtml(paymentToInvoice(payment));
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Disposition", `inline; filename="${`INV-${(payment.transactionId || payment.id).slice(-10)}.html`}"`);
+    res.send(html);
+  } catch (error) {
+    console.error("Get payment invoice error:", error);
+    res.status(500).json({ status: "error", message: "Failed to generate invoice." });
+  }
+};
+
+export const exportFinanceCsv = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const payments = await prisma.payment.findMany({
+      include: {
+        user: {
+          include: { batchMemberships: { include: { batch: true } } },
+        },
+        enrollment: { include: { course: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const students = await prisma.user.findMany({
+      where: { role: Role.STUDENT },
+      include: {
+        enrollments: { include: { course: true } },
+        payments: { where: { status: PaymentStatus.SUCCESS } },
+        batchMemberships: { include: { batch: true } },
+      },
+    });
+
+    const studentTotals = new Map(
+      students.map((s) => {
+        const totalFee = s.enrollments[0]?.course?.groupFeeINR ?? 0;
+        const paid = s.payments.reduce((acc, p) => acc + p.amount, 0);
+        return [s.id, { totalFee, paid, pending: Math.max(0, totalFee - paid) }];
+      })
+    );
+
+    const headers = [
+      "Invoice Number",
+      "Payment Date",
+      "Student ID",
+      "Student Name",
+      "Email",
+      "Phone",
+      "Country",
+      "City",
+      "Address",
+      "Course",
+      "Batch",
+      "Joining Date",
+      "Transaction ID",
+      "Order ID",
+      "Gateway",
+      "Payment Method",
+      "Amount",
+      "Currency",
+      "Status",
+      "Course Fee",
+      "Total Paid",
+      "Pending Amount",
+    ];
+
+    const rows = payments.map((p) => {
+      const totals = studentTotals.get(p.userId) || { totalFee: 0, paid: 0, pending: 0 };
+      const batchName = p.user?.batchMemberships?.[0]?.batch?.name || p.user?.batchMemberships?.[0]?.batch?.code || "";
+      return [
+        `INV-${(p.transactionId || p.id).slice(-10).toUpperCase()}`,
+        new Date(p.createdAt).toLocaleString("en-IN"),
+        `STU-${p.userId.substring(0, 4).toUpperCase()}`,
+        p.user?.fullName || "",
+        p.user?.email || "",
+        p.user?.phone || "",
+        p.user?.country || "",
+        p.user?.city || "",
+        p.user?.address || "",
+        p.enrollment?.course?.title || "",
+        batchName,
+        p.user?.joiningDate ? new Date(p.user.joiningDate).toLocaleDateString("en-IN") : "",
+        p.transactionId,
+        p.orderId,
+        p.gateway,
+        p.user?.paymentMethod || p.gateway,
+        p.amount,
+        p.currency,
+        p.status,
+        totals.totalFee,
+        totals.paid,
+        totals.pending,
+      ].map(csvCell).join(",");
+    });
+
+    const csv = `\uFEFF${headers.join(",")}\n${rows.join("\n")}`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="Kathak_Finance_${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csv);
+  } catch (error) {
+    console.error("Export finance CSV error:", error);
+    res.status(500).json({ status: "error", message: "Failed to export finance CSV." });
   }
 };
 

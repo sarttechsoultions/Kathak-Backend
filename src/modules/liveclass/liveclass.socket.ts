@@ -63,6 +63,33 @@ export function registerLiveClassSocket(io: Server) {
         broadcastRoomUsers(io, roomName);
         io.to(roomName).emit("liveclass:user-joined", participant);
 
+        try {
+          const liveClass = await prisma.liveClass.findUnique({
+            where: { roomName },
+            include: { batch: { select: { name: true, code: true, courseName: true } } },
+          });
+
+          const roleLabel = (userRole || "").toLowerCase();
+          const isHost = roleLabel === "teacher" || roleLabel === "admin";
+
+          if (liveClass && isHost && liveClass.status === "SCHEDULED") {
+            const updated = await prisma.liveClass.update({
+              where: { id: liveClass.id },
+              data: { status: "LIVE" },
+              include: { batch: { select: { name: true, code: true, courseName: true } } },
+            });
+            io.to(roomName).emit("liveclass:status-changed", "LIVE");
+            io.emit("liveclass:class-updated", {
+              ...updated,
+              batchName: updated.batch.name,
+              batchCode: updated.batch.code,
+              courseName: updated.batch.courseName,
+            });
+          }
+        } catch (err) {
+          console.error("Auto-LIVE on host join error:", err);
+        }
+
         // AUTO-MARK ATTENDANCE FOR STUDENTS IN DATABASE
         if (userRole === "Student" || !userRole || userRole.toLowerCase() === "student") {
           try {
@@ -72,14 +99,6 @@ export function registerLiveClassSocket(io: Server) {
             });
 
             if (liveClass) {
-              if ((userRole === "Teacher" || userRole === "Admin") && liveClass.status === "SCHEDULED") {
-                await prisma.liveClass.update({
-                  where: { id: liveClass.id },
-                  data: { status: "LIVE" },
-                });
-                io.to(roomName).emit("liveclass:status-changed", "LIVE");
-              }
-
               let dbUser = null;
               if (studentId) {
                 dbUser = await prisma.user.findUnique({ where: { id: studentId } });
