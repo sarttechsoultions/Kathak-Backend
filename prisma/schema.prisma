@@ -372,6 +372,44 @@ model Payment {
   enrollment Enrollment? @relation(fields: [enrollmentId], references: [id], onDelete: SetNull)
 }
 
+enum PendingEnrollmentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model PendingEnrollment {
+  id              String                   @id @default(uuid())
+  email           String
+  phone           String
+  passwordHash    String
+  payload         Json
+  batchId         String
+  courseId        String
+  razorpayOrderId String?                  @unique
+  status          PendingEnrollmentStatus  @default(PENDING)
+  userId          String?
+  errorMessage    String?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  @@index([email])
+  @@index([status])
+}
+
+model VerificationOtp {
+  id         String    @id @default(uuid())
+  channel    String
+  target     String
+  codeHash   String
+  expiresAt  DateTime
+  verifiedAt DateTime?
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
+
+  @@index([channel, target])
+}
+
 model Inquiry {
   id          String   @id @default(uuid())
   userId      String?

@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { Role, ClassMode, PaymentStatus } from "@prisma/client";
+import { Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt, { SignOptions } from "jsonwebtoken";
@@ -12,6 +12,12 @@ import {
 } from "../../lib/authHelpers";
 import { getUserDisplayName, getTeacherBatchNames, getStudentBatchName } from "../../lib/batchHelpers";
 import { sendEmail } from "../../lib/mailer";
+import {
+  completePendingEnrollment,
+  EnrollmentError,
+  sendEnrollmentWelcomeEmail,
+} from "./enrollment.service";
+import { OtpError, sendEnrollmentOtp, verifyEnrollmentOtp } from "../../lib/otp";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -56,42 +62,25 @@ const normalizeForLookup = (input: unknown): string[] => {
 export const enrollStudent = async (req: Request, res: Response): Promise<void> => {
   try {
     const {
-      fullName,
-      email,
-      phone,
-      password,
-      courseId,
-      batchId,
-      country,
-      countryCode,
-      address,
-      profileImage,
-      dob,
-      gender,
-      city,
-      region,
-      postalCode,
-      skillLevel,
-      joiningDate,
-      isUnder18,
-      guardianName,
-      relationship,
-      emergencyContact,
-      paymentMethod,
+      pendingEnrollmentId,
       razorpay_payment_id,
       razorpay_order_id,
       razorpay_signature,
     } = req.body;
 
-    // ---------- Payment Signature Validation ----------
     if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
       res.status(400).json({ status: "error", message: "Payment verification failed. Missing Razorpay signature." });
       return;
     }
 
+    if (!env.razorpayKeySecret) {
+      res.status(500).json({ status: "error", message: "Razorpay is not configured on the server." });
+      return;
+    }
+
     const generated_signature = crypto
       .createHmac("sha256", env.razorpayKeySecret)
-      .update(razorpay_order_id + "|" + razorpay_payment_id)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
       .digest("hex");
 
     if (generated_signature !== razorpay_signature) {
@@ -99,175 +88,15 @@ export const enrollStudent = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // ---------- Form Validation ----------
-    if (!fullName?.trim()) {
-      res.status(400).json({ status: "error", message: "Full Name is required." });
-      return;
-    }
-
-    if (!email?.trim()) {
-      res.status(400).json({ status: "error", message: "Email is required." });
-      return;
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      res.status(400).json({ status: "error", message: "Invalid email address." });
-      return;
-    }
-
-    if (!country?.toString().trim()) {
-      res.status(400).json({ status: "error", message: "Country is required." });
-      return;
-    }
-
-    if (!phone?.toString().trim()) {
-      res.status(400).json({ status: "error", message: "Phone number is required." });
-      return;
-    }
-
-    // Convert to E.164
-    const e164Phone = toE164(phone, countryCode || "+91");
-
-    // Basic length check (E.164 is max 15 digits after +)
-    const digitsOnly = e164Phone.replace(/\D/g, "");
-    if (digitsOnly.length < 10 || digitsOnly.length > 15) {
-      res.status(400).json({
-        status: "error",
-        message: "Please enter a valid international phone number (10–15 digits).",
-      });
-      return;
-    }
-
-    if (!address?.toString().trim()) {
-      res.status(400).json({ status: "error", message: "Residential address is required." });
-      return;
-    }
-
-    if (!password || password.length < 6) {
-      res.status(400).json({ status: "error", message: "Password must be at least 6 characters." });
-      return;
-    }
-
-    if (!courseId) {
-      res.status(400).json({ status: "error", message: "Course is required." });
-      return;
-    }
-
-    if (batchId && !String(batchId).trim()) {
-      res.status(400).json({ status: "error", message: "Batch selection is invalid." });
-      return;
-    }
-
-    let batchRecord = null;
-    if (batchId) {
-      batchRecord = await prisma.batch.findUnique({ where: { id: String(batchId) } });
-      if (!batchRecord) {
-        res.status(400).json({ status: "error", message: "Selected batch does not exist." });
-        return;
-      }
-      if (batchRecord.courseId && batchRecord.courseId !== String(courseId)) {
-        res.status(400).json({ status: "error", message: "Selected batch does not belong to the chosen course." });
-        return;
-      }
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-    const normalizedCountryCode = countryCode
-      ? (String(countryCode).startsWith("+") ? String(countryCode) : `+${countryCode}`)
-      : "+91";
-
-    // ---------- Duplicate Check ----------
-    const existingUser = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { email: normalizedEmail },
-          { phone: e164Phone },                    // exact E.164 match
-        ],
-      },
+    const result = await completePendingEnrollment({
+      pendingId: pendingEnrollmentId ? String(pendingEnrollmentId) : undefined,
+      razorpayOrderId: String(razorpay_order_id),
+      razorpayPaymentId: String(razorpay_payment_id),
     });
 
-    if (existingUser) {
-      res.status(409).json({
-        status: "error",
-        message: "An account with this email or phone already exists. Please login.",
-      });
-      return;
+    if (!result.alreadyCompleted) {
+      await sendEnrollmentWelcomeEmail(result.user);
     }
-
-    // ---------- Transaction ----------
-    const result = await prisma.$transaction(async (tx) => {
-      const passwordHash = await bcrypt.hash(password, 10);
-
-      const user = await tx.user.create({
-        data: {
-          fullName: fullName.trim(),
-          email: normalizedEmail,
-          phone: e164Phone,
-          countryCode: normalizedCountryCode,
-          passwordHash,
-          role: Role.STUDENT,
-          avatarUrl: profileImage?.trim() || null,
-          country: country?.trim() || "India",
-          address: address?.trim() || null,
-          dob: dob ? new Date(dob) : null,
-          gender: gender?.trim() || null,
-          city: city?.trim() || null,
-          region: region?.trim() || null,
-          postalCode: postalCode?.trim() || null,
-          skillLevel: skillLevel?.trim() || null,
-          joiningDate: joiningDate ? new Date(joiningDate) : null,
-          isUnder18: Boolean(isUnder18),
-          guardianName: guardianName?.trim() || null,
-          relationship: relationship?.trim() || null,
-          emergencyContact: emergencyContact?.trim() || null,
-          paymentMethod: paymentMethod?.trim() || null,
-          isActive: true,
-        },
-      });
-
-      const enrollment = await tx.enrollment.create({
-        data: {
-          userId: user.id,
-          courseId: String(courseId),
-          mode: ClassMode.ONLINE,
-          type: "GROUP",
-          active: true,
-        },
-      });
-
-      // Find course fee to record the exact payment amount
-      const course = await tx.course.findUnique({ where: { id: String(courseId) } });
-      const feePaid = course?.groupFeeINR || 0;
-
-      const payment = await tx.payment.create({
-        data: {
-          userId: user.id,
-          amount: feePaid,
-          currency: "INR",
-          gateway: "RAZORPAY",
-          transactionId: razorpay_payment_id,
-          orderId: razorpay_order_id,
-          status: PaymentStatus.SUCCESS
-        }
-      });
-
-      if (batchId) {
-        await tx.batchStudent.create({
-          data: {
-            batchId: String(batchId),
-            studentId: user.id,
-          },
-        });
-
-        await tx.batch.update({
-          where: { id: String(batchId) },
-          data: { totalStudents: { increment: 1 } },
-        });
-      }
-
-      return { user, enrollment };
-    });
 
     const { token, expiresInMs } = signUserToken({
       id: result.user.id,
@@ -279,65 +108,71 @@ export const enrollStudent = async (req: Request, res: Response): Promise<void> 
 
     setPortalAuthCookie(res, "student", token, expiresInMs);
 
-    // --- SEND REGISTRATION WELCOME EMAIL ---
-    try {
-      await sendEmail({
-        to: result.user.email,
-        subject: "Welcome to Kathak Academy!",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-            <h2 style="color: #900C27; text-align: center;">Welcome to Kathak Academy</h2>
-            <p>Hi ${result.user.fullName},</p>
-            <p>Thank you for registering with us! Your enrollment has been successfully processed.</p>
-            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
-              <h3 style="margin-top: 0; color: #1B1B24;">Your Login Details</h3>
-              <p><strong>Login URL:</strong> <a href="${env.frontendUrl}/student/login">${env.frontendUrl}/student/login</a></p>
-              <p><strong>Email:</strong> ${result.user.email}</p>
-              <p><strong>Password:</strong> ${password}</p>
-            </div>
-            <p>You can log in anytime to view your classes, assignments, and payments.</p>
-            <br/>
-            <p>Warm Regards,</p>
-            <p><strong>Kathak Academy Team</strong></p>
-          </div>
-        `
-      });
-    } catch (emailErr) {
-      console.error("Failed to send registration welcome email:", emailErr);
-    }
-
-    res.status(201).json({
+    res.status(result.alreadyCompleted ? 200 : 201).json({
       status: "success",
       message: "Student enrolled successfully.",
       data: {
-        token, // 🔥 FIX: Token explicitly added for local storage in frontend
-        user: {
-          id: result.user.id,
-          fullName: result.user.fullName,
-          email: result.user.email,
-          phone: result.user.phone,
-          country: result.user.country,
-          countryCode: result.user.countryCode,
-          address: result.user.address,
-          role: result.user.role,
-          avatarUrl: result.user.avatarUrl,
-          isActive: result.user.isActive,
-          createdAt: result.user.createdAt,
-          updatedAt: result.user.updatedAt,
-        },
-        enrollment: {
-          id: result.enrollment.id,
-          courseId: result.enrollment.courseId,
-          mode: result.enrollment.mode,
-          type: result.enrollment.type,
-          active: result.enrollment.active,
-          createdAt: result.enrollment.createdAt,
-        },
+        token,
+        user: result.user,
+        enrollment: result.enrollment,
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    if (error instanceof EnrollmentError) {
+      res.status(error.statusCode).json({ status: "error", message: error.message });
+      return;
+    }
     console.error("Student enrollment error:", error);
     res.status(500).json({ status: "error", message: "Enrollment failed." });
+  }
+};
+
+export const sendStudentOtp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const channel = String(req.body.channel || "").toUpperCase();
+    if (channel !== "EMAIL" && channel !== "MOBILE") {
+      res.status(400).json({ status: "error", message: "OTP channel must be EMAIL or MOBILE." });
+      return;
+    }
+    const data = await sendEnrollmentOtp({
+      channel,
+      email: req.body.email,
+      phone: req.body.phone,
+      countryCode: req.body.countryCode,
+    });
+    res.json({ status: "success", message: data.message, data });
+  } catch (error: unknown) {
+    if (error instanceof OtpError) {
+      res.status(error.statusCode).json({ status: "error", message: error.message });
+      return;
+    }
+    console.error("Send OTP error:", error);
+    res.status(500).json({ status: "error", message: "Failed to send OTP." });
+  }
+};
+
+export const verifyStudentOtp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const channel = String(req.body.channel || "").toUpperCase();
+    if (channel !== "EMAIL" && channel !== "MOBILE") {
+      res.status(400).json({ status: "error", message: "OTP channel must be EMAIL or MOBILE." });
+      return;
+    }
+    const data = await verifyEnrollmentOtp({
+      channel,
+      email: req.body.email,
+      phone: req.body.phone,
+      countryCode: req.body.countryCode,
+      code: req.body.code,
+    });
+    res.json({ status: "success", message: "OTP verified successfully.", data });
+  } catch (error: unknown) {
+    if (error instanceof OtpError) {
+      res.status(error.statusCode).json({ status: "error", message: error.message });
+      return;
+    }
+    console.error("Verify OTP error:", error);
+    res.status(500).json({ status: "error", message: "Failed to verify OTP." });
   }
 };
 
@@ -1268,14 +1103,14 @@ export const getStudentDashboard = async (req: Request, res: Response): Promise<
         progressPercent: progressPercent
       } : null,
       todayLiveClass: todayClass ? {
+        id: todayClass.id,
         title: todayClass.title,
         instructor: todayClass.teacherName || firstBatch?.teacherName || "Faculty Instructor",
         timeStr: new Date(todayClass.scheduledStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        isLive: todayClass.status === "LIVE" || todayClass.status === "SCHEDULED",
-        // roomName is the real, always-present join identifier for this
-        // class (zoomLink/description/durationMins don't exist on LiveClass
-        // in the schema, so they were always undefined here).
-        meetingLink: todayClass.roomName || "/student/classes/room"
+        isLive: todayClass.status === "LIVE",
+        meetingLink: todayClass.status === "LIVE"
+          ? `/student/classes/room/${todayClass.id}`
+          : "/student/classes"
       } : null,
       // Attendance has four real states (PRESENT/ABSENT/LATE/LEAVE) — show
       // the actual status instead of collapsing LATE/LEAVE into "Absent".
@@ -1286,11 +1121,15 @@ export const getStudentDashboard = async (req: Request, res: Response): Promise<
         date: new Date(att.date).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
       })),
       upcomingLiveClass: upcomingClass ? {
+        id: upcomingClass.id,
         title: upcomingClass.title,
         subtitle: `With ${upcomingClass.teacherName || firstBatch?.teacherName || "your instructor"}`,
         timeStr: new Date(upcomingClass.scheduledStart).toLocaleString([], { dateStyle: "short", timeStyle: "short" }),
         durationStr: `${Math.max(1, Math.round((new Date(upcomingClass.scheduledEnd).getTime() - new Date(upcomingClass.scheduledStart).getTime()) / 60000))} min`,
-        meetingLink: upcomingClass.roomName || "/student/classes/room"
+        isLive: upcomingClass.status === "LIVE",
+        meetingLink: upcomingClass.status === "LIVE"
+          ? `/student/classes/room/${upcomingClass.id}`
+          : "/student/classes"
       } : null,
       courseProgress: courseProgressList,
       metrics: {

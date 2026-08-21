@@ -65,7 +65,15 @@ app.use(cors({
 
 app.options("*", cors());
 
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({
+  limit: "50mb",
+  verify: (req, _res, buf) => {
+    const url = req.url || "";
+    if (url.includes("/payment/webhook")) {
+      (req as typeof req & { rawBody?: Buffer }).rawBody = buf;
+    }
+  },
+}));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 const uploadsDir = path.join(__dirname, "../uploads");
