@@ -3,7 +3,24 @@ import { prisma } from "../../lib/prisma";
 import { AttendanceStatus } from "@prisma/client";
 
 type ChatMessage = { id: string; senderName: string; text: string; sentAt: string };
-type Participant = { id: string; userName: string; userRole: string; joinedAt: string; studentId?: string };
+type Participant = {
+  id: string;
+  userName: string;
+  userRole: string;
+  joinedAt: string;
+  studentId?: string;
+  agoraUid?: number;
+};
+
+const isHostRole = (role?: string) => {
+  const value = String(role || "").toLowerCase();
+  return value === "teacher" || value === "admin";
+};
+
+const isStudentRole = (role?: string) => {
+  const value = String(role || "student").toLowerCase();
+  return value === "student" || !role;
+};
 
 const roomParticipants: Record<string, Map<string, Participant>> = {};
 const roomChatHistory: Record<string, ChatMessage[]> = {};
@@ -19,11 +36,13 @@ export function registerLiveClassSocket(io: Server) {
         userName,
         userRole,
         studentId,
+        agoraUid,
       }: {
         roomName: string;
         userName?: string;
         userRole?: string;
         studentId?: string;
+        agoraUid?: number;
       }) => {
         if (!roomName || !userName) return;
 
@@ -54,6 +73,7 @@ export function registerLiveClassSocket(io: Server) {
           userRole: userRole || "Student",
           joinedAt: joinTime.toISOString(),
           studentId,
+          agoraUid: Number.isFinite(Number(agoraUid)) && Number(agoraUid) > 0 ? Number(agoraUid) : undefined,
         };
 
         // ✅ socket.id se key — har physical connection unique entry rakhta hai,
@@ -268,6 +288,42 @@ export function registerLiveClassSocket(io: Server) {
         at: new Date().toISOString(),
       });
     });
+
+    socket.on(
+      "liveclass:media-control",
+      (payload: {
+        roomName: string;
+        targetSocketId?: string;
+        targetStudentId?: string;
+        targetAgoraUid?: number;
+        camera?: boolean;
+        mic?: boolean;
+      }) => {
+        if (!isHostRole(socket.data.userRole) || !payload?.roomName) return;
+        if (payload.camera === undefined && payload.mic === undefined) return;
+
+        const participants = roomParticipants[payload.roomName];
+        if (!participants) return;
+
+        const list = Array.from(participants.values());
+        const target =
+          (payload.targetSocketId ? participants.get(payload.targetSocketId) : undefined) ||
+          (payload.targetStudentId
+            ? list.find((p) => p.studentId && p.studentId === payload.targetStudentId)
+            : undefined) ||
+          (payload.targetAgoraUid != null
+            ? list.find((p) => p.agoraUid === payload.targetAgoraUid)
+            : undefined);
+
+        if (!target || !isStudentRole(target.userRole)) return;
+
+        io.to(target.id).emit("liveclass:media-control", {
+          camera: payload.camera,
+          mic: payload.mic,
+          requestedBy: socket.data.userName || "Host",
+        });
+      }
+    );
 
     socket.on("disconnect", () => {
       handleUserLeave(socket);
