@@ -1,4 +1,5 @@
-import nodemailer, { type Transporter } from "nodemailer";
+import nodemailer from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import { env } from "../config/env";
 
 export interface EmailAttachment {
@@ -17,41 +18,41 @@ interface EmailOptions {
 const fromAddress = () =>
   env.smtp.from || `"Kathak Academy" <${env.smtp.user}>`;
 
-const createSmtpTransport = (port: number): Transporter => {
+const createSmtpTransport = (port: number) => {
   const isGmail = env.smtp.host.includes("gmail");
   const secure = port === 465;
 
-  if (isGmail) {
-    return nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: env.smtp.user,
-        pass: env.smtp.pass,
-      },
-      family: 4,
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 20000,
-    });
-  }
+  const options = (isGmail
+    ? {
+        service: "gmail",
+        auth: {
+          user: env.smtp.user,
+          pass: env.smtp.pass,
+        },
+        family: 4,
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 20000,
+      }
+    : {
+        host: env.smtp.host,
+        port,
+        secure,
+        requireTLS: !secure,
+        auth: {
+          user: env.smtp.user,
+          pass: env.smtp.pass,
+        },
+        tls: {
+          minVersion: "TLSv1.2",
+        },
+        family: 4,
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 20000,
+      }) as unknown as SMTPTransport.Options;
 
-  return nodemailer.createTransport({
-    host: env.smtp.host,
-    port,
-    secure,
-    requireTLS: !secure,
-    auth: {
-      user: env.smtp.user,
-      pass: env.smtp.pass,
-    },
-    tls: {
-      minVersion: "TLSv1.2",
-    },
-    family: 4,
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000,
-  });
+  return nodemailer.createTransport(options);
 };
 
 const sendViaSmtp = async (options: EmailOptions) => {
