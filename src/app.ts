@@ -50,20 +50,34 @@ const allowedOrigins = [
   "https://kathak-theta.vercel.app"
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+const corsOptions: cors.CorsOptions = {
+  origin(origin, callback) {
+    if (!origin) {
       callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
+      return;
     }
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    try {
+      if (new URL(origin).hostname.endsWith(".vercel.app")) {
+        callback(null, true);
+        return;
+      }
+    } catch {
+      callback(null, false);
+      return;
+    }
+    callback(null, false);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
 
-app.options("*", cors());
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 app.use(express.json({
   limit: "50mb",
