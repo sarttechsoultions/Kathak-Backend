@@ -77,7 +77,7 @@ export const sendEnrollmentOtp = async (params: {
   });
 
   if (channel === "EMAIL") {
-    await sendEmail({
+    const sent = await sendEmail({
       to: target,
       subject: "Kathak Academy Email Verification OTP",
       html: `
@@ -89,6 +89,12 @@ export const sendEnrollmentOtp = async (params: {
         </div>
       `,
     });
+    if (!sent) {
+      throw new OtpError(
+        "OTP email could not be sent. Please confirm SMTP settings on the production server and try again.",
+        502
+      );
+    }
     return {
       channel,
       target,
