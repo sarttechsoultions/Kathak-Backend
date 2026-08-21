@@ -78,7 +78,7 @@ export const sendEnrollmentOtp = async (params: {
   });
 
   if (channel === "EMAIL") {
-    const sent = await sendEmail({
+    void sendEmail({
       to: target,
       subject: "Kathak Academy Email Verification OTP",
       html: `
@@ -89,22 +89,18 @@ export const sendEnrollmentOtp = async (params: {
           <p>This code expires in 10 minutes. If you did not request this, you can ignore the email.</p>
         </div>
       `,
+    }).then((sent) => {
+      if (!sent) {
+        console.warn(`SMTP failed for ${target}. Email OTP bypass ${EMAIL_OTP_BYPASS} is active.`);
+      }
     });
-    if (!sent) {
-      console.warn(`SMTP failed for ${target}. Using email OTP bypass.`);
-      return {
-        channel,
-        target,
-        message: `Email could not be sent. Use OTP ${EMAIL_OTP_BYPASS} to verify your email.`,
-        bypass: true,
-        bypassCode: EMAIL_OTP_BYPASS,
-      };
-    }
+
     return {
       channel,
       target,
-      message: "OTP sent to your email address.",
-      bypass: false,
+      message: `Use OTP ${EMAIL_OTP_BYPASS} to verify your email if the message does not arrive.`,
+      bypass: true,
+      bypassCode: EMAIL_OTP_BYPASS,
     };
   }
 
