@@ -29,6 +29,18 @@ export const authRateLimiter = rateLimit({
 // Tighter limit for unauthenticated uploads (e.g. enroll profile photo).
 // No login is required to hit this route, so it needs its own low ceiling
 // independent of the general API limit to prevent storage-filling abuse.
+export const publicFormRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: env.isProduction ? 12 : 10000,
+  skip: () => !env.isProduction,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: "error",
+    message: "Too many form submissions. Please try again in 15 minutes.",
+  },
+});
+
 export const publicUploadRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: env.isProduction ? 10 : 10000,

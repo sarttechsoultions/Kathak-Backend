@@ -1,9 +1,12 @@
 import { Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "../src/lib/prisma";
+import { upsertAcademyCourses } from "../src/lib/academy-courses";
+import { ensureHeroBanners } from "../src/lib/hero-banners";
+import { ensureLeadPopup } from "../src/lib/lead-popup";
 // use the global `process` provided by Node.js
 
-async function main() {
+async function seedAdmin() {
   console.log("🌱 Seeding Admin User into PostgreSQL...");
 
   // Credentials must come from env — never hardcode a real admin password in
@@ -55,6 +58,22 @@ async function main() {
   console.log(`📧 Email:    ${admin.email}`);
   console.log(`🔑 Password: ${rawPassword}`);
   console.log(`-------------------------------------------`);
+}
+
+async function main() {
+  await seedAdmin();
+  console.log("🌱 Syncing academy courses into admin catalog...");
+  const results = await upsertAcademyCourses();
+  for (const result of results) {
+    console.log(`  ${result.action === "created" ? "➕" : "♻️ "} ${result.slug} (${result.id})`);
+  }
+  console.log("✅ Academy courses saved.");
+  console.log("🌱 Ensuring default hero banners...");
+  await ensureHeroBanners();
+  console.log("✅ Hero banners ready.");
+  console.log("🌱 Ensuring lead popup settings...");
+  await ensureLeadPopup();
+  console.log("✅ Lead popup ready.");
 }
 
 main()

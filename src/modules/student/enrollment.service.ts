@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
 import { sendEmail } from "../../lib/mailer";
 import { buildInvoiceEmailBlock, buildInvoiceHtml, InvoiceData } from "../../lib/invoice";
+import { enrollmentAmountINR } from "../../lib/fees";
 
 export class EnrollmentError extends Error {
   statusCode: number;
@@ -159,7 +160,7 @@ export const validateEnrollmentInput = async (
   const relationship = String(body.relationship || "").trim();
   const emergencyContact = String(body.emergencyContact || "").trim();
   const methodRaw = String(body.paymentMethod || "RAZORPAY").trim().toUpperCase();
-  const paymentMethod = methodRaw === "CARD" || methodRaw === "UPI" ? methodRaw : "RAZORPAY";
+  const paymentMethod = methodRaw === "CARD" || methodRaw === "UPI" || methodRaw === "NETBANKING" ? methodRaw : "RAZORPAY";
   const isUnder18 = Boolean(body.isUnder18) || isAgeUnder18(dob);
 
   if (!fullName) throw new EnrollmentError("Full Name is required.");
@@ -196,7 +197,7 @@ export const validateEnrollmentInput = async (
   if (!batchRecord) {
     throw new EnrollmentError("Selected batch does not exist.");
   }
-  if (batchRecord.courseId && batchRecord.courseId !== courseId) {
+  if (!batchRecord.courseId || batchRecord.courseId !== courseId) {
     throw new EnrollmentError("Selected batch does not belong to the chosen course.");
   }
 
@@ -340,7 +341,7 @@ const fulfillEnrollment = async (
   }
 
   const course = await tx.course.findUnique({ where: { id: payload.courseId } });
-  const feePaid = course?.groupFeeINR || 0;
+  const feePaid = enrollmentAmountINR(course?.groupFeeINR || 0);
 
   const existingPayment = await tx.payment.findFirst({
     where: {
@@ -419,7 +420,7 @@ export const completePendingEnrollment = async (params: {
   const { pendingId, razorpayOrderId, razorpayPaymentId } = params;
 
   if (!razorpayOrderId || !razorpayPaymentId) {
-    throw new EnrollmentError("Payment verification failed. Missing Razorpay payment details.");
+    throw new EnrollmentError("Payment verification failed. Missing payment details.");
   }
 
   const pending = pendingId

@@ -69,12 +69,12 @@ export const enrollStudent = async (req: Request, res: Response): Promise<void> 
     } = req.body;
 
     if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
-      res.status(400).json({ status: "error", message: "Payment verification failed. Missing Razorpay signature." });
+      res.status(400).json({ status: "error", message: "Payment verification failed. Please try again." });
       return;
     }
 
     if (!env.razorpayKeySecret) {
-      res.status(500).json({ status: "error", message: "Razorpay is not configured on the server." });
+      res.status(500).json({ status: "error", message: "Payment is temporarily unavailable. Please try again later." });
       return;
     }
 
@@ -1152,62 +1152,48 @@ export const getPublicCourses = async (req: Request, res: Response) => {
     const courses = await prisma.course.findMany({
       include: {
         batches: {
+          where: { status: "Active" },
           select: {
             id: true,
             name: true,
             schedule: true,
             code: true,
+            courseId: true,
+            courseName: true,
+            status: true,
           },
+          orderBy: { createdAt: "asc" },
         },
       },
       orderBy: { createdAt: "asc" },
     });
 
-    const allBatches = await prisma.batch.findMany({
-      select: {
-        id: true,
-        name: true,
-        schedule: true,
-        code: true,
-        courseId: true,
-        courseName: true,
-      },
-      orderBy: { createdAt: "asc" },
-    });
-
-    const mappedCourses = courses.map((c: any) => {
-      const courseBatches = allBatches.filter((b: any) => {
-        const batchName = (b.name || "").toLowerCase();
-        const courseTitle = (c.title || "").toLowerCase();
-        const batchCourseName = (b.courseName || "").toLowerCase();
-
-        // 1. Relational courseId match
-        if (b.courseId && b.courseId === c.id) return true;
-
-        // 2. Explicit courseName match
-        if (batchCourseName && (batchCourseName.includes(courseTitle) || courseTitle.includes(batchCourseName))) return true;
-
-        // 3. Smart Keyword matching (e.g. "Hobby Kathak Morning Batch" -> matches "Hobby Kathak Batch")
-        const courseWords = courseTitle.split(" ").filter((w: string) => w.length > 3 && w !== "batch" && w !== "course");
-        if (courseWords.some((w: string) => batchName.includes(w) || batchCourseName.includes(w))) return true;
-
-        return false;
-      });
+    const mappedCourses = courses.map((c) => {
+      const courseBatches = (c.batches || []).filter((b) => !b.courseId || b.courseId === c.id);
 
       return {
         id: c.id,
         title: c.title,
+        slug: c.slug,
         groupFeeINR: c.groupFeeINR || 2500,
         groupFeeUSD: c.groupFeeUSD || 60,
-        level: c.category || c.level || "Beginner",
-        videoUrl: c.promoVideoUrl || "",
-        batches: courseBatches.length > 0 ? courseBatches : allBatches,
+        duration: c.groupClassesCount || "",
+        level: c.category || "Beginner",
+        videoUrl: c.videoUrl || "",
+        batches: courseBatches.map((b) => ({
+          id: b.id,
+          name: b.name,
+          schedule: b.schedule,
+          code: b.code,
+          courseId: c.id,
+          courseName: c.title,
+        })),
       };
     });
 
     res.json({
       status: "success",
-      data: { courses: mappedCourses, allBatches },
+      data: { courses: mappedCourses },
     });
   } catch (error) {
     res.status(500).json({ status: "error", message: "Failed to fetch courses" });

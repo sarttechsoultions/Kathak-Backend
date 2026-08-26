@@ -1,8 +1,8 @@
-import { EventCategory, EventLevel, EventStatus, Prisma, Role } from "@prisma/client";
+import { EventCategory, EventLevel, EventStatus, PaymentStatus, Prisma, Role } from "@prisma/client";
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
 
-const EVENT_CATEGORIES = Object.values(EventCategory) as EventCategory[];
+const EVENT_CATEGORIES = ["Event", "Workshop", "Competition", "Seminar"] as EventCategory[];
 const EVENT_LEVELS = Object.values(EventLevel) as EventLevel[];
 const EVENT_STATUSES = Object.values(EventStatus) as EventStatus[];
 
@@ -432,7 +432,10 @@ export const getAllEvents = async (req: Request, res: Response) => {
           },
         },
         _count: {
-          select: { registrations: true },
+          select: {
+            registrations: true,
+            tickets: { where: { paymentStatus: PaymentStatus.SUCCESS } },
+          },
         },
       },
       orderBy: {
@@ -632,6 +635,9 @@ export const getEventAttendees = async (req: Request, res: Response): Promise<vo
             }
           },
           orderBy: { registeredAt: 'desc' }
+        },
+        tickets: {
+          orderBy: { createdAt: 'desc' }
         }
       }
     });
@@ -641,11 +647,81 @@ export const getEventAttendees = async (req: Request, res: Response): Promise<vo
       return;
     }
 
+    const studentRegistrations = event.registrations.map((registration) => ({
+      id: registration.id,
+      source: "student" as const,
+      bookingId: null,
+      student: {
+        id: registration.student.id,
+        fullName: registration.student.fullName,
+        email: registration.student.email,
+        phone: registration.student.phone,
+        avatarUrl: registration.student.avatarUrl,
+      },
+      adultCount: 1,
+      childCount: 0,
+      quantity: 1,
+      ticketBreakdown: "01 Adult",
+      amount: 0,
+      paymentMethod: null,
+      paymentStatus: registration.paymentStatus,
+      registeredAt: registration.registeredAt,
+    }));
+
+    const guestTickets = event.tickets.map((ticket) => {
+      const adultCount = ticket.adultCount || (ticket.childCount > 0 ? 0 : ticket.quantity);
+      const childCount = ticket.childCount || 0;
+      const parts: string[] = [];
+      if (adultCount > 0) parts.push(`${String(adultCount).padStart(2, "0")} Adult`);
+      if (childCount > 0) parts.push(`${String(childCount).padStart(2, "0")} Child`);
+
+      return {
+        id: ticket.id,
+        source: "ticket" as const,
+        bookingId: ticket.bookingId,
+        student: {
+          id: ticket.id,
+          fullName: ticket.fullName,
+          email: ticket.ticketEmail || ticket.email,
+          phone: ticket.phone,
+          city: ticket.city,
+          avatarUrl: undefined,
+        },
+        adultCount,
+        childCount,
+        quantity: ticket.quantity,
+        ticketBreakdown: parts.join(", ") || `${ticket.quantity} ticket${ticket.quantity === 1 ? "" : "s"}`,
+        amount: ticket.amount,
+        paymentMethod: ticket.paymentMethod,
+        paymentStatus: ticket.paymentStatus,
+        registeredAt: ticket.createdAt,
+      };
+    });
+
+    const soldTickets = guestTickets.filter((ticket) => ticket.paymentStatus === "SUCCESS");
+    const ticketsSold = soldTickets.reduce((sum, ticket) => sum + ticket.quantity, 0);
+    const adults = soldTickets.reduce((sum, ticket) => sum + ticket.adultCount, 0);
+    const children = soldTickets.reduce((sum, ticket) => sum + ticket.childCount, 0);
+    const revenue = soldTickets.reduce((sum, ticket) => sum + ticket.amount, 0);
+
+    const registrations = [...studentRegistrations, ...guestTickets].sort(
+      (a, b) => new Date(b.registeredAt).getTime() - new Date(a.registeredAt).getTime(),
+    );
+
     res.status(200).json({
       success: true,
       data: {
         title: event.title,
-        registrations: event.registrations
+        stats: {
+          ticketBuyers: soldTickets.length,
+          ticketsSold,
+          adults,
+          children,
+          revenue,
+          studentRegistrations: studentRegistrations.length,
+        },
+        tickets: guestTickets,
+        registrations,
       }
     });
   } catch (error: any) {

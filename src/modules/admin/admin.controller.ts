@@ -6,6 +6,8 @@ import { sanitizeUser } from "../../lib/authHelpers";
 import { sendEmail } from "../../lib/mailer";
 import { env } from "../../config/env";
 import { buildInvoiceHtml, InvoiceData } from "../../lib/invoice";
+import { enrollmentAmountINR } from "../../lib/fees";
+import { loadPlatformPayments, summarizePlatformPayments, isSuccessfulStatus } from "../../lib/platform-payments";
 
 
 const mapCategoryToEnum = (cat?: string): CourseCategory => {
@@ -38,46 +40,39 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
     ]);
 
     // ==========================================
-    // 2. REVENUE OVERVIEW (Last 6 Months)
+    // 2. REVENUE OVERVIEW (Platform-wide, last 6 months)
     // ==========================================
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
     sixMonthsAgo.setDate(1);
     sixMonthsAgo.setHours(0, 0, 0, 0);
 
-    const payments = await prisma.payment.findMany({
-      where: { 
-        status: PaymentStatus.SUCCESS,
-        createdAt: { gte: sixMonthsAgo } 
-      },
-      select: { amount: true, createdAt: true }
-    });
+    const platformPayments = await loadPlatformPayments();
+    const platform = summarizePlatformPayments(platformPayments);
+    const successfulPayments = platformPayments.filter((row) => isSuccessfulStatus(row.status));
 
     const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
     const monthlyRevenueData: Record<string, number> = {};
-    let totalRevenue = 0;
 
-    // Initialize last 6 months with 0
     for (let i = 5; i >= 0; i--) {
       const d = new Date();
       d.setMonth(d.getMonth() - i);
       monthlyRevenueData[monthNames[d.getMonth()]] = 0;
     }
 
-    payments.forEach(p => {
-      totalRevenue += p.amount;
-      const month = monthNames[p.createdAt.getMonth()];
+    successfulPayments.forEach((payment) => {
+      if (payment.createdAt < sixMonthsAgo) return;
+      const month = monthNames[payment.createdAt.getMonth()];
       if (monthlyRevenueData[month] !== undefined) {
-        monthlyRevenueData[month] += p.amount;
+        monthlyRevenueData[month] += payment.amount;
       }
     });
 
-    const revenueChart = Object.keys(monthlyRevenueData).map(month => ({
+    const revenueChart = Object.keys(monthlyRevenueData).map((month) => ({
       month,
-      revenue: monthlyRevenueData[month]
+      revenue: monthlyRevenueData[month],
     }));
 
-    // Calculate Growth (Comparing current month vs last month)
     const currentMonth = new Date().getMonth();
     const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
     const currentMonthRevenue = monthlyRevenueData[monthNames[currentMonth]] || 0;
@@ -85,6 +80,8 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
     let growth = 0;
     if (lastMonthRevenue > 0) {
       growth = ((currentMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100;
+    } else if (currentMonthRevenue > 0) {
+      growth = 100;
     }
 
     // ==========================================
@@ -163,10 +160,9 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
     // ==========================================
     // 6. UNIFIED RECENT ACTIVITIES LOG
     // ==========================================
-    const [newStudents, recentSubs, recentPays, recentClasses] = await Promise.all([
+    const [newStudents, recentSubs, recentClasses] = await Promise.all([
       prisma.user.findMany({ where: { role: Role.STUDENT }, orderBy: { createdAt: 'desc' }, take: 2, select: { id: true, fullName: true, createdAt: true, enrollments: { select: { course: { select: { title: true } } }, take: 1 } } }),
       prisma.assignmentSubmission.findMany({ orderBy: { submittedAt: 'desc' }, take: 2, select: { id: true, studentName: true, assignment: { select: { title: true } }, submittedAt: true } }),
-      prisma.payment.findMany({ where: { status: 'SUCCESS' }, orderBy: { createdAt: 'desc' }, take: 2, select: { id: true, amount: true, user: { select: { fullName: true } }, createdAt: true } }),
       prisma.liveClass.findMany({ where: { status: 'LIVE' }, orderBy: { updatedAt: 'desc' }, take: 2, select: { id: true, title: true, teacherName: true, updatedAt: true } })
     ]);
 
@@ -174,7 +170,15 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
 
     newStudents.forEach(s => activities.push({ id: `stu_${s.id}`, type: "STUDENT", title: `New student ${s.fullName} registered`, subtitle: `Course: ${s.enrollments[0]?.course?.title || 'Basics'}`, time: s.createdAt }));
     recentSubs.forEach(s => activities.push({ id: `sub_${s.id}`, type: "ASSIGNMENT", title: `Assignment submitted by ${s.studentName}`, subtitle: `Topic: ${s.assignment?.title}`, time: s.submittedAt }));
-    recentPays.forEach(p => activities.push({ id: `pay_${p.id}`, type: "PAYMENT", title: `Fee payment received from ${p.user.fullName}`, subtitle: `Amount: ₹${p.amount.toLocaleString('en-IN')}`, time: p.createdAt }));
+    successfulPayments.slice(0, 4).forEach((p) =>
+      activities.push({
+        id: `pay_${p.source}_${p.id}`,
+        type: "PAYMENT",
+        title: `${p.sourceLabel} received from ${p.studentName}`,
+        subtitle: `${p.itemTitle} • ₹${p.amount.toLocaleString("en-IN")}`,
+        time: p.createdAt,
+      })
+    );
     recentClasses.forEach(c => activities.push({ id: `cls_${c.id}`, type: "CLASS", title: `Live class '${c.title}' started`, subtitle: `By ${c.teacherName}`, time: c.updatedAt }));
 
     // Sort all combined activities by date descending and take top 4
@@ -198,7 +202,12 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
           totalTeachers,
           activeCourses,
           liveClassesToday,
-          totalRevenue: totalRevenue,
+          totalRevenue: platform.platformRevenue,
+          courseRevenue: platform.courseRevenue,
+          workshopRevenue: platform.workshopRevenue,
+          todayRevenue: platform.todayRevenue,
+          successCount: platform.successCount,
+          totalPayments: platform.totalPayments,
           revenueGrowth: parseFloat(growth.toFixed(1)),
         },
         revenueChart,
@@ -1119,7 +1128,7 @@ export const getCourses = async (req: Request, res: Response): Promise<void> => 
   try {
     const courses = await prisma.course.findMany({
       include: { lessons: { orderBy: { orderIndex: "asc" } }, batches: true },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "asc" }
     });
 
     const mapped = courses.map((c) => ({
@@ -1198,6 +1207,7 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
       title, 
       description, 
       category, 
+      slug: requestedSlug,
       groupFeeINR, 
       groupFeeUSD, 
       oneToOneFeeINR, 
@@ -1214,9 +1224,15 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // 2. Slug Generation
-    const baseSlug = title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
-    const slug = `${baseSlug}-${Date.now().toString(36)}`;
+    // 2. Slug Generation — keep a provided slug stable so enroll links keep working
+    const baseSlug = String(requestedSlug || title)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+    const slug = requestedSlug
+      ? baseSlug
+      : `${baseSlug}-${Date.now().toString(36)}`;
 
     // 3. Database Creation
     const newCourse = await prisma.course.create({
@@ -2168,29 +2184,6 @@ export const saveAttendance = async (req: Request, res: Response): Promise<void>
 
 export const getPayments = async (req: Request, res: Response): Promise<void> => {
   try {
-    const payments = await prisma.payment.findMany({
-      include: {
-        user: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            phone: true,
-            country: true,
-            city: true,
-            region: true,
-            address: true,
-            postalCode: true,
-            paymentMethod: true,
-            joiningDate: true,
-            batchMemberships: { include: { batch: { select: { name: true, code: true } } } },
-          },
-        },
-        enrollment: { include: { course: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
     const students = await prisma.user.findMany({
       where: { role: Role.STUDENT },
       include: {
@@ -2212,7 +2205,7 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
       // fabricate a ₹12,000 charge for them (that previously counted every
       // unenrolled account as a pending debtor and inflated totalFeeAmount /
       // pendingStudentsCount on the finance dashboard).
-      const totalFee = course?.groupFeeINR ?? 0;
+      const totalFee = course ? enrollmentAmountINR(course.groupFeeINR) : 0;
       const paid = s.payments.reduce((acc, p) => acc + p.amount, 0);
       const pending = Math.max(0, totalFee - paid);
 
@@ -2260,16 +2253,15 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
       };
     });
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const todaysPayments = payments.filter((p) => new Date(p.createdAt) >= todayStart);
+    const platformPayments = await loadPlatformPayments();
+    const platform = summarizePlatformPayments(platformPayments);
 
     res.json({
       status: "success",
       data: {
-        totalRevenue: amountReceived,
-        payments,
+        totalRevenue: platform.platformRevenue,
+        payments: platformPayments,
+        platformPayments,
         financeList: studentFinanceRecords,
         records: studentFinanceRecords,
         metrics: {
@@ -2282,9 +2274,16 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
           overdueCount: studentFinanceRecords.filter((r) => r.rawPending > 5000).length,
           overdueAmount: studentFinanceRecords.reduce((acc, r) => acc + (r.rawPending > 5000 ? r.rawPending : 0), 0),
           partialCount: studentFinanceRecords.filter((r) => r.rawPaid > 0 && r.rawPending > 0).length,
-          partialAmount: studentFinanceRecords.reduce((acc, r) => acc + (r.rawPaid > 0 ? r.rawPending : 0), 0)
+          partialAmount: studentFinanceRecords.reduce((acc, r) => acc + (r.rawPaid > 0 ? r.rawPending : 0), 0),
+          platformRevenue: platform.platformRevenue,
+          courseRevenue: platform.courseRevenue,
+          workshopRevenue: platform.workshopRevenue,
+          totalPayments: platform.totalPayments,
+          successCount: platform.successCount,
+          pendingCount: platform.pendingCount,
+          todayRevenue: platform.todayRevenue,
         },
-        todaysPayments
+        todaysPayments: platform.todaysPayments,
       }
     });
   } catch (error) {
@@ -2448,90 +2447,45 @@ export const getPaymentInvoice = async (req: Request, res: Response): Promise<vo
 
 export const exportFinanceCsv = async (req: Request, res: Response): Promise<void> => {
   try {
-    const payments = await prisma.payment.findMany({
-      include: {
-        user: {
-          include: { batchMemberships: { include: { batch: true } } },
-        },
-        enrollment: { include: { course: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    const students = await prisma.user.findMany({
-      where: { role: Role.STUDENT },
-      include: {
-        enrollments: { include: { course: true } },
-        payments: { where: { status: PaymentStatus.SUCCESS } },
-        batchMemberships: { include: { batch: true } },
-      },
-    });
-
-    const studentTotals = new Map(
-      students.map((s) => {
-        const totalFee = s.enrollments[0]?.course?.groupFeeINR ?? 0;
-        const paid = s.payments.reduce((acc, p) => acc + p.amount, 0);
-        return [s.id, { totalFee, paid, pending: Math.max(0, totalFee - paid) }];
-      })
-    );
+    const platformPayments = await loadPlatformPayments();
 
     const headers = [
-      "Invoice Number",
+      "Type",
       "Payment Date",
-      "Student ID",
-      "Student Name",
+      "Student / Payer",
       "Email",
       "Phone",
-      "Country",
-      "City",
-      "Address",
-      "Course",
-      "Batch",
-      "Joining Date",
+      "Course / Workshop",
       "Transaction ID",
       "Order ID",
       "Gateway",
-      "Payment Method",
+      "Status",
       "Amount",
       "Currency",
-      "Status",
-      "Course Fee",
-      "Total Paid",
-      "Pending Amount",
     ];
 
-    const rows = payments.map((p) => {
-      const totals = studentTotals.get(p.userId) || { totalFee: 0, paid: 0, pending: 0 };
-      const batchName = p.user?.batchMemberships?.[0]?.batch?.name || p.user?.batchMemberships?.[0]?.batch?.code || "";
-      return [
-        `INV-${(p.transactionId || p.id).slice(-10).toUpperCase()}`,
-        new Date(p.createdAt).toLocaleString("en-IN"),
-        `STU-${p.userId.substring(0, 4).toUpperCase()}`,
-        p.user?.fullName || "",
-        p.user?.email || "",
-        p.user?.phone || "",
-        p.user?.country || "",
-        p.user?.city || "",
-        p.user?.address || "",
-        p.enrollment?.course?.title || "",
-        batchName,
-        p.user?.joiningDate ? new Date(p.user.joiningDate).toLocaleDateString("en-IN") : "",
-        p.transactionId,
-        p.orderId,
-        p.gateway,
-        p.user?.paymentMethod || p.gateway,
-        p.amount,
-        p.currency,
-        p.status,
-        totals.totalFee,
-        totals.paid,
-        totals.pending,
-      ].map(csvCell).join(",");
-    });
+    const rows = platformPayments.map((payment) =>
+      [
+        payment.sourceLabel,
+        new Date(payment.createdAt).toLocaleString("en-IN"),
+        payment.studentName,
+        payment.email,
+        payment.phone,
+        payment.itemTitle,
+        payment.transactionId,
+        payment.orderId,
+        payment.gateway,
+        payment.status,
+        payment.amount,
+        payment.currency,
+      ]
+        .map(csvCell)
+        .join(",")
+    );
 
     const csv = `\uFEFF${headers.join(",")}\n${rows.join("\n")}`;
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="Kathak_Finance_${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.setHeader("Content-Disposition", `attachment; filename="Kathak_Platform_Payments_${new Date().toISOString().slice(0, 10)}.csv"`);
     res.send(csv);
   } catch (error) {
     console.error("Export finance CSV error:", error);

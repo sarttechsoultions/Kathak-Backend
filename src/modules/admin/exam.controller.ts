@@ -1,4 +1,4 @@
-import { Request, Response } from "express";
+﻿import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -104,7 +104,7 @@ export const createExam = async (req: Request, res: Response): Promise<void> => 
       ? batchIds
       : [batchId || null];
 
-    // 🔥 SECURITY: Teacher can only create exams for their assigned batches
+    // ðŸ”¥ SECURITY: Teacher can only create exams for their assigned batches
     if (userRole === "TEACHER") {
       const myBatchIds = await getTeacherBatchIds(createdById);
       const invalidBatches = targetBatchIds.filter(bId => bId && !myBatchIds.includes(bId));
@@ -163,7 +163,7 @@ export const getExamResults = async (req: Request, res: Response): Promise<void>
 
     let whereClause: any = {};
 
-    // 🔥 SECURITY: Teacher only sees results for their own exams or their assigned batches
+    // ðŸ”¥ SECURITY: Teacher only sees results for their own exams or their assigned batches
     if (userRole === "TEACHER") {
       const myBatchIds = await getTeacherBatchIds(userId);
       whereClause = {
@@ -263,7 +263,7 @@ export const evaluateExamResult = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    // 🔥 SECURITY: Check if teacher is allowed to grade this
+    // ðŸ”¥ SECURITY: Check if teacher is allowed to grade this
     if (userRole === "TEACHER") {
       const myBatchIds = await getTeacherBatchIds(userId);
       const isCreator = resultRecord.exam.createdById === userId;
@@ -315,7 +315,7 @@ export const getExamStudents = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    // 🔥 SECURITY: Prevent viewing students of unassigned exams
+    // ðŸ”¥ SECURITY: Prevent viewing students of unassigned exams
     if (userRole === "TEACHER") {
       const myBatchIds = await getTeacherBatchIds(userId);
       const isCreator = exam.createdById === userId;
@@ -366,3 +366,4 @@ export const getExamStudents = async (req: Request, res: Response): Promise<void
     res.status(500).json({ status: "error", message: "Failed to fetch exam students." });
   }
 };
+

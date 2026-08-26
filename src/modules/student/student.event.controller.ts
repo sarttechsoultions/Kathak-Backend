@@ -86,7 +86,7 @@ export const getUpcomingEvents = async (req: Request, res: Response) => {
       startDate: { gte: new Date() },
     };
     // category query param ko EventCategory enum ke against validate karo
-    if (category && category !== "All" && Object.values(EventCategory).includes(category as EventCategory)) {
+    if (category && category !== "All" && ["Event", "Workshop", "Competition", "Seminar"].includes(String(category))) {
       filter.category = category as EventCategory;
     }
 

@@ -6,7 +6,7 @@ import {
   createExam,
   getExamResults,
   evaluateExamResult,
-  getExamStudents
+  getExamStudents,
 } from "./exam.controller";
 
 const router = Router();
