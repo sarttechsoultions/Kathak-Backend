@@ -102,3 +102,25 @@ export function requirePermission(...permissions: Permission[]) {
     next();
   };
 }
+
+export function requireAnyPermission(...permissions: Permission[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({ status: "error", message: "Authentication required." });
+      return;
+    }
+
+    if (req.user.role === Role.ADMIN) {
+      next();
+      return;
+    }
+
+    const hasPermission = permissions.some((p) => req.user?.permissions.includes(p));
+    if (!hasPermission) {
+      res.status(403).json({ status: "error", message: "Access denied. Required permission missing." });
+      return;
+    }
+
+    next();
+  };
+}

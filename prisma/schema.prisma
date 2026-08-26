@@ -116,6 +116,7 @@ enum Currency {
 
 
 enum EventCategory {
+  Event
   Workshop
   Competition
   Seminar
@@ -207,6 +208,10 @@ model User {
   competitionParticipations CompetitionParticipant[] @relation("CompetitionParticipant")
   leaveRequests      LeaveRequest[]
   uploadedResources  ContentResource[]  @relation("UploadedResources")
+  uploadedGalleryItems GalleryItem[]    @relation("UploadedGalleryItems")
+  uploadedStudentCornerItems StudentCornerItem[] @relation("UploadedStudentCornerItems")
+  updatedHeroBanners HeroBanner[]       @relation("UpdatedHeroBanners")
+  updatedLeadPopups  LeadPopup[]        @relation("UpdatedLeadPopups")
 }
 
 model TeacherPermission {
@@ -413,15 +418,21 @@ model VerificationOtp {
 model Inquiry {
   id          String   @id @default(uuid())
   userId      String?
+  source      String   @default("SUPPORT")
   fullName    String
   contactInfo String
   classMode   String
   subject     String
   message     String
+  details     Json?
   status      String   @default("NEW")
   createdAt   DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([source])
+  @@index([status])
+  @@index([createdAt])
 }
 
 enum AttendanceStatus {
@@ -700,6 +711,7 @@ model Event {
   createdBy        User?         @relation("EventCreator", fields: [createdById], references: [id], onDelete: SetNull)
   
   registrations    EventRegistration[]
+  tickets          EventTicket[]
 
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -725,6 +737,31 @@ model EventRegistration {
   student          User          @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([eventId, studentId]) // Ek student ek event mein ek hi baar register ho sakta hai
+}
+
+model EventTicket {
+  id                String        @id @default(uuid())
+  bookingId         String        @unique
+  eventId           String
+  fullName          String
+  email             String
+  phone             String
+  city              String        @default("")
+  adultCount        Int           @default(0)
+  childCount        Int           @default(0)
+  quantity          Int           @default(1)
+  amount            Float         @default(0)
+  paymentMethod     String?
+  paymentStatus     PaymentStatus @default(PENDING)
+  razorpayOrderId   String?       @unique
+  razorpayPaymentId String?
+  ticketEmail       String
+  createdAt         DateTime      @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@index([email])
 }
 
 // ==========================================================
@@ -840,4 +877,136 @@ model ContentResource {
 
   @@index([category])
   @@index([batchId])
+}
+
+// ==========================================================
+// PUBLIC WEBSITE GALLERY
+// ==========================================================
+
+enum GalleryCategory {
+  HARSHITA
+  STUDENT
+  MEDIA
+  VIDEO
+}
+
+enum GalleryMediaType {
+  IMAGE
+  VIDEO
+}
+
+model GalleryItem {
+  id           String           @id @default(uuid())
+  title        String
+  altText      String?
+  category     GalleryCategory
+  mediaType    GalleryMediaType
+  url          String
+  thumbnailUrl String?
+  showOnHome   Boolean          @default(true)
+  sortOrder    Int              @default(0)
+  fileName     String?
+  fileSize     String?
+
+  uploadedById String
+  uploadedBy   User             @relation("UploadedGalleryItems", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([category])
+  @@index([showOnHome])
+  @@index([sortOrder])
+  @@index([createdAt])
+}
+
+enum HeroPage {
+  HOME
+  ABOUT
+  ABOUT_HARSHITA
+  COURSES
+  GALLERY
+  EVENTS
+  WORKSHOPS
+  JUDGES
+  CHOREOGRAPHERS
+  STUDENTS_CORNER
+  VISION
+  CONTACT
+}
+
+enum HeroMediaType {
+  IMAGE
+  VIDEO
+}
+
+model HeroBanner {
+  id                String        @id @default(uuid())
+  pageKey           HeroPage      @unique
+  title             String
+  highlight         String?
+  subtitle          String        @default("")
+  tagline           String?
+  mediaType         HeroMediaType @default(IMAGE)
+  mediaUrl          String
+  imageAlt          String?
+  ctaLabel          String?
+  ctaLink           String?
+  ctaSecondaryLabel String?
+  ctaSecondaryLink  String?
+
+  updatedById String?
+  updatedBy   User?    @relation("UpdatedHeroBanners", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pageKey])
+}
+
+model LeadPopup {
+  id           String   @id @default("default")
+  isEnabled    Boolean  @default(true)
+  delaySeconds Int      @default(300)
+  title        String   @default("Get in Touch")
+  subtitle     String   @default("Start Your Kathak Journey With Us")
+  imageUrl     String
+  imageAlt     String   @default("Kathak dancer")
+
+  updatedById String?
+  updatedBy   User?    @relation("UpdatedLeadPopups", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum StudentCornerKind {
+  MESSAGE
+  VIDEO
+}
+
+model StudentCornerItem {
+  id           String            @id @default(uuid())
+  kind         StudentCornerKind
+  studentName  String
+  level        String
+  description  String            @default("")
+  duration     String?
+  videoUrl     String
+  thumbnailUrl String?
+  sortOrder    Int               @default(0)
+  isPublished  Boolean           @default(true)
+  fileName     String?
+  fileSize     String?
+
+  uploadedById String
+  uploadedBy   User              @relation("UploadedStudentCornerItems", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([kind])
+  @@index([isPublished])
+  @@index([sortOrder])
+  @@index([createdAt])
 }

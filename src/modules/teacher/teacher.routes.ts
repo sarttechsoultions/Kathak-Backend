@@ -12,7 +12,7 @@ import {
   createExam,
   getExamResults,
   evaluateExamResult,
-  getExamStudents
+  getExamStudents,
 } from "../admin/exam.controller";
 
 const router = Router();

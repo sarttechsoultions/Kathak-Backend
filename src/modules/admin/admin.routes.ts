@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { Permission } from "@prisma/client";
 import eventRoutes from './event.routes';
+import { adminGalleryRouter } from "../gallery/gallery.routes";
+import { adminStudentCornerRouter } from "../student-corner/student-corner.routes";
+import { adminBannersRouter } from "../banners/banners.routes";
+import { adminPopupRouter } from "../popup/popup.routes";
 import {
   getDashboardStats,
   getStudents,
@@ -54,13 +58,17 @@ import {
 } from "./admin.controller";
 import { getReportsOverview } from "./admin.reports.controller";
 import { forwardToDeveloper } from "../support/support.controller";
-import { authenticate, requirePermission } from "../../middleware/auth.middleware";
+import { authenticate, requireAnyPermission, requirePermission } from "../../middleware/auth.middleware";
 
 const router = Router();
 
 
 
 router.use('/events', eventRoutes);
+router.use('/gallery', adminGalleryRouter);
+router.use('/student-corner', adminStudentCornerRouter);
+router.use('/banners', adminBannersRouter);
+router.use('/popup', adminPopupRouter);
 router.use(authenticate);
 
 // 1. Dashboard Overview
@@ -129,11 +137,11 @@ router.post("/payments", requirePermission(Permission.VIEW_PAYMENTS), recordFeeP
 router.post("/payments/:id/refund", requirePermission(Permission.VIEW_PAYMENTS), refundPayment);
 
 // 8. Inquiries
-router.get("/inquiries", requirePermission(Permission.MANAGE_COMMUNICATION), getInquiries);
-router.patch("/inquiries/:id", requirePermission(Permission.MANAGE_COMMUNICATION), updateInquiryStatus);
-router.post("/inquiries/:id/reply", requirePermission(Permission.MANAGE_COMMUNICATION), replyToInquiry);
+router.get("/inquiries", requireAnyPermission(Permission.MANAGE_COMMUNICATION, Permission.MANAGE_WEBSITE), getInquiries);
+router.patch("/inquiries/:id", requireAnyPermission(Permission.MANAGE_COMMUNICATION, Permission.MANAGE_WEBSITE), updateInquiryStatus);
+router.post("/inquiries/:id/reply", requireAnyPermission(Permission.MANAGE_COMMUNICATION, Permission.MANAGE_WEBSITE), replyToInquiry);
 router.post("/inquiries/:id/forward-dev", requirePermission(Permission.MANAGE_COMMUNICATION), forwardToDeveloper);
-router.delete("/inquiries/:id", requirePermission(Permission.MANAGE_COMMUNICATION), deleteInquiry);
+router.delete("/inquiries/:id", requireAnyPermission(Permission.MANAGE_COMMUNICATION, Permission.MANAGE_WEBSITE), deleteInquiry);
 
 
 // 9. Admin Self-Profile

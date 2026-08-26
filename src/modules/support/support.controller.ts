@@ -35,6 +35,7 @@ export const createSupportTicket = async (req: Request, res: Response): Promise<
         fullName: userDetails.fullName,
         contactInfo: userDetails.email,
         classMode: classMode || "ONLINE",
+        source: "SUPPORT",
         subject,
         message,
         status: "NEW"

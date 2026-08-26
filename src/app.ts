@@ -16,6 +16,11 @@ import teacherRoutes from "./modules/teacher/teacher.routes";
 import liveClassRoutes from "./modules/liveclass/liveclass.routes";
 import videoRoutes from "./modules/video/video.routes";
 import contentRoutes from "./modules/content/content.routes";
+import { publicGalleryRouter } from "./modules/gallery/gallery.routes";
+import { publicStudentCornerRouter } from "./modules/student-corner/student-corner.routes";
+import { publicBannersRouter } from "./modules/banners/banners.routes";
+import { publicPopupRouter } from "./modules/popup/popup.routes";
+import { publicEventsRouter } from "./modules/events/public-events.routes";
 import recordedClassRoutes from "./modules/admin/recordedClass.routes";
 import exmRoutes from "./modules/admin/exam.routes";
 import studentExamRoutes from "./modules/student/student.exam.routes";
@@ -39,6 +44,8 @@ import {
 import { env } from "./config/env";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware";
 import { authenticate } from "./middleware/auth.middleware";
+import { publicFormRateLimiter } from "./middleware/rateLimit.middleware";
+import { createPublicInquiry } from "./modules/inquiries/inquiries.controller";
 
 const app = express();
 
@@ -117,6 +124,11 @@ app.use("/api/v1/support", supportRoutes);
 app.use("/api/v1", liveClassRoutes);
 app.use("/api/v1/video", videoRoutes);
 app.use("/api/v1/content", contentRoutes);
+app.use("/api/v1/gallery", publicGalleryRouter);
+app.use("/api/v1/student-corner", publicStudentCornerRouter);
+app.use("/api/v1/banners", publicBannersRouter);
+app.use("/api/v1/popup", publicPopupRouter);
+app.use("/api/v1/events", publicEventsRouter);
 app.use("/api/v1", recordedClassRoutes);
 app.use("/api/v1/admin/exams", exmRoutes);
 app.use("/api/v1/student/exams", studentExamRoutes);
@@ -130,6 +142,7 @@ app.put("/api/v1/courses/:id", authenticate, updateCourse);
 app.delete("/api/v1/courses/:id", authenticate, deleteCourse);
 
 app.get("/api/v1/inquiries", authenticate, getInquiries);
+app.post("/api/v1/inquiries", publicFormRateLimiter, createPublicInquiry);
 app.patch("/api/v1/inquiries/:id", authenticate, updateInquiryStatus);
 app.delete("/api/v1/inquiries/:id", authenticate, deleteInquiry);
 

@@ -10,7 +10,9 @@ import {
   sendEnrollmentWelcomeEmail,
   validateEnrollmentInput,
 } from "../student/enrollment.service";
+import { confirmEventTicketByOrder, failEventTicketByOrder } from "../events/ticket.service";
 import { assertContactVerified, OtpError } from "../../lib/otp";
+import { enrollmentAmountINR } from "../../lib/fees";
 
 const getRawBody = (req: Request): Buffer | null => {
   const withRaw = req as Request & { rawBody?: Buffer };
@@ -37,7 +39,12 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    const amountInINR = batch.course.groupFeeINR;
+    if (batch.courseId !== courseId) {
+      res.status(400).json({ status: "error", message: "Selected batch does not belong to the chosen course." });
+      return;
+    }
+
+    const amountInINR = enrollmentAmountINR(batch.course.groupFeeINR);
 
     if (!amountInINR || amountInINR <= 0) {
       res.status(400).json({ status: "error", message: "Invalid course fee." });
@@ -45,7 +52,7 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
     }
 
     if (!env.razorpayKeyId || !env.razorpayKeySecret) {
-      res.status(500).json({ status: "error", message: "Razorpay keys are not configured on the server." });
+      res.status(500).json({ status: "error", message: "Payment is temporarily unavailable. Please try again later." });
       return;
     }
 
@@ -140,6 +147,7 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
             errorMessage: paymentEntity?.error_description || "Payment failed",
           },
         });
+        await failEventTicketByOrder(failedOrderId);
       }
       res.json({ status: "ok" });
       return;
@@ -157,6 +165,12 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
 
     if (!razorpayPaymentId || !razorpayOrderId) {
       res.json({ status: "ignored" });
+      return;
+    }
+
+    const ticketPaid = await confirmEventTicketByOrder(razorpayOrderId, razorpayPaymentId);
+    if (ticketPaid) {
+      res.json({ status: "ok" });
       return;
     }
 
