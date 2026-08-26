@@ -153,7 +153,7 @@ export const purchaseEventTicket = async (req: Request, res: Response): Promise<
   try {
     const result = await createEventTicketOrder(String(req.params.id), (req.body || {}) as Record<string, unknown>);
 
-    if (!result.needsPayment && result.confirmation) {
+    if (!result.needsPayment) {
       res.status(201).json({
         success: true,
         message: result.confirmation.emailSent
