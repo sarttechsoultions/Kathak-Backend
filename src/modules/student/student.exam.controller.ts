@@ -1,7 +1,5 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../../lib/prisma";
 
 const normalizeParam = (param: string | string[] | undefined): string | undefined =>
   Array.isArray(param) ? param[0] : param;

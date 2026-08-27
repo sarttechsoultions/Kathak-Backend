@@ -980,6 +980,73 @@ model LeadPopup {
   updatedAt DateTime @updatedAt
 }
 
+enum DemoClassType {
+  ONE_TO_ONE
+  GROUP
+}
+
+enum DemoBookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+model DemoSettings {
+  id                   String   @id @default("default")
+  oneToOneFeeINR       Float    @default(499)
+  oneToOneDurationMins Int      @default(45)
+  isOneToOneEnabled    Boolean  @default(true)
+  isGroupEnabled       Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
+}
+
+model DemoGroupSession {
+  id           String   @id @default(uuid())
+  title        String
+  startsAt     DateTime
+  durationMins Int      @default(60)
+  classMode    String   @default("Online")
+  capacity     Int      @default(20)
+  location     String   @default("")
+  notes        String   @default("")
+  isPublished  Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  bookings     DemoBooking[]
+
+  @@index([startsAt])
+  @@index([isPublished])
+}
+
+model DemoBooking {
+  id                String            @id @default(uuid())
+  type              DemoClassType
+  status            DemoBookingStatus @default(PENDING)
+  fullName          String
+  email             String
+  phone             String
+  course            String
+  classMode         String
+  message           String            @default("")
+  preferredDate     DateTime?
+  preferredTime     String?
+  sessionId         String?
+  amount            Float             @default(0)
+  paymentStatus     PaymentStatus     @default(PENDING)
+  razorpayOrderId   String?           @unique
+  razorpayPaymentId String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  session DemoGroupSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@index([email])
+}
+
 enum StudentCornerKind {
   MESSAGE
   VIDEO
