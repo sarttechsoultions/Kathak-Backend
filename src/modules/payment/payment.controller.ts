@@ -11,6 +11,7 @@ import {
   validateEnrollmentInput,
 } from "../student/enrollment.service";
 import { confirmEventTicketByOrder, failEventTicketByOrder } from "../events/ticket.service";
+import { confirmDemoBookingByOrder, failDemoBookingByOrder } from "../demo/demo.controller";
 import { assertContactVerified, OtpError } from "../../lib/otp";
 import { enrollmentAmountINR } from "../../lib/fees";
 
@@ -148,6 +149,7 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
           },
         });
         await failEventTicketByOrder(failedOrderId);
+        await failDemoBookingByOrder(failedOrderId);
       }
       res.json({ status: "ok" });
       return;
@@ -170,6 +172,12 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
 
     const ticketPaid = await confirmEventTicketByOrder(razorpayOrderId, razorpayPaymentId);
     if (ticketPaid) {
+      res.json({ status: "ok" });
+      return;
+    }
+
+    const demoPaid = await confirmDemoBookingByOrder(razorpayOrderId, razorpayPaymentId);
+    if (demoPaid) {
       res.json({ status: "ok" });
       return;
     }

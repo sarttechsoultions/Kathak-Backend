@@ -5,6 +5,7 @@ import { adminGalleryRouter } from "../gallery/gallery.routes";
 import { adminStudentCornerRouter } from "../student-corner/student-corner.routes";
 import { adminBannersRouter } from "../banners/banners.routes";
 import { adminPopupRouter } from "../popup/popup.routes";
+import { adminDemoRouter } from "../demo/demo.routes";
 import {
   getDashboardStats,
   getStudents,
@@ -69,6 +70,7 @@ router.use('/gallery', adminGalleryRouter);
 router.use('/student-corner', adminStudentCornerRouter);
 router.use('/banners', adminBannersRouter);
 router.use('/popup', adminPopupRouter);
+router.use('/demo', adminDemoRouter);
 router.use(authenticate);
 
 // 1. Dashboard Overview
