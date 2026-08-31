@@ -65,6 +65,9 @@ export const env = {
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "",
   enablePaymentBypass: !isProduction || process.env.ENABLE_PAYMENT_BYPASS === "true",
 
+  /** Dev/test OTP bypass code for email and mobile verification */
+  mobileOtpBypass: process.env.MOBILE_OTP_BYPASS?.trim() || "001122",
+
 
   redisUrl: process.env.REDIS_URL?.trim(),
 
