@@ -1,11 +1,12 @@
 import { Router } from "express";
-import { Permission } from "@prisma/client";
+import { Permission, Role } from "@prisma/client";
 import eventRoutes from './event.routes';
 import { adminGalleryRouter } from "../gallery/gallery.routes";
 import { adminStudentCornerRouter } from "../student-corner/student-corner.routes";
 import { adminBannersRouter } from "../banners/banners.routes";
 import { adminPopupRouter } from "../popup/popup.routes";
 import { adminDemoRouter } from "../demo/demo.routes";
+import { adminLetterheadRouter } from "../letterhead/letterhead.routes";
 import {
   getDashboardStats,
   getStudents,
@@ -59,7 +60,7 @@ import {
 } from "./admin.controller";
 import { getReportsOverview } from "./admin.reports.controller";
 import { forwardToDeveloper } from "../support/support.controller";
-import { authenticate, requireAnyPermission, requirePermission } from "../../middleware/auth.middleware";
+import { authenticate, requireAnyPermission, requirePermission, requireRole } from "../../middleware/auth.middleware";
 
 const router = Router();
 
@@ -71,6 +72,7 @@ router.use('/student-corner', adminStudentCornerRouter);
 router.use('/banners', adminBannersRouter);
 router.use('/popup', adminPopupRouter);
 router.use('/demo', adminDemoRouter);
+router.use('/letterheads', adminLetterheadRouter);
 router.use(authenticate);
 
 // 1. Dashboard Overview
@@ -112,15 +114,15 @@ router.put("/batches/:id", requirePermission(Permission.MANAGE_BATCHES), updateB
 router.delete("/batches/:id", requirePermission(Permission.MANAGE_BATCHES), deleteBatch);
 router.get("/batches/:batchId/students", requirePermission(Permission.MANAGE_BATCHES), getBatchStudents);
 
-// 5.5 Assignment Management
-router.get("/assignments", requirePermission(Permission.MANAGE_COURSES), getAssignments);
-router.post("/assignments", requirePermission(Permission.MANAGE_COURSES), createAssignment);
-router.get("/assignments/submissions", requirePermission(Permission.MANAGE_COURSES), getAssignmentSubmissions);
-router.post("/assignments/submissions/:id/grade", requirePermission(Permission.MANAGE_COURSES), gradeAssignmentSubmission);
-router.get("/assignments/:id", requirePermission(Permission.MANAGE_COURSES), getAssignmentDetails);
+// 5.5 Assignment Management (admins + teachers, same as video module)
+router.get("/assignments", requireRole(Role.ADMIN, Role.TEACHER), getAssignments);
+router.post("/assignments", requireRole(Role.ADMIN, Role.TEACHER), createAssignment);
+router.get("/assignments/submissions", requireRole(Role.ADMIN, Role.TEACHER), getAssignmentSubmissions);
+router.post("/assignments/submissions/:id/grade", requireRole(Role.ADMIN, Role.TEACHER), gradeAssignmentSubmission);
+router.get("/assignments/:id", requireRole(Role.ADMIN, Role.TEACHER), getAssignmentDetails);
 router.get(
   "/assignments/:id/submissions",
-  requirePermission(Permission.MANAGE_COURSES),
+  requireRole(Role.ADMIN, Role.TEACHER),
   getAssignmentSubmissionsByAssignment
 );
 

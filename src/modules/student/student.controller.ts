@@ -10,14 +10,15 @@ import {
   validatePortalAccess,
   signUserToken,
 } from "../../lib/authHelpers";
-import { getUserDisplayName, getTeacherBatchNames, getStudentBatchName } from "../../lib/batchHelpers";
+import { getUserDisplayName, getTeacherBatchNames, getStudentBatchName, isOneToOneBatch } from "../../lib/batchHelpers";
 import { sendEmail } from "../../lib/mailer";
 import {
   completePendingEnrollment,
   EnrollmentError,
   sendEnrollmentWelcomeEmail,
+  validateEnrollmentInput,
 } from "./enrollment.service";
-import { OtpError, sendEnrollmentOtp, verifyEnrollmentOtp } from "../../lib/otp";
+import { OtpError, sendEnrollmentOtp, verifyEnrollmentOtp, assertContactVerified } from "../../lib/otp";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -123,6 +124,77 @@ export const enrollStudent = async (req: Request, res: Response): Promise<void> 
       return;
     }
     console.error("Student enrollment error:", error);
+    res.status(500).json({ status: "error", message: "Enrollment failed." });
+  }
+};
+
+export const enrollStudentBypass = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!env.enablePaymentBypass) {
+      res.status(403).json({ status: "error", message: "Enrollment without payment is disabled." });
+      return;
+    }
+
+    const validated = await validateEnrollmentInput(req.body, { requirePassword: true });
+    await assertContactVerified("EMAIL", validated.normalizedEmail);
+    await assertContactVerified("MOBILE", validated.e164Phone);
+
+    const { batchId, courseId } = validated.payload;
+
+    const pending = await prisma.pendingEnrollment.create({
+      data: {
+        email: validated.normalizedEmail,
+        phone: validated.e164Phone,
+        passwordHash: validated.passwordHash,
+        payload: validated.payload,
+        batchId: batchId || "",
+        courseId,
+      },
+    });
+
+    const devOrderId = `dev_order_${pending.id}`;
+    const devPaymentId = `dev_pay_${pending.id}`;
+
+    await prisma.pendingEnrollment.update({
+      where: { id: pending.id },
+      data: { razorpayOrderId: devOrderId },
+    });
+
+    const result = await completePendingEnrollment({
+      pendingId: pending.id,
+      razorpayOrderId: devOrderId,
+      razorpayPaymentId: devPaymentId,
+    });
+
+    if (!result.alreadyCompleted) {
+      await sendEnrollmentWelcomeEmail(result.user);
+    }
+
+    const { token, expiresInMs } = signUserToken({
+      id: result.user.id,
+      email: result.user.email,
+      role: result.user.role,
+      permissions: [],
+      rememberMe: true,
+    });
+
+    setPortalAuthCookie(res, "student", token, expiresInMs);
+
+    res.status(result.alreadyCompleted ? 200 : 201).json({
+      status: "success",
+      message: "Student enrolled successfully (dev bypass).",
+      data: {
+        token,
+        user: result.user,
+        enrollment: result.enrollment,
+      },
+    });
+  } catch (error: unknown) {
+    if (error instanceof EnrollmentError || error instanceof OtpError) {
+      res.status(error.statusCode).json({ status: "error", message: error.message });
+      return;
+    }
+    console.error("Student enrollment bypass error:", error);
     res.status(500).json({ status: "error", message: "Enrollment failed." });
   }
 };
@@ -713,8 +785,32 @@ const mapped = filteredAssignments.map((a: any) => {
     status = sub.status === "GRADED" ? "EVALUATED" : "SUBMITTED";
   }
 
+  let feedbackComment: string | null = null;
+  let scoreBreakdown: { label: string; score: number }[] | null = null;
+  let correctionNotes: string[] = [];
+
+  if (sub?.feedback) {
+    try {
+      const parsed =
+        typeof sub.feedback === "string" ? JSON.parse(sub.feedback) : sub.feedback;
+      feedbackComment = parsed?.comment || parsed?.feedbackNotes || null;
+      if (Array.isArray(parsed?.criteriaParts)) {
+        scoreBreakdown = parsed.criteriaParts.map((p: any) => ({
+          label: String(p.name || p.label || "Criteria"),
+          score: Number(p.score) || 0,
+        }));
+      }
+      if (Array.isArray(parsed?.pointers)) {
+        correctionNotes = parsed.pointers.filter(Boolean);
+      }
+    } catch {
+      feedbackComment = typeof sub.feedback === "string" ? sub.feedback : null;
+    }
+  }
+
   return {
     id: a.id,
+    submissionId: sub?.id || null,
     name: a.title,
     typeTag: a.typeTag || "Practical Assessment",
     course: a.batchName || "KATHAK",
@@ -725,12 +821,32 @@ const mapped = filteredAssignments.map((a: any) => {
     }),
     status,
     grade: sub?.grade ? `${sub.grade}/100` : "—",
-    feedback: sub?.feedback || sub?.notes || null,
+    gradeValue: sub?.grade ? Number(sub.grade) : null,
+    feedback: feedbackComment || sub?.notes || null,
+    scoreBreakdown,
+    correctionNotes,
     notes: sub?.notes || null,
     fileUrl: sub?.fileUrl,
-    referenceFileUrl: a.referenceFileUrl || null,  // ✅ zaruri
+    referenceFileUrl: a.referenceFileUrl || null,
     description: a.description || null,
     maxPoints: a.totalPoints ? `${a.totalPoints} pts` : "100 pts",
+    totalPoints: a.totalPoints || 100,
+    submittedAt: sub?.submittedAt
+      ? new Date(sub.submittedAt).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : null,
+    evaluatedAt: sub?.updatedAt && sub.status === "GRADED"
+      ? new Date(sub.updatedAt).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+      : null,
   };
 });
 
@@ -760,6 +876,14 @@ export const submitStudentAssignment = async (req: Request, res: Response): Prom
 
     if (!assignmentId) {
       res.status(400).json({ status: "error", message: "Assignment ID is required." });
+      return;
+    }
+
+    if (!fileUrl || String(fileUrl).startsWith("blob:")) {
+      res.status(400).json({
+        status: "error",
+        message: "A valid uploaded file URL is required. Please wait for upload to finish.",
+      });
       return;
     }
 
@@ -1169,7 +1293,9 @@ export const getPublicCourses = async (req: Request, res: Response) => {
     });
 
     const mappedCourses = courses.map((c) => {
-      const courseBatches = (c.batches || []).filter((b) => !b.courseId || b.courseId === c.id);
+      const courseBatches = (c.batches || [])
+        .filter((b) => !b.courseId || b.courseId === c.id)
+        .filter((b) => !isOneToOneBatch(b.name, b.code));
 
       return {
         id: c.id,
@@ -1177,7 +1303,10 @@ export const getPublicCourses = async (req: Request, res: Response) => {
         slug: c.slug,
         groupFeeINR: c.groupFeeINR || 2500,
         groupFeeUSD: c.groupFeeUSD || 60,
+        oneToOneFeeINR: c.oneToOneFeeINR || 0,
+        oneToOneFeeUSD: c.oneToOneFeeUSD || 0,
         duration: c.groupClassesCount || "",
+        oneToOneDuration: c.oneToOneClassesCount || "",
         level: c.category || "Beginner",
         videoUrl: c.videoUrl || "",
         batches: courseBatches.map((b) => ({

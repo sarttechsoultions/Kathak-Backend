@@ -4,6 +4,7 @@ import { authenticate, requireRole } from "../../middleware/auth.middleware";
 import { logoutUser } from "../auth/auth.controller";
 import {
   enrollStudent,
+  enrollStudentBypass,
   sendStudentOtp,
   verifyStudentOtp,
   getStudentProfile,
@@ -27,6 +28,7 @@ const router = Router();
 
 router.post("/login", studentLogin);
 router.post("/enroll", enrollStudent);
+router.post("/enroll/bypass", enrollStudentBypass);
 router.post("/otp/send", sendStudentOtp);
 router.post("/otp/verify", verifyStudentOtp);
 router.get("/public/courses", getPublicCourses);

@@ -483,6 +483,14 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
       return;
     }
 
+    if (String(fileUrl).startsWith("blob:")) {
+      res.status(400).json({
+        status: "error",
+        message: "A valid uploaded video URL is required. Please wait for upload to finish.",
+      });
+      return;
+    }
+
     const studentUser: any = await prisma.user.findUnique({
       where: { id: user.id },
       select: { fullName: true, avatarUrl: true },

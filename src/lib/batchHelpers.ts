@@ -1,6 +1,17 @@
 // src/lib/batchHelpers.ts
 import { prisma } from "./prisma";
 
+/** Personal 1-to-1 batches are auto-created at enrollment and must not be joinable by other students. */
+export function isOneToOneBatch(name?: string | null, code?: string | null): boolean {
+  const batchName = String(name || "").toLowerCase();
+  const batchCode = String(code || "").toUpperCase();
+  return (
+    batchName.includes("1-to-1") ||
+    batchName.includes("one-to-one") ||
+    batchCode.startsWith("OTO-")
+  );
+}
+
 /** Retrieve batch names assigned to the teacher using teacherId or exact teacherName */
 export async function getTeacherBatchNames(teacherId: string, teacherName?: string): Promise<string[]> {
   try {

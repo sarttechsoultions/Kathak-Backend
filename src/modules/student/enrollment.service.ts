@@ -5,6 +5,7 @@ import { env } from "../../config/env";
 import { sendEmail } from "../../lib/mailer";
 import { buildInvoiceEmailBlock, buildInvoiceHtml, InvoiceData } from "../../lib/invoice";
 import { enrollmentAmountINR } from "../../lib/fees";
+import { isOneToOneBatch } from "../../lib/batchHelpers";
 
 export class EnrollmentError extends Error {
   statusCode: number;
@@ -15,6 +16,8 @@ export class EnrollmentError extends Error {
     this.statusCode = statusCode;
   }
 }
+
+export type EnrollmentClassType = "GROUP" | "ONE_TO_ONE";
 
 export type EnrollmentPayload = {
   fullName: string;
@@ -38,6 +41,9 @@ export type EnrollmentPayload = {
   paymentMethod: string;
   courseId: string;
   batchId: string;
+  enrollmentType: EnrollmentClassType;
+  preferredDate?: string | null;
+  preferredTime?: string | null;
 };
 
 export type ValidatedEnrollment = {
@@ -74,6 +80,143 @@ type CompletedEnrollment = {
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_24_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const TIME_12_REGEX = /^(\d{1,2}):([0-5]\d)\s*(AM|PM)$/i;
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+export const parseEnrollmentType = (value: unknown): EnrollmentClassType => {
+  const raw = String(value || "GROUP")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_]+/g, "-");
+
+  if (
+    raw === "ONE-TO-ONE" ||
+    raw === "1-TO-1" ||
+    raw === "1TO1" ||
+    raw === "PERSONAL" ||
+    raw === "ONETOONE"
+  ) {
+    return "ONE_TO_ONE";
+  }
+
+  return "GROUP";
+};
+
+const todayIsoDate = (): string => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value || "1970";
+  const month = parts.find((part) => part.type === "month")?.value || "01";
+  const day = parts.find((part) => part.type === "day")?.value || "01";
+  return `${year}-${month}-${day}`;
+};
+
+const weekdayFromIsoDate = (iso: string): string => {
+  const [year, month, day] = iso.split("-").map(Number);
+  return WEEKDAYS[new Date(year, month - 1, day).getDay()];
+};
+
+export const normalizeClassTime = (value: string): string => {
+  const trimmed = value.trim();
+  const match12 = trimmed.match(TIME_12_REGEX);
+  if (match12) {
+    let hour = Number(match12[1]);
+    const minute = match12[2];
+    const meridian = match12[3].toUpperCase();
+    if (hour < 1 || hour > 12) {
+      throw new EnrollmentError("Please choose a valid class time.");
+    }
+    const hourLabel = hour < 10 ? `0${hour}` : String(hour);
+    return `${hourLabel}:${minute} ${meridian}`;
+  }
+
+  const match24 = trimmed.match(TIME_24_REGEX);
+  if (match24) {
+    let hour = Number(match24[1]);
+    const minute = match24[2];
+    const meridian = hour >= 12 ? "PM" : "AM";
+    hour = hour % 12;
+    if (hour === 0) hour = 12;
+    const hourLabel = hour < 10 ? `0${hour}` : String(hour);
+    return `${hourLabel}:${minute} ${meridian}`;
+  }
+
+  throw new EnrollmentError("Please choose a valid class time.");
+};
+
+const batchLevelFromCourse = (category?: string | null): string => {
+  const raw = String(category || "").toUpperCase();
+  if (raw === "INTERMEDIATE") return "INTERMEDIATE";
+  if (raw === "PREMIUM" || raw === "ADVANCED") return "ADVANCED";
+  return "BEGINNER";
+};
+
+const findDefaultOneToOneTeacher = async (tx: Prisma.TransactionClient) => {
+  const harshita = await tx.user.findFirst({
+    where: {
+      role: Role.TEACHER,
+      isActive: true,
+      OR: [
+        { fullName: { contains: "Harshita", mode: "insensitive" } },
+        { fullName: { contains: "Harsita", mode: "insensitive" } },
+        { email: { contains: "harshita", mode: "insensitive" } },
+        { email: { contains: "harsita", mode: "insensitive" } },
+      ],
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (harshita) return harshita;
+
+  return tx.user.findFirst({
+    where: { role: Role.TEACHER, isActive: true },
+    orderBy: { createdAt: "asc" },
+  });
+};
+
+const createOneToOneBatch = async (
+  tx: Prisma.TransactionClient,
+  payload: EnrollmentPayload,
+  course: { id: string; title: string; category?: string | null }
+) => {
+  const teacher = await findDefaultOneToOneTeacher(tx);
+  if (!teacher) {
+    throw new EnrollmentError(
+      "No teacher is available to assign this 1-to-1 batch. Please contact the academy.",
+      500
+    );
+  }
+
+  const preferredDate = String(payload.preferredDate || "");
+  const classTime = normalizeClassTime(String(payload.preferredTime || ""));
+  const weekday = weekdayFromIsoDate(preferredDate);
+  const studentFirstName = payload.fullName.trim().split(/\s+/)[0] || "Student";
+  const batchCode = `OTO-${Date.now().toString(36).toUpperCase()}${Math.random()
+    .toString(36)
+    .slice(2, 5)
+    .toUpperCase()}`;
+
+  return tx.batch.create({
+    data: {
+      name: `1-to-1 · ${course.title} · ${studentFirstName}`,
+      code: batchCode,
+      courseId: course.id,
+      courseName: course.title,
+      teacherId: teacher.id,
+      teacherName: teacher.fullName,
+      schedule: `${weekday}|${classTime}|${preferredDate}|`,
+      level: batchLevelFromCourse(course.category),
+      status: "Active",
+      totalStudents: 0,
+    },
+  });
+};
 
 export const toE164 = (phone: unknown, countryCode: unknown = "+91"): string => {
   const digits = String(phone || "").replace(/\D/g, "");
@@ -150,7 +293,10 @@ export const validateEnrollmentInput = async (
   const address = String(body.address || "").trim();
   const password = String(body.password || "");
   const courseId = String(body.courseId || "").trim();
-  const batchId = String(body.batchId || "").trim();
+  const enrollmentType = parseEnrollmentType(body.enrollmentType || body.type || body.mode);
+  let batchId = String(body.batchId || "").trim();
+  const preferredDate = body.preferredDate ? String(body.preferredDate).trim() : "";
+  const preferredTime = body.preferredTime ? String(body.preferredTime).trim() : "";
   const dob = body.dob ? String(body.dob).trim() : "";
   const gender = String(body.gender || "").trim();
   const city = String(body.city || "").trim();
@@ -182,7 +328,40 @@ export const validateEnrollmentInput = async (
   if (!dob) throw new EnrollmentError("Date of birth is required.");
   if (!gender) throw new EnrollmentError("Gender is required.");
   if (!courseId) throw new EnrollmentError("Course is required.");
-  if (!batchId) throw new EnrollmentError("Please select a batch before proceeding to payment.");
+
+  const courseRecord = await prisma.course.findUnique({ where: { id: courseId } });
+  if (!courseRecord) {
+    throw new EnrollmentError("Selected course does not exist.");
+  }
+
+  if (enrollmentType === "ONE_TO_ONE") {
+    if (!preferredDate || !ISO_DATE_REGEX.test(preferredDate)) {
+      throw new EnrollmentError("Please choose a date for your 1-to-1 class.");
+    }
+    if (preferredDate < todayIsoDate()) {
+      throw new EnrollmentError("Please choose a date that is today or later.");
+    }
+    normalizeClassTime(preferredTime);
+    if (!courseRecord.oneToOneFeeINR || courseRecord.oneToOneFeeINR <= 0) {
+      throw new EnrollmentError("One-to-one enrollment is not available for this course.");
+    }
+    batchId = "";
+  } else {
+    if (!batchId) throw new EnrollmentError("Please select a batch before proceeding to payment.");
+
+    const batchRecord = await prisma.batch.findUnique({ where: { id: batchId } });
+    if (!batchRecord) {
+      throw new EnrollmentError("Selected batch does not exist.");
+    }
+    if (!batchRecord.courseId || batchRecord.courseId !== courseId) {
+      throw new EnrollmentError("Selected batch does not belong to the chosen course.");
+    }
+    if (isOneToOneBatch(batchRecord.name, batchRecord.code)) {
+      throw new EnrollmentError(
+        "This is a personal 1-to-1 batch and cannot be selected. Please choose a group batch or enroll in 1-to-1 personal classes."
+      );
+    }
+  }
 
   if (options.requirePassword && password.length < 6) {
     throw new EnrollmentError("Password must be at least 6 characters.");
@@ -191,14 +370,6 @@ export const validateEnrollmentInput = async (
   if (isUnder18) {
     if (!guardianName) throw new EnrollmentError("Guardian name is required for students under 18.");
     if (!emergencyContact) throw new EnrollmentError("Emergency contact is required for students under 18.");
-  }
-
-  const batchRecord = await prisma.batch.findUnique({ where: { id: batchId } });
-  if (!batchRecord) {
-    throw new EnrollmentError("Selected batch does not exist.");
-  }
-  if (!batchRecord.courseId || batchRecord.courseId !== courseId) {
-    throw new EnrollmentError("Selected batch does not belong to the chosen course.");
   }
 
   const existingUser = await prisma.user.findFirst({
@@ -233,6 +404,9 @@ export const validateEnrollmentInput = async (
     paymentMethod,
     courseId,
     batchId,
+    enrollmentType,
+    preferredDate: enrollmentType === "ONE_TO_ONE" ? preferredDate : null,
+    preferredTime: enrollmentType === "ONE_TO_ONE" ? normalizeClassTime(preferredTime) : null,
   };
 
   const passwordHash = options.requirePassword ? await bcrypt.hash(password, 10) : "";
@@ -328,20 +502,33 @@ const fulfillEnrollment = async (
     where: { userId: user.id, courseId: payload.courseId },
   });
 
+  const enrollmentType = parseEnrollmentType(payload.enrollmentType);
+
   if (!enrollment) {
     enrollment = await tx.enrollment.create({
       data: {
         userId: user.id,
         courseId: payload.courseId,
         mode: ClassMode.ONLINE,
-        type: "GROUP",
+        type: enrollmentType,
         active: true,
       },
+    });
+  } else if (enrollment.type !== enrollmentType) {
+    enrollment = await tx.enrollment.update({
+      where: { id: enrollment.id },
+      data: { type: enrollmentType, active: true },
     });
   }
 
   const course = await tx.course.findUnique({ where: { id: payload.courseId } });
-  const feePaid = enrollmentAmountINR(course?.groupFeeINR || 0);
+  if (!course) {
+    throw new EnrollmentError("Selected course does not exist.", 404);
+  }
+
+  const monthlyFee =
+    enrollmentType === "ONE_TO_ONE" ? course.oneToOneFeeINR || 0 : course.groupFeeINR || 0;
+  const feePaid = enrollmentAmountINR(monthlyFee);
 
   const existingPayment = await tx.payment.findFirst({
     where: {
@@ -371,11 +558,17 @@ const fulfillEnrollment = async (
     });
   }
 
-  if (payload.batchId) {
+  let assignedBatchId = payload.batchId;
+  if (enrollmentType === "ONE_TO_ONE") {
+    const oneToOneBatch = await createOneToOneBatch(tx, payload, course);
+    assignedBatchId = oneToOneBatch.id;
+  }
+
+  if (assignedBatchId) {
     const membership = await tx.batchStudent.findUnique({
       where: {
         batchId_studentId: {
-          batchId: payload.batchId,
+          batchId: assignedBatchId,
           studentId: user.id,
         },
       },
@@ -384,13 +577,13 @@ const fulfillEnrollment = async (
     if (!membership) {
       await tx.batchStudent.create({
         data: {
-          batchId: payload.batchId,
+          batchId: assignedBatchId,
           studentId: user.id,
         },
       });
 
       await tx.batch.update({
-        where: { id: payload.batchId },
+        where: { id: assignedBatchId },
         data: { totalStudents: { increment: 1 } },
       });
     }
