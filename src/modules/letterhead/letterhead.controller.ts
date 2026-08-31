@@ -1,6 +1,9 @@
 import { Request, Response } from "express";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { ensureLetterheadDefaults } from "../../lib/ensure-letterheads";
+
+type LetterheadPageRecord = { contentHtml: string };
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -78,14 +81,21 @@ function normalizePagesJson(pagesJson: unknown, fallbackHtml: string) {
 
 function parsePagesPayload(body: any, fallbackHtml = "<br>") {
   if (Array.isArray(body.pages) && body.pages.length > 0) {
-    const pages = body.pages.map((p: any) => ({
+    const pages: LetterheadPageRecord[] = body.pages.map((p: any) => ({
       contentHtml: asString(p?.contentHtml) || "<br>",
     }));
     const fullHtml = asString(body.contentHtml);
-    return { pagesJson: pages, contentHtml: fullHtml || pages[0].contentHtml };
+    return {
+      pagesJson: pages as Prisma.InputJsonValue,
+      contentHtml: fullHtml || pages[0].contentHtml,
+    };
   }
   const html = asString(body.contentHtml) || fallbackHtml;
-  return { pagesJson: [{ contentHtml: html }], contentHtml: html };
+  const pages: LetterheadPageRecord[] = [{ contentHtml: html }];
+  return {
+    pagesJson: pages as Prisma.InputJsonValue,
+    contentHtml: html,
+  };
 }
 
 export const getLetterheadTemplates = async (_req: Request, res: Response): Promise<void> => {
@@ -289,7 +299,7 @@ export const updateLetterhead = async (req: Request, res: Response): Promise<voi
     const fontFamily = req.body.fontFamily !== undefined ? asString(req.body.fontFamily) : undefined;
     const isDefault = req.body.isDefault !== undefined ? asBoolean(req.body.isDefault) : undefined;
 
-    let pagesJson: unknown | undefined;
+    let pagesJson: Prisma.InputJsonValue | undefined;
     let contentHtml: string | undefined;
     if (req.body.pages !== undefined || req.body.contentHtml !== undefined) {
       const parsed = parsePagesPayload(req.body, existing.contentHtml);
@@ -309,16 +319,17 @@ export const updateLetterhead = async (req: Request, res: Response): Promise<voi
       await prisma.letterhead.updateMany({ data: { isDefault: false } });
     }
 
+    const data: Prisma.LetterheadUncheckedUpdateInput = {};
+    if (title !== undefined) data.title = title || "Untitled Letterhead";
+    if (contentHtml !== undefined) data.contentHtml = contentHtml;
+    if (pagesJson !== undefined) data.pagesJson = pagesJson;
+    if (templateId) data.templateId = templateId;
+    if (fontFamily) data.fontFamily = fontFamily;
+    if (isDefault !== undefined) data.isDefault = isDefault;
+
     const item = await prisma.letterhead.update({
       where: { id },
-      data: {
-        ...(title !== undefined ? { title: title || "Untitled Letterhead" } : {}),
-        ...(contentHtml !== undefined ? { contentHtml } : {}),
-        ...(pagesJson !== undefined ? { pagesJson } : {}),
-        ...(templateId ? { templateId } : {}),
-        ...(fontFamily ? { fontFamily } : {}),
-        ...(isDefault !== undefined ? { isDefault } : {}),
-      },
+      data,
       include: { template: true },
     });
 
