@@ -63,7 +63,7 @@ export const env = {
   razorpayKeyId: process.env.RAZORPAY_KEY_ID || "",
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || "",
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "",
-  mobileOtpBypass: process.env.MOBILE_OTP_BYPASS || "001122",
+  enablePaymentBypass: !isProduction || process.env.ENABLE_PAYMENT_BYPASS === "true",
 
 
   redisUrl: process.env.REDIS_URL?.trim(),

@@ -28,24 +28,38 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
     const validated = await validateEnrollmentInput(req.body, { requirePassword: true });
     await assertContactVerified("EMAIL", validated.normalizedEmail);
     await assertContactVerified("MOBILE", validated.e164Phone);
-    const { batchId, courseId } = validated.payload;
+    const { batchId, courseId, enrollmentType } = validated.payload;
 
-    const batch = await prisma.batch.findUnique({
-      where: { id: batchId },
-      include: { course: true },
-    });
+    let amountInINR: number;
+    let resolvedBatchId: string;
 
-    if (!batch || !batch.course) {
-      res.status(404).json({ status: "error", message: "Batch or Course not found." });
-      return;
+    if (enrollmentType === "ONE_TO_ONE") {
+      const course = await prisma.course.findUnique({ where: { id: courseId } });
+      if (!course) {
+        res.status(404).json({ status: "error", message: "Course not found." });
+        return;
+      }
+      amountInINR = enrollmentAmountINR(course.oneToOneFeeINR);
+      resolvedBatchId = "";
+    } else {
+      const batch = await prisma.batch.findUnique({
+        where: { id: batchId },
+        include: { course: true },
+      });
+
+      if (!batch || !batch.course) {
+        res.status(404).json({ status: "error", message: "Batch or Course not found." });
+        return;
+      }
+
+      if (batch.courseId !== courseId) {
+        res.status(400).json({ status: "error", message: "Selected batch does not belong to the chosen course." });
+        return;
+      }
+
+      amountInINR = enrollmentAmountINR(batch.course.groupFeeINR);
+      resolvedBatchId = batchId;
     }
-
-    if (batch.courseId !== courseId) {
-      res.status(400).json({ status: "error", message: "Selected batch does not belong to the chosen course." });
-      return;
-    }
-
-    const amountInINR = enrollmentAmountINR(batch.course.groupFeeINR);
 
     if (!amountInINR || amountInINR <= 0) {
       res.status(400).json({ status: "error", message: "Invalid course fee." });
@@ -63,7 +77,7 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
         phone: validated.e164Phone,
         passwordHash: validated.passwordHash,
         payload: validated.payload,
-        batchId,
+        batchId: resolvedBatchId,
         courseId,
       },
     });
@@ -79,8 +93,9 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
       receipt: `enroll_${pending.id.replace(/-/g, "").slice(0, 20)}`,
       notes: {
         pendingEnrollmentId: pending.id,
-        batchId,
+        batchId: resolvedBatchId,
         courseId,
+        enrollmentType,
       },
     });
 

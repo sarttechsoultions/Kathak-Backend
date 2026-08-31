@@ -804,37 +804,73 @@ export const getTeachers = async (req: Request, res: Response): Promise<void> =>
   try {
     const teachers = await prisma.user.findMany({
       where: { role: Role.TEACHER },
-      include: { batchesAsTeacher: { select: { name: true } } },   // permissions include hataya
+      include: { batchesAsTeacher: { select: { name: true, code: true } } },
       orderBy: { createdAt: "desc" }
     });
 
-    const mapped = teachers.map((teacher) => ({
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const classesToday = await prisma.liveClass.count({
+      where: { scheduledStart: { gte: startOfDay, lte: endOfDay } },
+    });
+
+    const mapped = teachers.map((teacher) => {
+      const batchNames = teacher.batchesAsTeacher.map((b) => b.name);
+      const initials = teacher.fullName
+        .split(/\s+/)
+        .map((part) => part[0])
+        .slice(0, 2)
+        .join("")
+        .toUpperCase();
+
+      return {
+        id: teacher.id,
+        fullName: teacher.fullName,
+        name: teacher.fullName,
+        email: teacher.email,
+        phone: teacher.phone,
+        avatarUrl: teacher.avatarUrl,
+        avatar: teacher.avatarUrl,
+        country: teacher.country,
+        isActive: teacher.isActive,
+        status: teacher.isActive ? "Active" : "Disabled",
+        role: teacher.role,
+        expertise: "Kathak Instructor",
+        category: "Classical",
+        assignedBatches: batchNames,
+        batches: batchNames,
+        initials,
+        createdAt: teacher.createdAt,
+      };
+    });
+
+    const directory = mapped.map((teacher) => ({
       id: teacher.id,
-      fullName: teacher.fullName,
-      name: teacher.fullName,
+      name: teacher.name,
+      initials: teacher.initials,
+      expertise: teacher.expertise,
+      assignedBatches: teacher.batches,
+      status: teacher.status === "Active" ? "Active" : "Inactive",
+      category: teacher.category,
       email: teacher.email,
-      phone: teacher.phone,
-      avatarUrl: teacher.avatarUrl,
-      avatar: teacher.avatarUrl,
-      country: teacher.country,
-      isActive: teacher.isActive,
-      status: teacher.isActive ? "Active" : "Disabled",
-      role: teacher.role,
-      assignedBatches: teacher.batchesAsTeacher.map((b) => b.name),
-      batches: teacher.batchesAsTeacher.map((b) => b.name),
-      createdAt: teacher.createdAt
-      // permissions field hata diya
     }));
 
     res.json({
       status: "success",
       data: {
         teachers: mapped,
+        directory,
         metrics: {
           totalTeachers: teachers.length,
-          activeFaculty: teachers.filter((t) => t.isActive).length
-        }
-      }
+          totalActiveFaculty: teachers.filter((t) => t.isActive).length,
+          activeFaculty: teachers.filter((t) => t.isActive).length,
+          classesToday,
+          averageRating: "4.9",
+        },
+      },
     });
   } catch (error) {
     console.error("Get Teachers Error:", error);
@@ -1691,14 +1727,32 @@ export const createAssignment = async (req: Request, res: Response): Promise<voi
     const {
       title,
       description,
-      batchId,
-      targetBatch,
       dueDate,
-      typeTag,
       totalPoints,
-      referenceFileUrl,
       status,
     } = req.body;
+
+    const typeTag = req.body.typeTag || req.body.category || "Practical Assessment";
+    const referenceFileUrl = req.body.referenceFileUrl || req.body.fileUrl || null;
+
+    let targetBatch = req.body.targetBatch;
+    if (!targetBatch && Array.isArray(req.body.batches)) {
+      targetBatch = req.body.batches.join(", ");
+    } else if (!targetBatch && typeof req.body.batches === "string") {
+      targetBatch = req.body.batches;
+    }
+    targetBatch = targetBatch || "All Batches";
+
+    let batchId: string | null = req.body.batchId || null;
+    if (!batchId && Array.isArray(req.body.batches) && req.body.batches.length > 0) {
+      const firstBatchName = String(req.body.batches[0]).trim();
+      const foundBatch = await (prisma as any).batch.findFirst({
+        where: {
+          OR: [{ name: firstBatchName }, { code: firstBatchName }],
+        },
+      });
+      if (foundBatch) batchId = foundBatch.id;
+    }
 
     if (!title || !title.trim()) {
       res.status(400).json({ status: "error", message: "Assignment title is required." });

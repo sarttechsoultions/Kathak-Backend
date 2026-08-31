@@ -56,6 +56,11 @@ function serializeBanner(item: {
   ctaLink: string | null;
   ctaSecondaryLabel: string | null;
   ctaSecondaryLink: string | null;
+  ctaAction: string | null;
+  ctaColor: string | null;
+  ctaLayout: string | null;
+  ctaPosition: string | null;
+  ctaBorderRadius: string | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -73,6 +78,11 @@ function serializeBanner(item: {
     ctaLink: item.ctaLink,
     ctaSecondaryLabel: item.ctaSecondaryLabel,
     ctaSecondaryLink: item.ctaSecondaryLink,
+    ctaAction: item.ctaAction,
+    ctaColor: item.ctaColor,
+    ctaLayout: item.ctaLayout,
+    ctaPosition: item.ctaPosition,
+    ctaBorderRadius: item.ctaBorderRadius,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
@@ -197,6 +207,11 @@ export const updateAdminBanner = async (req: Request, res: Response): Promise<vo
           req.body?.ctaSecondaryLink !== undefined
             ? asOptionalString(req.body.ctaSecondaryLink)
             : existing.ctaSecondaryLink,
+        ctaAction: req.body?.ctaAction !== undefined ? asOptionalString(req.body.ctaAction) : existing.ctaAction,
+        ctaColor: req.body?.ctaColor !== undefined ? asOptionalString(req.body.ctaColor) : existing.ctaColor,
+        ctaLayout: req.body?.ctaLayout !== undefined ? asOptionalString(req.body.ctaLayout) : existing.ctaLayout,
+        ctaPosition: req.body?.ctaPosition !== undefined ? asOptionalString(req.body.ctaPosition) : existing.ctaPosition,
+        ctaBorderRadius: req.body?.ctaBorderRadius !== undefined ? asOptionalString(req.body.ctaBorderRadius) : existing.ctaBorderRadius,
         updatedById: req.user?.id || existing.updatedById,
       },
     });

@@ -78,6 +78,7 @@ function serializeItem(item: {
   url: string;
   thumbnailUrl: string | null;
   showOnHome: boolean;
+  journeyCarousel: boolean;
   sortOrder: number;
   fileName: string | null;
   fileSize: string | null;
@@ -93,6 +94,7 @@ function serializeItem(item: {
     url: item.url,
     thumbnailUrl: item.thumbnailUrl || (item.mediaType === "VIDEO" ? deriveVideoThumbnail(item.url) : null),
     showOnHome: item.showOnHome,
+    journeyCarousel: item.journeyCarousel,
     sortOrder: item.sortOrder,
     fileName: item.fileName,
     fileSize: item.fileSize,
@@ -105,11 +107,13 @@ export const getPublicGallery = async (req: Request, res: Response): Promise<voi
   try {
     const category = parseCategory(req.query.category);
     const homeOnly = asBoolean(req.query.home, false);
+    const journeyOnly = asBoolean(req.query.journey, false);
 
     const items = await prisma.galleryItem.findMany({
       where: {
         ...(category ? { category } : {}),
         ...(homeOnly ? { showOnHome: true } : {}),
+        ...(journeyOnly ? { journeyCarousel: true, mediaType: "IMAGE" } : {}),
       },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     });
@@ -118,6 +122,88 @@ export const getPublicGallery = async (req: Request, res: Response): Promise<voi
   } catch (error) {
     console.error("Error fetching public gallery:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch gallery." });
+  }
+};
+
+export const getJourneyCarouselSettings = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    // Raw SQL keeps this endpoint available while a development server is still
+    // running with a Prisma client generated before this settings model existed.
+    const settings = await prisma.$queryRaw<Array<{ id: string; intervalMs: number; transition: string; transitionDuration: number }>>`
+      INSERT INTO "JourneyCarouselSettings" ("id", "intervalMs", "transition", "transitionDuration", "updatedAt")
+      VALUES ('journey-carousel', 1000, 'fade', 500, NOW())
+      ON CONFLICT ("id") DO UPDATE SET "id" = EXCLUDED."id"
+      RETURNING "id", "intervalMs", "transition", "transitionDuration"
+    `;
+    res.status(200).json({ status: "success", data: settings[0] });
+  } catch (error) {
+    console.error("Error fetching journey carousel settings:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch carousel settings." });
+  }
+};
+
+export const getJourneyCarouselItems = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const items = await prisma.$queryRaw<Array<{ id: string; title: string; altText: string | null; url: string; sortOrder: number; createdAt: Date; updatedAt: Date }>>`
+      SELECT "id", "title", "altText", "url", "sortOrder", "createdAt", "updatedAt"
+      FROM "JourneyCarouselItem" ORDER BY "sortOrder" ASC, "createdAt" DESC
+    `;
+    res.status(200).json({ status: "success", data: items });
+  } catch (error) {
+    console.error("Error fetching journey carousel items:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch carousel images." });
+  }
+};
+
+export const createJourneyCarouselItem = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const title = asString(req.body?.title);
+    const url = asString(req.body?.url);
+    if (!title || !url) { res.status(400).json({ status: "error", message: "Title and image URL are required." }); return; }
+    const items = await prisma.$queryRaw<Array<{ id: string; title: string; altText: string | null; url: string; sortOrder: number; createdAt: Date; updatedAt: Date }>>`
+      INSERT INTO "JourneyCarouselItem" ("id", "title", "altText", "url", "sortOrder", "createdAt", "updatedAt")
+      VALUES (gen_random_uuid()::text, ${title}, ${asString(req.body?.altText) || title}, ${url}, 0, NOW(), NOW())
+      RETURNING "id", "title", "altText", "url", "sortOrder", "createdAt", "updatedAt"
+    `;
+    res.status(201).json({ status: "success", data: items[0] });
+  } catch (error) {
+    console.error("Error creating journey carousel item:", error);
+    res.status(500).json({ status: "error", message: "Failed to save carousel image." });
+  }
+};
+
+export const deleteJourneyCarouselItem = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    await prisma.$executeRaw`DELETE FROM "JourneyCarouselItem" WHERE "id" = ${id}`;
+    res.status(200).json({ status: "success", message: "Carousel image removed." });
+  } catch (error) {
+    console.error("Error deleting journey carousel item:", error);
+    res.status(500).json({ status: "error", message: "Failed to remove carousel image." });
+  }
+};
+
+export const updateJourneyCarouselSettings = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const intervalMs = Math.min(30000, Math.max(500, Number(req.body?.intervalMs) || 1000));
+    const transitionDuration = Math.min(3000, Math.max(0, Number(req.body?.transitionDuration) || 500));
+    const transition = ["fade", "slide", "zoom"].includes(asString(req.body?.transition))
+      ? asString(req.body?.transition)
+      : "fade";
+    const settings = await prisma.$queryRaw<Array<{ id: string; intervalMs: number; transition: string; transitionDuration: number }>>`
+      INSERT INTO "JourneyCarouselSettings" ("id", "intervalMs", "transition", "transitionDuration", "updatedAt")
+      VALUES ('journey-carousel', ${intervalMs}, ${transition}, ${transitionDuration}, NOW())
+      ON CONFLICT ("id") DO UPDATE SET
+        "intervalMs" = EXCLUDED."intervalMs",
+        "transition" = EXCLUDED."transition",
+        "transitionDuration" = EXCLUDED."transitionDuration",
+        "updatedAt" = NOW()
+      RETURNING "id", "intervalMs", "transition", "transitionDuration"
+    `;
+    res.status(200).json({ status: "success", data: settings[0] });
+  } catch (error) {
+    console.error("Error updating journey carousel settings:", error);
+    res.status(500).json({ status: "error", message: "Failed to update carousel settings." });
   }
 };
 
@@ -175,6 +261,7 @@ export const createGalleryItem = async (req: Request, res: Response): Promise<vo
         url,
         thumbnailUrl,
         showOnHome: asBoolean(req.body?.showOnHome, true),
+        journeyCarousel: asBoolean(req.body?.journeyCarousel, false),
         sortOrder: Number.isFinite(Number(req.body?.sortOrder)) ? Number(req.body.sortOrder) : 0,
         fileName: asString(req.body?.fileName) || null,
         fileSize: asString(req.body?.fileSize) || null,
@@ -211,6 +298,7 @@ export const updateGalleryItem = async (req: Request, res: Response): Promise<vo
       url?: string;
       thumbnailUrl?: string | null;
       showOnHome?: boolean;
+      journeyCarousel?: boolean;
       sortOrder?: number;
       fileName?: string | null;
       fileSize?: string | null;
@@ -255,6 +343,7 @@ export const updateGalleryItem = async (req: Request, res: Response): Promise<vo
 
     if (req.body?.thumbnailUrl !== undefined) data.thumbnailUrl = asString(req.body.thumbnailUrl) || null;
     if (req.body?.showOnHome !== undefined) data.showOnHome = asBoolean(req.body.showOnHome, existing.showOnHome);
+    if (req.body?.journeyCarousel !== undefined) data.journeyCarousel = asBoolean(req.body.journeyCarousel, existing.journeyCarousel);
     if (req.body?.sortOrder !== undefined && Number.isFinite(Number(req.body.sortOrder))) {
       data.sortOrder = Number(req.body.sortOrder);
     }

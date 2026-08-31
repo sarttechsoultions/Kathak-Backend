@@ -4,7 +4,7 @@
   "description": "Express.js + PostgreSQL Prisma Backend API for Kathak Next",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "dev": "npm run prisma:generate && ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "npx tsc",
     "start": "node dist/server.js",
     "prisma:generate": "npx prisma generate",

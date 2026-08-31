@@ -212,6 +212,7 @@ model User {
   uploadedStudentCornerItems StudentCornerItem[] @relation("UploadedStudentCornerItems")
   updatedHeroBanners HeroBanner[]       @relation("UpdatedHeroBanners")
   updatedLeadPopups  LeadPopup[]        @relation("UpdatedLeadPopups")
+  createdLetterheads Letterhead[]       @relation("CreatedLetterheads")
 }
 
 model TeacherPermission {
@@ -904,6 +905,7 @@ model GalleryItem {
   url          String
   thumbnailUrl String?
   showOnHome   Boolean          @default(true)
+  journeyCarousel Boolean        @default(false)
   sortOrder    Int              @default(0)
   fileName     String?
   fileSize     String?
@@ -918,6 +920,24 @@ model GalleryItem {
   @@index([showOnHome])
   @@index([sortOrder])
   @@index([createdAt])
+}
+
+model JourneyCarouselSettings {
+  id                 String   @id @default("journey-carousel")
+  intervalMs         Int      @default(1000)
+  transition         String   @default("fade")
+  transitionDuration Int      @default(500)
+  updatedAt          DateTime @updatedAt
+}
+
+model JourneyCarouselItem {
+  id        String   @id @default(uuid())
+  title     String
+  altText   String?
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum HeroPage {
@@ -954,6 +974,12 @@ model HeroBanner {
   ctaLink           String?
   ctaSecondaryLabel String?
   ctaSecondaryLink  String?
+
+  ctaAction         String?  @default("LINK") // "LINK" | "MODAL_INVITATION" | "MODAL_BOOK_DEMO"
+  ctaColor          String?  @default("#9E0C25")
+  ctaLayout         String?  @default("SOLID") // "SOLID" | "OUTLINE"
+  ctaPosition       String?  @default("CENTER") // "LEFT" | "CENTER" | "RIGHT"
+  ctaBorderRadius   String?  @default("FULL") // "NONE" | "SM" | "MD" | "LG" | "FULL"
 
   updatedById String?
   updatedBy   User?    @relation("UpdatedHeroBanners", fields: [updatedById], references: [id], onDelete: SetNull)
@@ -1076,4 +1102,41 @@ model StudentCornerItem {
   @@index([isPublished])
   @@index([sortOrder])
   @@index([createdAt])
+}
+
+model LetterheadTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  imageUrl  String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  letterheads Letterhead[]
+
+  @@index([isActive])
+  @@index([createdAt])
+}
+
+model Letterhead {
+  id          String   @id @default(uuid())
+  title       String
+  contentHtml String   @db.Text
+  pagesJson   Json?
+  fontFamily  String   @default("Georgia, serif")
+  isDefault   Boolean  @default(false)
+  usageCount  Int      @default(0)
+
+  templateId String
+  template   LetterheadTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+
+  createdById String?
+  createdBy   User?   @relation("CreatedLetterheads", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDefault])
+  @@index([updatedAt])
+  @@index([templateId])
 }
