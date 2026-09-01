@@ -1,15 +1,43 @@
 import { Request, Response } from "express";
-import { EventCategory, EventStatus } from "@prisma/client";
+import { EventCategory, EventStatus, PaymentStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
+import { bookedSeats } from "../events/ticket.service";
 
-const FILLING_FAST_THRESHOLD = 0.75; // 75% seats bhar jaye to "Filling Fast" badge
+const FILLING_FAST_THRESHOLD = 0.75;
 
-// Student ko sirf ye statuses dikhne chahiye — DRAFT abhi publish nahi hua,
-// COMPLETED/CANCELLED "upcoming" list mein nahi aane chahiye
 const VISIBLE_STATUSES: EventStatus[] = [EventStatus.SCHEDULED, EventStatus.LIVE];
 
 function toPriceLabel(fee: number): string {
   return fee > 0 ? `₹${fee.toLocaleString("en-IN")}` : "Free";
+}
+
+async function getStudentEmail(studentId?: string): Promise<string | null> {
+  if (!studentId) return null;
+  const user = await prisma.user.findUnique({
+    where: { id: studentId },
+    select: { email: true },
+  });
+  return user?.email?.trim().toLowerCase() || null;
+}
+
+async function studentHasPaidTicket(eventId: string, studentEmail: string | null): Promise<boolean> {
+  if (!studentEmail) return false;
+  const ticket = await prisma.eventTicket.findFirst({
+    where: {
+      eventId,
+      paymentStatus: PaymentStatus.SUCCESS,
+      email: { equals: studentEmail, mode: "insensitive" },
+    },
+  });
+  return !!ticket;
+}
+
+function buildRegistrationBadge(event: { status: EventStatus; startDate: Date }) {
+  const now = new Date();
+  if (event.status === EventStatus.CANCELLED) return "Cancelled";
+  if (event.status === EventStatus.COMPLETED || event.startDate < now) return "Completed";
+  if (event.startDate <= now) return "Confirmed";
+  return "Upcoming";
 }
 
 // ==========================================================
@@ -94,27 +122,37 @@ export const getUpcomingEvents = async (req: Request, res: Response) => {
       where: filter,
       include: {
         leadInstructor: { select: { fullName: true, avatarUrl: true } },
-        _count: { select: { registrations: true } },
         registrations: { where: { studentId }, select: { id: true } },
       },
       orderBy: { startDate: "asc" },
     });
 
-    const data = events.map((event: any) => ({
-      id: event.id,
-      title: event.title,
-      category: event.category,
-      thumbnailImage: event.thumbnailImage,
-      priceLabel: toPriceLabel(event.registrationFee),
-      isFree: event.registrationFee === 0,
-      startDate: event.startDate,
-      startTime: event.startTime,
-      locationOrLink: event.locationOrLink,
-      instructorName: event.leadInstructor?.fullName || null,
-      instructorAvatar: event.leadInstructor?.avatarUrl || null,
-      isRegistered: event.registrations.length > 0,
-      fillingFast: event.capacity > 0 && event._count.registrations / event.capacity >= FILLING_FAST_THRESHOLD,
-    }));
+    const studentEmail = await getStudentEmail(studentId);
+
+    const data = await Promise.all(
+      events.map(async (event: any) => {
+        const hasRegistration = event.registrations.length > 0;
+        const hasTicket = await studentHasPaidTicket(event.id, studentEmail);
+        const seatsTaken = await bookedSeats(event.id);
+
+        return {
+          id: event.id,
+          title: event.title,
+          category: event.category,
+          thumbnailImage: event.thumbnailImage,
+          priceLabel: toPriceLabel(event.registrationFee),
+          isFree: event.registrationFee === 0,
+          startDate: event.startDate,
+          startTime: event.startTime,
+          locationOrLink: event.locationOrLink,
+          instructorName: event.leadInstructor?.fullName || null,
+          instructorAvatar: event.leadInstructor?.avatarUrl || null,
+          isRegistered: hasRegistration || hasTicket,
+          canCancel: hasRegistration,
+          fillingFast: event.capacity > 0 && seatsTaken / event.capacity >= FILLING_FAST_THRESHOLD,
+        };
+      }),
+    );
 
     return res.status(200).json({ success: true, data });
   } catch (error: any) {
@@ -144,16 +182,21 @@ export const getEventDetailsForStudent = async (req: Request, res: Response): Pr
       return;
     }
 
-    const { registrations, ...rest } = event as any;
+    const { registrations, _count, ...rest } = event as any;
+    const studentEmail = await getStudentEmail(studentId);
+    const hasRegistration = registrations.length > 0;
+    const hasTicket = await studentHasPaidTicket(event.id, studentEmail);
+    const seatsTaken = await bookedSeats(event.id);
 
     res.status(200).json({
       success: true,
       data: {
         ...rest,
         priceLabel: toPriceLabel(event.registrationFee),
-        isRegistered: registrations.length > 0,
+        isRegistered: hasRegistration || hasTicket,
+        canCancel: hasRegistration,
         registeredAt: registrations[0]?.registeredAt || null,
-        seatsLeft: event.capacity - event._count.registrations,
+        seatsLeft: Math.max(event.capacity - seatsTaken, 0),
       },
     });
   } catch (error: any) {
@@ -265,32 +308,55 @@ export const getMyRegistrations = async (req: Request, res: Response) => {
         },
       },
       orderBy: { registeredAt: "desc" },
-      ...(limit ? { take: limit } : {}),
     });
 
-    const now = new Date();
+    const studentEmail = await getStudentEmail(studentId);
+    const ticketRows = studentEmail
+      ? await prisma.eventTicket.findMany({
+          where: {
+            paymentStatus: PaymentStatus.SUCCESS,
+            email: { equals: studentEmail, mode: "insensitive" },
+          },
+          include: {
+            event: {
+              select: { id: true, title: true, category: true, startDate: true, startTime: true, status: true },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        })
+      : [];
 
-    const data = registrations.map((reg: any) => {
-      let badge = "Upcoming";
-      if (reg.event.status === EventStatus.CANCELLED) {
-        badge = "Cancelled";
-      } else if (reg.event.status === EventStatus.COMPLETED || reg.event.startDate < now) {
-        badge = "Completed";
-      } else if (reg.event.startDate <= now) {
-        badge = "Confirmed";
-      }
+    const registrationEventIds = new Set(registrations.map((reg) => reg.event.id));
 
-      return {
-        id: reg.id,
-        eventId: reg.event.id,
-        title: reg.event.title,
-        category: reg.event.category,
-        startDate: reg.event.startDate,
-        startTime: reg.event.startTime,
-        registeredAt: reg.registeredAt,
-        badge,
-      };
-    });
+    const ticketEntries = ticketRows
+      .filter((ticket) => !registrationEventIds.has(ticket.event.id))
+      .map((ticket) => ({
+        id: ticket.id,
+        eventId: ticket.event.id,
+        title: ticket.event.title,
+        category: ticket.event.category,
+        startDate: ticket.event.startDate,
+        startTime: ticket.event.startTime,
+        registeredAt: ticket.createdAt,
+        badge: buildRegistrationBadge(ticket.event),
+      }));
+
+    const registrationEntries = registrations.map((reg: any) => ({
+      id: reg.id,
+      eventId: reg.event.id,
+      title: reg.event.title,
+      category: reg.event.category,
+      startDate: reg.event.startDate,
+      startTime: reg.event.startTime,
+      registeredAt: reg.registeredAt,
+      badge: buildRegistrationBadge(reg.event),
+    }));
+
+    const merged = [...registrationEntries, ...ticketEntries].sort(
+      (a, b) => new Date(b.registeredAt).getTime() - new Date(a.registeredAt).getTime(),
+    );
+
+    const data = limit ? merged.slice(0, limit) : merged;
 
     return res.status(200).json({ success: true, data });
   } catch (error: any) {
@@ -318,15 +384,40 @@ export const getCalendarEvents = async (req: Request, res: Response) => {
         event: { startDate: { gte: monthStart, lte: monthEnd } },
       },
       include: {
-        event: { select: { title: true, startDate: true, startTime: true } },
+        event: { select: { id: true, title: true, startDate: true, startTime: true } },
       },
       orderBy: { event: { startDate: "asc" } },
     });
 
-    const eventDates = registrations.map((r: any) => r.event.startDate.getDate());
+    const studentEmail = await getStudentEmail(studentId);
+    const ticketRows = studentEmail
+      ? await prisma.eventTicket.findMany({
+          where: {
+            paymentStatus: PaymentStatus.SUCCESS,
+            email: { equals: studentEmail, mode: "insensitive" },
+            event: { startDate: { gte: monthStart, lte: monthEnd } },
+          },
+          include: {
+            event: { select: { id: true, title: true, startDate: true, startTime: true } },
+          },
+          orderBy: { event: { startDate: "asc" } },
+        })
+      : [];
+
+    const seenEventIds = new Set<string>();
+    const calendarItems = [...registrations, ...ticketRows]
+      .filter((row) => {
+        const eventId = row.event.id;
+        if (seenEventIds.has(eventId)) return false;
+        seenEventIds.add(eventId);
+        return true;
+      })
+      .sort((a, b) => a.event.startDate.getTime() - b.event.startDate.getTime());
+
+    const eventDates = calendarItems.map((r: any) => r.event.startDate.getDate());
 
     const now = new Date();
-    const nextReminder = registrations.find((r: any) => r.event.startDate >= now);
+    const nextReminder = calendarItems.find((r: any) => r.event.startDate >= now);
 
     return res.status(200).json({
       success: true,

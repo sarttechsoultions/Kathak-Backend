@@ -14,6 +14,10 @@ import {
   getTeacherStudentProgress,
 } from "./teacher.progress.controller";
 import {
+  applyTeacherLeave,
+  getTeacherAttendance,
+} from "./teacher.attendance.controller";
+import {
   getExams,
   createExam,
   getExamResults,
@@ -37,6 +41,10 @@ router.get("/batches/:batchId/students", getTeacherBatchStudents);
 // Progress hub
 router.get("/progress", getTeacherProgressHub);
 router.get("/progress/:studentId", getTeacherStudentProgress);
+
+// Attendance
+router.get("/attendance", getTeacherAttendance);
+router.post("/leave", applyTeacherLeave);
 
 // Settings Routes
 router.get("/settings", getTeacherSettings);

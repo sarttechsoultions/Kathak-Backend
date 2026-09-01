@@ -19,6 +19,16 @@ const mapCategoryToEnum = (cat?: string): CourseCategory => {
   return CourseCategory.BASIC;
 };
 
+const inferMarketingCategoryFromInput = (category?: string, title?: string): string => {
+  const key = `${category || ""} ${title || ""}`.toLowerCase();
+  if (key.includes("kid")) return "kids";
+  if (key.includes("ladies") || key.includes("wellness")) return "ladies";
+  if (key.includes("hobby")) return "hobby";
+  if (key.includes("intermediate")) return "intermediate";
+  if (key.includes("advanced") || key.includes("premium")) return "advanced";
+  return "beginners";
+};
+
 // ================= 1. DASHBOARD OVERVIEW =================
 
 export const getDashboardStats = async (req: Request, res: Response): Promise<void> => {
@@ -1252,7 +1262,13 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
       groupClassesCount,     
       oneToOneClassesCount,
       thumbnail,
-       videoUrl   
+      videoUrl,
+      intro,
+      marketingCategory,
+      showOnHome,
+      homepageSortOrder,
+      aliases,
+      showExam,
     } = req.body;
 
     // 1. Strict Validation
@@ -1288,8 +1304,14 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
         // Class Counts: Taking dynamic values from frontend based on client's data
         groupClassesCount: groupClassesCount || "", 
         oneToOneClassesCount: oneToOneClassesCount || "",
-        thumbnail: thumbnail || null, // Default thumbnail if not provided
-        videoUrl: videoUrl || null, // Default empty if not provided
+        thumbnail: thumbnail || null,
+        videoUrl: videoUrl || null,
+        intro: intro || null,
+        marketingCategory: marketingCategory || inferMarketingCategoryFromInput(category, title),
+        showOnHome: typeof showOnHome === "boolean" ? showOnHome : true,
+        homepageSortOrder: Number(homepageSortOrder) || 0,
+        aliases: Array.isArray(aliases) ? aliases : [],
+        showExam: typeof showExam === "boolean" ? showExam : true,
         
         published: true
       }
@@ -1316,7 +1338,14 @@ export const updateCourse = async (req: Request, res: Response): Promise<void> =
       groupClassesCount,     
       oneToOneClassesCount,
       thumbnail,
-       videoUrl  
+      videoUrl,
+      intro,
+      marketingCategory,
+      showOnHome,
+      homepageSortOrder,
+      aliases,
+      showExam,
+      published,
     } = req.body;
 
     const updated = await prisma.course.update({
@@ -1333,7 +1362,14 @@ export const updateCourse = async (req: Request, res: Response): Promise<void> =
         oneToOneClassesCount: oneToOneClassesCount ?? undefined,
         thumbnail: thumbnail ?? undefined,
         videoUrl: videoUrl ?? undefined,
-        // published: typeof published === "boolean" ? published : undefined
+        intro: intro ?? undefined,
+        marketingCategory: marketingCategory ?? undefined,
+        showOnHome: typeof showOnHome === "boolean" ? showOnHome : undefined,
+        homepageSortOrder:
+          homepageSortOrder !== undefined ? Number(homepageSortOrder) : undefined,
+        aliases: Array.isArray(aliases) ? aliases : undefined,
+        showExam: typeof showExam === "boolean" ? showExam : undefined,
+        published: typeof published === "boolean" ? published : undefined,
       }
     });
 

@@ -1,6 +1,13 @@
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
-import { getTeacherBatchNames, getStudentBatchName, getUserDisplayName } from "../../lib/batchHelpers";
+import {
+  buildStudentBatchTargetWhere,
+  getStudentBatchMembershipRows,
+  getStudentBatchName,
+  getTeacherBatchNames,
+  getUserDisplayName,
+  resolveStudentBatchForAssignment,
+} from "../../lib/batchHelpers";
 
 // ─────────────────────────────────────────────
 // GET /video/directory
@@ -154,10 +161,33 @@ export async function getStudentHistory(req: Request, res: Response): Promise<vo
 
     const list = await prisma.videoSubmission.findMany({
       where: { studentId: safeStudentId },
+      include: {
+        task: {
+          select: {
+            id: true,
+            title: true,
+            course: true,
+            batchName: true,
+            detailedInstructions: true,
+            referenceFileUrl: true,
+            createdByName: true,
+          },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
 
-    res.json({ status: "success", count: list.length, data: list });
+    const mapped = list.map((submission) => ({
+      ...submission,
+      referenceFileUrl: submission.task?.referenceFileUrl || null,
+      detailedInstructions: submission.task?.detailedInstructions || null,
+      taskTitle: submission.task?.title || null,
+      taskCourse: submission.task?.course || null,
+      taskBatchName: submission.task?.batchName || null,
+      taskCreatedByName: submission.task?.createdByName || null,
+    }));
+
+    res.json({ status: "success", count: mapped.length, data: mapped });
   } catch (error: any) {
     res.status(500).json({
       status: "error",
@@ -199,15 +229,8 @@ export async function getVideoTasks(req: Request, res: Response): Promise<void> 
         ]
       };
     } else {
-      const studentBatch = await getStudentBatchName(user.id);
-      whereClause = studentBatch ? { 
-        OR: [
-          { batchName: studentBatch },
-          { batchName: { equals: "all batches", mode: "insensitive" } },
-          { batchName: { equals: "All Batches", mode: "insensitive" } },
-          { batchName: "" },
-        ]
-      } : {};
+      const memberships = await getStudentBatchMembershipRows(user.id);
+      whereClause = buildStudentBatchTargetWhere(memberships);
     }
 
     if (search) {
@@ -491,12 +514,40 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
       return;
     }
 
+    const memberships = await getStudentBatchMembershipRows(user.id);
+    if (memberships.length === 0) {
+      res.status(403).json({
+        status: "error",
+        message: "You are not enrolled in any batch yet.",
+      });
+      return;
+    }
+
+    let matchedBatch = memberships[0].batch;
+    if (taskId) {
+      const task = await prisma.videoTask.findUnique({ where: { id: String(taskId) } });
+      if (!task) {
+        res.status(404).json({ status: "error", message: "Practice task not found." });
+        return;
+      }
+
+      const resolvedBatch = resolveStudentBatchForAssignment(task, memberships);
+      if (!resolvedBatch) {
+        res.status(403).json({
+          status: "error",
+          message: "Access denied: this practice task is not assigned to your batch.",
+        });
+        return;
+      }
+      matchedBatch = resolvedBatch;
+    }
+
     const studentUser: any = await prisma.user.findUnique({
       where: { id: user.id },
       select: { fullName: true, avatarUrl: true },
     });
 
-    const studentBatch = await getStudentBatchName(user.id);
+    const studentBatch = matchedBatch.name || (await getStudentBatchName(user.id));
 
     const newSubmission = await prisma.videoSubmission.create({
       data: {
@@ -506,7 +557,11 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
         studentAvatar: studentUser?.avatarUrl || null,
         studentBatch: studentBatch || "Unassigned",
         submissionDate: new Date(),
-        courseAndBatch: courseAndBatch || studentBatch || "Unassigned",
+        courseAndBatch:
+          courseAndBatch ||
+          [matchedBatch.courseName, matchedBatch.name].filter(Boolean).join(" • ") ||
+          studentBatch ||
+          "Unassigned",
         videoTitle,
         fileUrl,
         status: "PENDING",

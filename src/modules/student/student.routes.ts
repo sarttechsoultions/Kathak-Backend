@@ -19,10 +19,19 @@ import {
   submitStudentExam,
   getStudentDashboard,
   getPublicCourses,
+  getPublicMarketingCourses,
+  getPublicMarketingCourseBySlug,
   getStudentAttendance,
   applyStudentLeave,
   getStudentProgress
 } from "./student.controller";
+import {
+  getStudentSettings,
+  updateStudentSettingsProfile,
+  updateStudentSettingsNotifications,
+  sendStudentForgotPasswordOtp,
+  resetStudentForgotPassword,
+} from "./student.settings.controller";
 
 const router = Router();
 
@@ -31,6 +40,10 @@ router.post("/enroll", enrollStudent);
 router.post("/enroll/bypass", enrollStudentBypass);
 router.post("/otp/send", sendStudentOtp);
 router.post("/otp/verify", verifyStudentOtp);
+router.post("/forgot-password/send-otp", sendStudentForgotPasswordOtp);
+router.post("/forgot-password/reset", resetStudentForgotPassword);
+router.get("/public/courses/marketing/:slug", getPublicMarketingCourseBySlug);
+router.get("/public/courses/marketing", getPublicMarketingCourses);
 router.get("/public/courses", getPublicCourses);
 
 // Protected student routes
@@ -51,6 +64,9 @@ router.get("/progress", ...studentOnly, getStudentProgress);
 router.get("/profile", ...studentOnly, getStudentProfile);
 router.put("/profile", ...studentOnly, updateStudentProfile);
 router.post("/profile/change-password", ...studentOnly, changeStudentPassword);
+router.get("/settings", ...studentOnly, getStudentSettings);
+router.put("/settings/profile", ...studentOnly, updateStudentSettingsProfile);
+router.put("/settings/notifications", ...studentOnly, updateStudentSettingsNotifications);
 router.get("/finance", ...studentOnly, getStudentFinance);
 router.get("/assignments", ...studentOnly, getStudentAssignments);
 router.post("/assignments/submit", ...studentOnly, submitStudentAssignment);
