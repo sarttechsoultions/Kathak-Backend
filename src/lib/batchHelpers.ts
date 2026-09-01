@@ -7,9 +7,80 @@ export function isOneToOneBatch(name?: string | null, code?: string | null): boo
   const batchCode = String(code || "").toUpperCase();
   return (
     batchName.includes("1-to-1") ||
+    batchName.includes("1 to 1") ||
     batchName.includes("one-to-one") ||
+    batchName.includes("one to one") ||
     batchCode.startsWith("OTO-")
   );
+}
+
+/** Max enrollment capacity shown in UI — 1 for personal batches, 20 for group batches. */
+export function getBatchMaxCapacity(name?: string | null, code?: string | null): number {
+  return isOneToOneBatch(name, code) ? 1 : 20;
+}
+
+function normalizeBatchKey(value?: string | null): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+export function isAcademyWideAssignment(batchName?: string | null): boolean {
+  const targetLower = normalizeBatchKey(batchName);
+  return (
+    !targetLower ||
+    targetLower === "all batches" ||
+    targetLower === "all" ||
+    targetLower === "all batches & courses"
+  );
+}
+
+/** Whether an assignment targets a specific enrolled student batch (not academy-wide). */
+export function assignmentAppliesToStudentBatch(
+  assignment: { batchId?: string | null; batchName?: string | null },
+  studentBatch: { id: string; name?: string | null; code?: string | null }
+): boolean {
+  if (assignment.batchId && assignment.batchId === studentBatch.id) return true;
+
+  const rawTarget = String(assignment.batchName || "").trim();
+  if (!rawTarget) return false;
+
+  if (isAcademyWideAssignment(rawTarget)) {
+    return false;
+  }
+
+  const studentKeys = [studentBatch.name, studentBatch.code]
+    .filter(Boolean)
+    .map((value) => normalizeBatchKey(value));
+  const targetList = rawTarget.split(",").map((part) => normalizeBatchKey(part));
+
+  return studentKeys.some((studentKey) =>
+    targetList.some(
+      (targetName) =>
+        targetName === studentKey ||
+        targetName.includes(studentKey) ||
+        studentKey.includes(targetName)
+    )
+  );
+}
+
+export function resolveStudentBatchForAssignment<
+  T extends { batchId?: string | null; batchName?: string | null },
+  B extends { id: string; name: string; code: string; courseName?: string }
+>(
+  assignment: T,
+  studentBatches: Array<{ batchId: string; batch: B }>
+): B | null {
+  if (studentBatches.length === 0) return null;
+
+  if (!assignment.batchId && isAcademyWideAssignment(assignment.batchName)) {
+    return studentBatches[0].batch;
+  }
+
+  for (const membership of studentBatches) {
+    if (assignmentAppliesToStudentBatch(assignment, membership.batch)) {
+      return membership.batch;
+    }
+  }
+  return null;
 }
 
 /** Retrieve batch names assigned to the teacher using teacherId or exact teacherName */

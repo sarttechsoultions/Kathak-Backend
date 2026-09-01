@@ -41,7 +41,7 @@ export const getMyExams = async (req: Request, res: Response): Promise<void> => 
           select: { status: true, marksObtained: true, id: true }
         }
       },
-      orderBy: { date: "desc" }
+      orderBy: [{ createdAt: "desc" }, { date: "desc" }]
     });
 
     const now = new Date();
@@ -70,6 +70,7 @@ export const getMyExams = async (req: Request, res: Response): Promise<void> => 
         title: ex.title,
         category: ex.type || "THEORY",
         date: ex.date,
+        createdAt: ex.createdAt,
         durationMins: ex.durationMins,
         totalMarks: ex.totalMarks,
         score: result && result.marksObtained !== null ? `${result.marksObtained}/${ex.totalMarks}` : "--",

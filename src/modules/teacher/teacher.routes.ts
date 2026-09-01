@@ -1,12 +1,14 @@
 import { Router } from "express";
 import { Role } from "@prisma/client";
 import { authenticate, requireRole } from "../../middleware/auth.middleware";
-import { 
+import {
   getTeacherSettings, 
   updateTeacherProfile, 
   updateTeacherSecurity, 
   updateNotificationPrefs 
 } from "./teacher.settings.controller";
+import { getTeacherDashboard } from "./teacher.dashboard.controller";
+import { getTeacherBatches, getTeacherBatchStudents } from "./teacher.batches.controller";
 import {
   getExams,
   createExam,
@@ -20,6 +22,13 @@ const router = Router();
 // Secure all teacher routes
 router.use(authenticate);
 router.use(requireRole(Role.TEACHER, Role.ADMIN));
+
+// Dashboard
+router.get("/dashboard", getTeacherDashboard);
+
+// Batches (teacher-scoped)
+router.get("/batches", getTeacherBatches);
+router.get("/batches/:batchId/students", getTeacherBatchStudents);
 
 // Settings Routes
 router.get("/settings", getTeacherSettings);

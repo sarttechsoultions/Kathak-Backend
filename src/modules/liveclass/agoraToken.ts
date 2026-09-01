@@ -1,7 +1,10 @@
 import { RtcRole, RtcTokenBuilder } from "agora-access-token";
 import { env } from "../../config/env";
 
-export const agoraKeyReady = () => Boolean(env.agoraAppId);
+export const agoraKeyReady = () =>
+  Boolean(env.agoraAppId?.trim()) &&
+  Boolean(env.agoraAppCertificate?.trim()) &&
+  env.agoraAppCertificate!.trim().length >= 10;
 
 /**
  * Produces a stable numeric uid from a user's string id (Agora RTC uids must be numeric).

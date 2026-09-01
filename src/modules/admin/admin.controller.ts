@@ -1665,6 +1665,10 @@ const mapped = await Promise.all(
         year: "numeric",
       }),
       totalStudents: `${a.submissions?.length || 0} Submissions`,
+      evaluationCriteria: a.evaluationCriteria || null,
+      referenceFileUrl: a.referenceFileUrl || null,
+      referenceFileName: a.referenceFileName || null,
+      description: a.description || null,
     };
   })
 );
@@ -1734,6 +1738,14 @@ export const createAssignment = async (req: Request, res: Response): Promise<voi
 
     const typeTag = req.body.typeTag || req.body.category || "Practical Assessment";
     const referenceFileUrl = req.body.referenceFileUrl || req.body.fileUrl || null;
+    const referenceFileName = req.body.referenceFileName || null;
+    let evaluationCriteriaStr: string | null = null;
+    if (req.body.evaluationCriteria) {
+      evaluationCriteriaStr =
+        typeof req.body.evaluationCriteria === "string"
+          ? req.body.evaluationCriteria
+          : JSON.stringify(req.body.evaluationCriteria);
+    }
 
     let targetBatch = req.body.targetBatch;
     if (!targetBatch && Array.isArray(req.body.batches)) {
@@ -1774,6 +1786,8 @@ const data: any = {
   dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   totalPoints: totalPoints ? Number(totalPoints) : 100,
   referenceFileUrl: referenceFileUrl || null,
+  referenceFileName: referenceFileName || null,
+  evaluationCriteria: evaluationCriteriaStr,
   teacherId,
   teacherName,
 };
@@ -1893,22 +1907,79 @@ export const getAssignmentSubmissions = async (req: Request, res: Response): Pro
 export const gradeAssignmentSubmission = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { grade, feedback } = req.body;
+    const { grade, feedback, comment, criteria, criteriaParts, pointers } = req.body;
+
+    const gradeMatch = String(grade ?? "").match(/\d+/);
+    const numericGrade = gradeMatch ? gradeMatch[0] : "0";
+
+    let feedbackStr: string;
+    if (typeof feedback === "object" && feedback !== null) {
+      feedbackStr = JSON.stringify(feedback);
+    } else if (typeof feedback === "string" && feedback.trim().startsWith("{")) {
+      feedbackStr = feedback;
+    } else {
+      const parts = Array.isArray(criteriaParts)
+        ? criteriaParts
+        : Array.isArray(criteria)
+          ? criteria
+          : [];
+      feedbackStr = JSON.stringify({
+        comment: comment || (typeof feedback === "string" ? feedback : "") || "",
+        criteriaParts: parts.map((p: { name?: string; label?: string; score?: number | string }) => ({
+          name: p.name || p.label || "Criteria",
+          score: Number(p.score) || 0,
+        })),
+        pointers: Array.isArray(pointers) ? pointers.filter(Boolean) : [],
+      });
+    }
 
     const updated = await (prisma as any).assignmentSubmission.update({
       where: { id },
       data: {
-        grade: String(grade),
-        // Feedback ko parse and format karte hain securely (stringify format)
-        feedback: typeof feedback === "object" ? JSON.stringify(feedback) : feedback,
-        status: "GRADED"
-      }
+        grade: numericGrade,
+        feedback: feedbackStr,
+        status: "GRADED",
+      },
     });
 
     res.json({ status: "success", message: "Submission graded successfully.", data: updated });
   } catch (error) {
     console.error("Grade Submission Error:", error);
     res.status(500).json({ status: "error", message: "Failed to grade submission." });
+  }
+};
+
+export const reassignAssignmentSubmission = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { reason, comment } = req.body;
+    const reassignComment =
+      (typeof reason === "string" && reason.trim()) ||
+      (typeof comment === "string" && comment.trim()) ||
+      "Please redo this assignment and submit again.";
+
+    const updated = await (prisma as any).assignmentSubmission.update({
+      where: { id },
+      data: {
+        status: "PENDING",
+        grade: null,
+        fileUrl: null,
+        feedback: JSON.stringify({
+          type: "reassign",
+          comment: reassignComment,
+          requestedAt: new Date().toISOString(),
+        }),
+      },
+    });
+
+    res.json({
+      status: "success",
+      message: "Submission sent back to the student for reassignment.",
+      data: updated,
+    });
+  } catch (error) {
+    console.error("Reassign Submission Error:", error);
+    res.status(500).json({ status: "error", message: "Failed to request reassignment." });
   }
 };
 export const getAssignmentDetails = async (

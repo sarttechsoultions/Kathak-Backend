@@ -463,8 +463,22 @@ model LiveClass {
   updatedAt      DateTime        @updatedAt
 
   batch Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  chatMessages LiveClassChatMessage[]
 
   @@index([batchId, scheduledStart])
+}
+
+model LiveClassChatMessage {
+  id          String   @id @default(uuid())
+  liveClassId String
+  senderId    String?
+  senderName  String
+  text        String
+  sentAt      DateTime @default(now())
+
+  liveClass LiveClass @relation(fields: [liveClassId], references: [id], onDelete: Cascade)
+
+  @@index([liveClassId, sentAt])
 }
 
 model Attendance {
@@ -526,6 +540,8 @@ model Assignment {
   dueDate          DateTime
   totalPoints      Int      @default(100)
   referenceFileUrl String?
+  referenceFileName String?
+  evaluationCriteria String?
   status           String   @default("ACTIVE")
 
   // Teacher fields

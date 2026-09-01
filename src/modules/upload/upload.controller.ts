@@ -34,7 +34,8 @@ export const uploadImage = async (req: Request, res: Response): Promise<void> =>
       const isPdf = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
       const result = await cloudinary.uploader.upload(fileBase64, {
         folder: "kathak_courses",
-        resource_type: isPdf ? "raw" : "auto",
+        resource_type: isPdf ? "image" : "auto",
+        format: isPdf ? "pdf" : undefined,
       });
 
       if (result && result.secure_url) {
@@ -136,6 +137,12 @@ export const uploadVideoToBunny = async (req: Request, res: Response): Promise<v
       }) as any;
 
       if (cloudResult?.secure_url) {
+        const thumbnailUrl = cloudinary.url(cloudResult.public_id, {
+          resource_type: "video",
+          format: "jpg",
+          transformation: [{ width: 640, height: 360, crop: "fill", quality: "auto" }],
+        });
+
         res.status(200).json({
           status: "success",
           message: "Video uploaded successfully.",
@@ -145,6 +152,7 @@ export const uploadVideoToBunny = async (req: Request, res: Response): Promise<v
             directUrl: cloudResult.secure_url,
             url: cloudResult.secure_url,
             fileUrl: cloudResult.secure_url,
+            thumbnailUrl,
           },
         });
         return;

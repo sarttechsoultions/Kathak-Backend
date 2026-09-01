@@ -40,6 +40,7 @@ import {
   createAssignment,
   getAssignmentSubmissions,
   gradeAssignmentSubmission,
+  reassignAssignmentSubmission,
   getAssignmentDetails,
   getAssignmentSubmissionsByAssignment,
   getAttendanceRecords,
@@ -119,6 +120,7 @@ router.get("/assignments", requireRole(Role.ADMIN, Role.TEACHER), getAssignments
 router.post("/assignments", requireRole(Role.ADMIN, Role.TEACHER), createAssignment);
 router.get("/assignments/submissions", requireRole(Role.ADMIN, Role.TEACHER), getAssignmentSubmissions);
 router.post("/assignments/submissions/:id/grade", requireRole(Role.ADMIN, Role.TEACHER), gradeAssignmentSubmission);
+router.post("/assignments/submissions/:id/reassign", requireRole(Role.ADMIN, Role.TEACHER), reassignAssignmentSubmission);
 router.get("/assignments/:id", requireRole(Role.ADMIN, Role.TEACHER), getAssignmentDetails);
 router.get(
   "/assignments/:id/submissions",

@@ -29,6 +29,7 @@ import studentExamRoutes from "./modules/student/student.exam.routes";
 import { notificationRoutes } from "./modules/notification/notification.routes";
 import paymentRoutes from "./modules/payment/payment.routes";
 import attendanceRoutes from "./modules/attendance/attendance.routes"; 
+import mediaRoutes from "./modules/media/media.routes";
 import {
   getCourses,
   createCourse,
@@ -117,6 +118,7 @@ app.get("/api/v1/health", (req: Request, res: Response) => {
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/upload", uploadRoutes);
+app.use("/api/v1/media", mediaRoutes);
 app.use("/api/v1/student", studentRoutes);
 app.use("/api/v1/student/events", studentEventRoutes);
 app.use("/api/v1/student/competition", studentCompetitionRoutes);
