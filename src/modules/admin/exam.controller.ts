@@ -1,4 +1,5 @@
 ﻿import { Request, Response } from "express";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 
 function detectVideoMedia(raw: string, mediaType?: string | null): boolean {
@@ -11,7 +12,7 @@ function detectVideoMedia(raw: string, mediaType?: string | null): boolean {
   );
 }
 
-function normalizeExamQuestions(questions: unknown): unknown[] {
+function normalizeExamQuestions(questions: unknown): Prisma.InputJsonValue {
   if (!Array.isArray(questions)) return [];
 
   return questions.map((question: any, index: number) => {

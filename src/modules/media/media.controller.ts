@@ -46,7 +46,13 @@ async function streamRemotePdf(fetchUrl: string, res: Response): Promise<void> {
     validateStatus: (status) => status >= 200 && status < 400,
   });
 
-  const contentType = response.headers["content-type"] || "application/pdf";
+  const rawContentType = response.headers["content-type"];
+  const contentType =
+    typeof rawContentType === "string"
+      ? rawContentType
+      : Array.isArray(rawContentType)
+        ? rawContentType[0] || "application/pdf"
+        : "application/pdf";
   res.setHeader("Content-Type", contentType.includes("pdf") ? contentType : "application/pdf");
   res.setHeader("Content-Disposition", "inline");
   res.setHeader("Cache-Control", "private, max-age=300");
