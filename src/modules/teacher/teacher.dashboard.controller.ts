@@ -1,5 +1,10 @@
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
+import {
+  canTeacherJoinClass,
+  minutesUntilTeacherCanJoin,
+  TEACHER_EARLY_JOIN_MINUTES,
+} from "../../lib/liveClassAccess";
 
 function timeAgo(date: Date): string {
   const diffMs = Date.now() - date.getTime();
@@ -24,11 +29,24 @@ function formatClassTime(date: Date): string {
 function formatStartsIn(scheduledStart: Date): string {
   const diffMs = scheduledStart.getTime() - Date.now();
   if (diffMs <= 0) return "Starting now";
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 60) return `Starts in ${mins}m`;
+  const mins = Math.ceil(diffMs / 60000);
+  if (mins < 60) return `In ${mins} min`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `Starts in ${hrs}h`;
-  return `Starts in ${Math.floor(hrs / 24)}d`;
+  if (hrs < 24) return `In ${hrs} hr${hrs === 1 ? "" : "s"}`;
+  const days = Math.ceil(mins / (60 * 24));
+  return `In ${days} day${days === 1 ? "" : "s"}`;
+}
+
+function formatJoinOpensIn(scheduledStart: Date): string {
+  const joinAt = new Date(scheduledStart.getTime() - TEACHER_EARLY_JOIN_MINUTES * 60 * 1000);
+  const diffMs = joinAt.getTime() - Date.now();
+  if (diffMs <= 0) return "Ready to join";
+  const mins = Math.ceil(diffMs / 60000);
+  if (mins < 60) return `Join in ${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `Join in ${hrs} hr${hrs === 1 ? "" : "s"}`;
+  const days = Math.ceil(mins / (60 * 24));
+  return `Join in ${days} day${days === 1 ? "" : "s"}`;
 }
 
 function startOfDay(d = new Date()): Date {
@@ -93,7 +111,7 @@ export const getTeacherDashboard = async (req: Request, res: Response): Promise<
 
     const [
       batchStudentRows,
-      todayClasses,
+      upcomingClassRows,
       assignmentPendingCount,
       videoPendingCount,
       recentAssignmentSubs,
@@ -113,7 +131,8 @@ export const getTeacherDashboard = async (req: Request, res: Response): Promise<
       prisma.liveClass.findMany({
         where: {
           batchId: { in: batchIds },
-          scheduledStart: { gte: todayStart, lte: todayEnd },
+          status: { in: ["SCHEDULED", "LIVE"] },
+          scheduledEnd: { gte: new Date() },
         },
         include: {
           batch: { select: { name: true, code: true, totalStudents: true } },
@@ -202,16 +221,27 @@ export const getTeacherDashboard = async (req: Request, res: Response): Promise<
       teacherBatches.map((b) => b.courseId || b.courseName).filter(Boolean)
     );
 
+    const todayClasses = upcomingClassRows.filter((cls) => {
+      const start = new Date(cls.scheduledStart);
+      return start >= todayStart && start <= todayEnd;
+    });
+
+    const upcomingClasses = upcomingClassRows.filter(
+      (cls) => cls.status === "SCHEDULED" || cls.status === "LIVE"
+    );
+
     const studentCountByBatch = new Map(
       batchStudentCounts.map((row) => [row.batchId, row._count.studentId])
     );
 
-    const schedules = todayClasses.map((cls) => {
+    const schedules = upcomingClasses.map((cls) => {
       const studentsCount =
         studentCountByBatch.get(cls.batchId) ??
         cls.batch?.totalStudents ??
         0;
       const isLive = cls.status === "LIVE";
+      const canJoin = canTeacherJoinClass(cls);
+      const waitMinutes = minutesUntilTeacherCanJoin(cls);
       return {
         id: cls.id,
         time: formatClassTime(new Date(cls.scheduledStart)),
@@ -219,8 +249,15 @@ export const getTeacherDashboard = async (req: Request, res: Response): Promise<
         batchInfo: cls.batch?.name || cls.batch?.code || "Batch",
         studentsCount,
         status: isLive ? ("LIVE" as const) : ("UPCOMING" as const),
-        startsIn: isLive ? undefined : formatStartsIn(new Date(cls.scheduledStart)),
-        roomPath: `/teacher/live-classes/room/${cls.id}`,
+        startsIn: isLive
+          ? undefined
+          : canJoin
+            ? formatStartsIn(new Date(cls.scheduledStart))
+            : formatJoinOpensIn(new Date(cls.scheduledStart)),
+        roomPath: canJoin || isLive ? `/teacher/live-classes/room/${cls.id}` : undefined,
+        canJoin,
+        minutesUntilJoin: waitMinutes,
+        scheduledStart: cls.scheduledStart,
       };
     });
 
@@ -289,6 +326,7 @@ export const getTeacherDashboard = async (req: Request, res: Response): Promise<
         stats: {
           totalStudents: uniqueStudentCount,
           todaysClasses: todayClasses.length,
+          upcomingClasses: upcomingClasses.length,
           pendingReviews: assignmentPendingCount + videoPendingCount,
           totalCourses: courseKeys.size,
           attendanceRate,
