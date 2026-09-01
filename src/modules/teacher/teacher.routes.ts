@@ -10,6 +10,10 @@ import {
 import { getTeacherDashboard } from "./teacher.dashboard.controller";
 import { getTeacherBatches, getTeacherBatchStudents } from "./teacher.batches.controller";
 import {
+  getTeacherProgressHub,
+  getTeacherStudentProgress,
+} from "./teacher.progress.controller";
+import {
   getExams,
   createExam,
   getExamResults,
@@ -29,6 +33,10 @@ router.get("/dashboard", getTeacherDashboard);
 // Batches (teacher-scoped)
 router.get("/batches", getTeacherBatches);
 router.get("/batches/:batchId/students", getTeacherBatchStudents);
+
+// Progress hub
+router.get("/progress", getTeacherProgressHub);
+router.get("/progress/:studentId", getTeacherStudentProgress);
 
 // Settings Routes
 router.get("/settings", getTeacherSettings);

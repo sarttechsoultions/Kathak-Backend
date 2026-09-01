@@ -113,6 +113,25 @@ export async function getStudentBatchName(studentId: string): Promise<string> {
   return "";
 }
 
+/** Batch IDs assigned to a teacher (by teacherId field or relation). */
+export async function getTeacherBatchIds(userId: string): Promise<string[]> {
+  const [byTeacherId, teacherData] = await Promise.all([
+    prisma.batch.findMany({
+      where: { teacherId: userId },
+      select: { id: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { batchesAsTeacher: { select: { id: true } } },
+    }),
+  ]);
+
+  const ids = new Set<string>();
+  byTeacherId.forEach((b) => ids.add(b.id));
+  teacherData?.batchesAsTeacher?.forEach((b) => ids.add(b.id));
+  return Array.from(ids);
+}
+
 /** Display name for a user based on their ID */
 export async function getUserDisplayName(userId: string, fallbackEmail?: string): Promise<string> {
   const user = await prisma.user.findUnique({

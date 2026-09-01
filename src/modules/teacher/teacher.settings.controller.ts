@@ -2,6 +2,42 @@ import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
 import bcrypt from "bcryptjs";
 
+type NotificationPrefs = {
+  emailNotifs: boolean;
+  pushNotifs: boolean;
+  smsNotifs: boolean;
+};
+
+const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  emailNotifs: true,
+  pushNotifs: true,
+  smsNotifs: false,
+};
+
+function parseNotificationPrefs(raw: unknown): NotificationPrefs {
+  if (!raw) return DEFAULT_NOTIFICATION_PREFS;
+
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return DEFAULT_NOTIFICATION_PREFS;
+    }
+  }
+
+  if (typeof parsed === "object" && parsed !== null) {
+    const prefs = parsed as Record<string, unknown>;
+    return {
+      emailNotifs: prefs.emailNotifs !== false,
+      pushNotifs: prefs.pushNotifs !== false,
+      smsNotifs: prefs.smsNotifs === true,
+    };
+  }
+
+  return DEFAULT_NOTIFICATION_PREFS;
+}
+
 // GET /api/v1/teacher/settings
 export const getTeacherSettings = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -30,7 +66,13 @@ export const getTeacherSettings = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    res.status(200).json({ status: "success", data: teacher });
+    res.status(200).json({
+      status: "success",
+      data: {
+        ...teacher,
+        notificationPrefs: parseNotificationPrefs(teacher.notificationPrefs),
+      },
+    });
   } catch (error: any) {
     res.status(500).json({ status: "error", message: error.message || "Failed to fetch settings" });
   }
@@ -50,11 +92,15 @@ export const updateTeacherProfile = async (req: Request, res: Response): Promise
     const updated = await prisma.user.update({
       where: { id: userId },
       data: {
-        ...(fullName && { fullName }),
-        ...(phone && { phone }),
-        ...(designation && { designation }),
-        ...(primaryExpertise && { primaryExpertise }),
-        ...(avatarUrl && { avatarUrl }),
+        ...(fullName !== undefined && { fullName: String(fullName).trim() }),
+        ...(phone !== undefined && { phone: String(phone).trim() }),
+        ...(designation !== undefined && { designation: String(designation).trim() }),
+        ...(primaryExpertise !== undefined && {
+          primaryExpertise: String(primaryExpertise).trim(),
+        }),
+        ...(avatarUrl !== undefined && {
+          avatarUrl: String(avatarUrl).trim() || null,
+        }),
       },
       select: {
         id: true,
@@ -85,6 +131,11 @@ export const updateTeacherSecurity = async (req: Request, res: Response): Promis
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) {
       res.status(400).json({ status: "error", message: "Current and new passwords are required" });
+      return;
+    }
+
+    if (String(newPassword).length < 6) {
+      res.status(400).json({ status: "error", message: "New password must be at least 6 characters" });
       return;
     }
 
@@ -123,7 +174,7 @@ export const updateNotificationPrefs = async (req: Request, res: Response): Prom
       return;
     }
 
-    const prefs = req.body; // Expecting { emailNotifs: boolean, pushNotifs: boolean, smsNotifs: boolean }
+    const prefs = parseNotificationPrefs(req.body);
 
     const updated = await prisma.user.update({
       where: { id: userId },
@@ -135,7 +186,11 @@ export const updateNotificationPrefs = async (req: Request, res: Response): Prom
       },
     });
 
-    res.status(200).json({ status: "success", data: updated, message: "Notification preferences updated" });
+    res.status(200).json({
+      status: "success",
+      data: { notificationPrefs: parseNotificationPrefs(updated.notificationPrefs) },
+      message: "Notification preferences updated",
+    });
   } catch (error: any) {
     res.status(500).json({ status: "error", message: error.message || "Failed to update notification preferences" });
   }

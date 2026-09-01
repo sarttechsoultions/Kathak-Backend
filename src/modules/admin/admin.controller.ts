@@ -8,6 +8,7 @@ import { env } from "../../config/env";
 import { buildInvoiceHtml, InvoiceData } from "../../lib/invoice";
 import { enrollmentAmountINR } from "../../lib/fees";
 import { loadPlatformPayments, summarizePlatformPayments, isSuccessfulStatus } from "../../lib/platform-payments";
+import { getTeacherBatchIds } from "../../lib/batchHelpers";
 
 
 const mapCategoryToEnum = (cat?: string): CourseCategory => {
@@ -1747,15 +1748,66 @@ export const createAssignment = async (req: Request, res: Response): Promise<voi
           : JSON.stringify(req.body.evaluationCriteria);
     }
 
+    const userRole = (req.user as any)?.role;
+    const teacherId = req.user?.id || null;
+    const teacherName =
+      (req.user as any)?.fullName ||
+      (req.user as any)?.name ||
+      "Teacher";
+
+    const requestedBatchIds: string[] = Array.isArray(req.body.batchIds) && req.body.batchIds.length > 0
+      ? req.body.batchIds.map((id: unknown) => String(id)).filter(Boolean)
+      : req.body.batchId
+        ? [String(req.body.batchId)]
+        : [];
+
+    if (userRole === "TEACHER" && requestedBatchIds.length > 0 && teacherId) {
+      const myBatchIds = await getTeacherBatchIds(teacherId);
+      const invalidBatches = requestedBatchIds.filter((batchId) => !myBatchIds.includes(batchId));
+      if (invalidBatches.length > 0) {
+        res.status(403).json({
+          status: "error",
+          message: "Access Denied: You can only assign to batches assigned to you.",
+        });
+        return;
+      }
+    }
+
     let targetBatch = req.body.targetBatch;
     if (!targetBatch && Array.isArray(req.body.batches)) {
       targetBatch = req.body.batches.join(", ");
     } else if (!targetBatch && typeof req.body.batches === "string") {
       targetBatch = req.body.batches;
     }
+
+    let batchId: string | null = requestedBatchIds[0] || req.body.batchId || null;
+
+    if (requestedBatchIds.length > 0) {
+      const selectedBatches = await (prisma as any).batch.findMany({
+        where: { id: { in: requestedBatchIds } },
+        select: { id: true, name: true, status: true },
+      });
+
+      for (const targetB of selectedBatches) {
+        if (targetB?.status) {
+          const s = String(targetB.status).toLowerCase();
+          if (s === "upcoming" || s === "not started" || s === "pending") {
+            res.status(400).json({
+              status: "error",
+              message: `Cannot assign assignment. Batch "${targetB.name}" has not started yet (Status: ${targetB.status}).`,
+            });
+            return;
+          }
+        }
+      }
+
+      if (!targetBatch) {
+        targetBatch = selectedBatches.map((b: { name: string }) => b.name).join(", ");
+      }
+    }
+
     targetBatch = targetBatch || "All Batches";
 
-    let batchId: string | null = req.body.batchId || null;
     if (!batchId && Array.isArray(req.body.batches) && req.body.batches.length > 0) {
       const firstBatchName = String(req.body.batches[0]).trim();
       const foundBatch = await (prisma as any).batch.findFirst({
@@ -1770,13 +1822,6 @@ export const createAssignment = async (req: Request, res: Response): Promise<voi
       res.status(400).json({ status: "error", message: "Assignment title is required." });
       return;
     }
-
-// Logged-in user (teacher / admin)
-const teacherId = req.user?.id || null;
-const teacherName =
-  (req.user as any)?.fullName ||
-  (req.user as any)?.name ||
-  "Teacher";
 
 const data: any = {
   title: title.trim(),
@@ -1793,17 +1838,6 @@ const data: any = {
 };
 
     if (batchId) {
-      const targetB = await (prisma as any).batch.findUnique({ where: { id: batchId } });
-      if (targetB && targetB.status) {
-        const s = targetB.status.toLowerCase();
-        if (s === "upcoming" || s === "not started" || s === "pending") {
-          res.status(400).json({
-            status: "error",
-            message: `Cannot assign assignment. Batch "${targetB.name}" has not started yet (Status: ${targetB.status}).`,
-          });
-          return;
-        }
-      }
       data.batch = { connect: { id: batchId } };
     }
 
@@ -1816,16 +1850,19 @@ const data: any = {
 
     // --- BROADCAST NOTIFICATION ---
     try {
-      if (batchId) {
-        // Send only to students in this specific batch
+      const notifyBatchIds = requestedBatchIds.length > 0 ? requestedBatchIds : batchId ? [batchId] : [];
+
+      if (notifyBatchIds.length > 0) {
         const studentsInBatch = await (prisma as any).batchStudent.findMany({
-          where: { batchId },
+          where: { batchId: { in: notifyBatchIds } },
           select: { studentId: true },
         });
 
-        if (studentsInBatch.length > 0) {
-          const notifications = studentsInBatch.map((s: any) => ({
-            userId: s.studentId,
+        const uniqueStudentIds = [...new Set(studentsInBatch.map((s: { studentId: string }) => s.studentId))];
+
+        if (uniqueStudentIds.length > 0) {
+          const notifications = uniqueStudentIds.map((studentId) => ({
+            userId: studentId,
             type: "ANNOUNCEMENT",
             title: `New Assignment: ${assignment.title}`,
             message: `A new assignment "${assignment.title}" has been posted for your batch.`,
