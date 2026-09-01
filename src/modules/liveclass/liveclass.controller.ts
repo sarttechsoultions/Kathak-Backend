@@ -130,6 +130,13 @@ export const setLiveClassStatus = async (req: Request, res: Response) => {
 
   const user = req.user!;
   if (user.role === Role.TEACHER) {
+    if (!existing.batch.teacherId) {
+      res.status(403).json({
+        status: "error",
+        message: "This batch has no assigned teacher. Only admin can manage this class.",
+      });
+      return;
+    }
     const teachesBatch = existing.batch.teacherId === user.id;
     if (!teachesBatch) {
       res.status(403).json({ status: "error", message: "You can only start or end classes for your own batches." });
@@ -213,6 +220,14 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
     return;
   }
 
+  if (isTeacher && !liveClass.batch.teacherId) {
+    res.status(403).json({
+      status: "error",
+      message: "This batch has no assigned teacher. Contact admin before hosting this class.",
+    });
+    return;
+  }
+
   // Teacher/admin joining a scheduled class starts it so students can enter.
   if ((isTeacher || isAdmin) && liveClass.status === "SCHEDULED") {
     liveClass = await prisma.liveClass.update({
@@ -231,6 +246,14 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
   const agoraClientRole: "publisher" | "subscriber" = "publisher";
   const uid = numericUidFromString(user.id);
   const token = buildAgoraToken(liveClass.roomName, uid, agoraClientRole);
+
+  if (!token) {
+    res.status(503).json({
+      status: "error",
+      message: "Could not generate a secure video token. Verify AGORA_APP_CERTIFICATE on the server.",
+    });
+    return;
+  }
 
   if (!isAdmin && !isTeacher) {
     const today = new Date();

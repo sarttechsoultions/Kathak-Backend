@@ -1,7 +1,8 @@
 import { Router, Request, Response, NextFunction } from "express";
 import multer from "multer";
+import { Permission, Role } from "@prisma/client";
 import { uploadImage, uploadVideoToBunny } from "./upload.controller";
-import { authenticate } from "../../middleware/auth.middleware";
+import { authenticate, requireAnyPermission, requireRole } from "../../middleware/auth.middleware";
 import { publicUploadRateLimiter } from "../../middleware/rateLimit.middleware";
 
 const storage = multer.memoryStorage();
@@ -43,8 +44,26 @@ const router = Router();
 // PUBLIC enroll profile photo (no auth) — tighter size cap + dedicated rate limit.
 router.post("/image/public", publicUploadRateLimiter, handlePublicImageUpload, uploadImage);
 
-// Protected uploads
-router.post("/image", authenticate, handleMulterUpload, uploadImage);
-router.post("/video", authenticate, handleMulterUpload, uploadVideoToBunny);
+// Protected uploads — admin permissions or teacher/admin role for assignment media
+const protectedUpload = (req: Request, res: Response, next: NextFunction) => {
+  const role = req.user?.role;
+  if (role === Role.TEACHER || role === Role.ADMIN) {
+    next();
+    return;
+  }
+  return requireAnyPermission(
+    Permission.MANAGE_RECORDED_CLASSES,
+    Permission.UPLOAD_RECORDED_CLASS,
+    Permission.MANAGE_COURSES,
+    Permission.MANAGE_ASSIGNMENTS
+  )(req, res, next);
+};
+
+router.post("/image", authenticate, protectedUpload, handleMulterUpload, uploadImage);
+router.post("/video", authenticate, protectedUpload, handleMulterUpload, uploadVideoToBunny);
+
+// Student assignment submissions
+router.post("/student/image", authenticate, requireRole(Role.STUDENT), handleMulterUpload, uploadImage);
+router.post("/student/video", authenticate, requireRole(Role.STUDENT), handleMulterUpload, uploadVideoToBunny);
 
 export default router;

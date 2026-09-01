@@ -1,13 +1,62 @@
 ﻿import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
 
+function detectVideoMedia(raw: string, mediaType?: string | null): boolean {
+  if (mediaType === "video") return true;
+  const lower = raw.toLowerCase();
+  return (
+    lower.startsWith("data:video/") ||
+    lower.includes("/video/upload/") ||
+    /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(lower)
+  );
+}
+
+function normalizeExamQuestions(questions: unknown): unknown[] {
+  if (!Array.isArray(questions)) return [];
+
+  return questions.map((question: any, index: number) => {
+    const rawMedia = question?.mediaUrl || question?.imageUrl || null;
+    if (!rawMedia) {
+      return {
+        ...question,
+        id: question?.id || `q-${index + 1}`,
+        questionText: question?.questionText || question?.text || "",
+        mediaUrl: null,
+        imageUrl: null,
+        mediaType: null,
+      };
+    }
+
+    const isVideo = detectVideoMedia(String(rawMedia), question?.mediaType);
+
+    return {
+      ...question,
+      id: question?.id || `q-${index + 1}`,
+      questionText: question?.questionText || question?.text || "",
+      mediaType: isVideo ? "video" : "image",
+      mediaUrl: rawMedia,
+      imageUrl: isVideo ? null : rawMedia,
+    };
+  });
+}
+
 // Helper Function: To get assigned batches for a Teacher
 const getTeacherBatchIds = async (userId: string): Promise<string[]> => {
-  const teacherData = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { batchesAsTeacher: { select: { id: true } } }
-  });
-  return teacherData?.batchesAsTeacher?.map(b => b.id) || [];
+  const [byTeacherId, teacherData] = await Promise.all([
+    prisma.batch.findMany({
+      where: { teacherId: userId },
+      select: { id: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { batchesAsTeacher: { select: { id: true } } },
+    }),
+  ]);
+
+  const ids = new Set<string>();
+  byTeacherId.forEach((b) => ids.add(b.id));
+  teacherData?.batchesAsTeacher?.forEach((b) => ids.add(b.id));
+  return Array.from(ids);
 };
 
 // ==========================================
@@ -38,7 +87,7 @@ export const getExams = async (req: Request, res: Response): Promise<void> => {
         createdBy: { select: { fullName: true } },
         _count: { select: { results: true } }
       },
-      orderBy: { date: "desc" }
+      orderBy: [{ createdAt: "desc" }, { date: "desc" }]
     });
 
     const now = new Date();
@@ -64,6 +113,7 @@ export const getExams = async (req: Request, res: Response): Promise<void> => {
         batchName: ex.batch?.name || "All Batches", 
         courseName: ex.course?.title || "All Courses",
         date: ex.date,
+        createdAt: ex.createdAt,
         durationMins: ex.durationMins,
         totalMarks: ex.totalMarks,
         passingMarks: ex.passingMarks,
@@ -87,7 +137,8 @@ export const createExam = async (req: Request, res: Response): Promise<void> => 
   try {
     const { 
       title, description, examCode, type, date, 
-      durationMins, totalMarks, passingMarks, batchId, batchIds, courseId, questions
+      durationMins, totalMarks, passingMarks, batchId, batchIds, courseId, questions,
+      autoGrading, randomizeQuestions
     } = req.body;
 
     const createdById = (req as any).user?.id;
@@ -117,13 +168,20 @@ export const createExam = async (req: Request, res: Response): Promise<void> => 
     }
 
     const baseCode = examCode || `EX-${Math.floor(1000 + Math.random() * 9000)}`;
+    const examSettings =
+      autoGrading !== undefined || randomizeQuestions !== undefined
+        ? JSON.stringify({
+            autoGrading: autoGrading !== false,
+            randomizeQuestions: randomizeQuestions === true,
+          })
+        : description || null;
 
     const createdExams = await prisma.$transaction(
       targetBatchIds.map((bId, idx) =>
         prisma.exam.create({
           data: {
             title: title.trim(),
-            description: description || null,
+            description: examSettings,
             examCode: targetBatchIds.length > 1 ? `${baseCode}-${idx + 1}` : baseCode,
             type: type || "THEORY",
             date: new Date(date),
@@ -134,7 +192,7 @@ export const createExam = async (req: Request, res: Response): Promise<void> => 
             courseId: courseId || null,
             createdById: createdById || null,
             status: "SCHEDULED",
-            questionsData: questions ? (Array.isArray(questions) ? questions : []) : []
+            questionsData: questions ? normalizeExamQuestions(questions) : []
           }
         })
       )
@@ -225,6 +283,7 @@ export const getExamResults = async (req: Request, res: Response): Promise<void>
         passingMarks: r.exam?.passingMarks || 40,
         percentile: percentileMap[r.id] ?? null,
         status: r.status === "PASS" || r.status === "GRADED" ? "Passed" : (r.status === "FAIL" ? "Failed" : "Pending"),
+        submittedAt: r.submittedAt,
         answersData: r.answersData || {},
         feedback: r.feedback || "",
         grade: r.grade || "",

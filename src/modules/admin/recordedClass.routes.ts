@@ -1,24 +1,50 @@
 import { Router } from "express";
-import { authenticate, requirePermission } from "../../middleware/auth.middleware";
-import { 
-  getAdminRecordedClasses, 
-  createRecordedClass, 
-  deleteRecordedClass, 
+import { Permission, Role } from "@prisma/client";
+import { authenticate, requirePermission, requireRole } from "../../middleware/auth.middleware";
+import {
+  createRecordedClass,
+  deleteRecordedClass,
+  getAdminRecordedClassById,
+  getAdminRecordedClasses,
   getStudentRecordedClasses,
-    getStudentSingleRecordedClass,
-    recordClassView
+  getStudentSingleRecordedClass,
+  recordClassView,
 } from "./recordedClass.controller";
 
 const router = Router();
 
-// Admin Routes
-router.get("/admin/recorded-classes", authenticate, requirePermission("MANAGE_RECORDED_CLASSES" as any), getAdminRecordedClasses);
-router.post("/admin/recorded-classes", authenticate, requirePermission("MANAGE_RECORDED_CLASSES" as any), createRecordedClass);
-router.delete("/admin/recorded-classes/:id", authenticate, requirePermission("MANAGE_RECORDED_CLASSES" as any), deleteRecordedClass);
-router.post("/student/recorded-classes/:id/view", authenticate, recordClassView);
+router.get(
+  "/admin/recorded-classes",
+  authenticate,
+  requirePermission(Permission.MANAGE_RECORDED_CLASSES),
+  getAdminRecordedClasses
+);
+router.get(
+  "/admin/recorded-classes/:id",
+  authenticate,
+  requirePermission(Permission.MANAGE_RECORDED_CLASSES),
+  getAdminRecordedClassById
+);
+router.post(
+  "/admin/recorded-classes",
+  authenticate,
+  requirePermission(Permission.MANAGE_RECORDED_CLASSES),
+  createRecordedClass
+);
+router.delete(
+  "/admin/recorded-classes/:id",
+  authenticate,
+  requirePermission(Permission.MANAGE_RECORDED_CLASSES),
+  deleteRecordedClass
+);
 
-// Student Route
-router.get("/student/recorded-classes", authenticate, getStudentRecordedClasses);
-router.get("/student/recorded-classes/:id", authenticate, getStudentSingleRecordedClass);
+router.get("/student/recorded-classes", authenticate, requireRole(Role.STUDENT), getStudentRecordedClasses);
+router.get(
+  "/student/recorded-classes/:id",
+  authenticate,
+  requireRole(Role.STUDENT),
+  getStudentSingleRecordedClass
+);
+router.post("/student/recorded-classes/:id/view", authenticate, requireRole(Role.STUDENT), recordClassView);
 
 export default router;

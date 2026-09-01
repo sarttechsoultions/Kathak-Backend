@@ -10,7 +10,7 @@ import {
   validatePortalAccess,
   signUserToken,
 } from "../../lib/authHelpers";
-import { getUserDisplayName, getTeacherBatchNames, getStudentBatchName, isOneToOneBatch } from "../../lib/batchHelpers";
+import { getUserDisplayName, getTeacherBatchNames, getStudentBatchName, isOneToOneBatch, resolveStudentBatchForAssignment } from "../../lib/batchHelpers";
 import { sendEmail } from "../../lib/mailer";
 import {
   completePendingEnrollment,
@@ -735,13 +735,6 @@ export const getStudentAssignments = async (req: Request, res: Response): Promis
       include: { batch: true }
     });
 
-    const enrolledBatchNames: string[] = studentBatches
-      .map((sb: any) => sb.batch?.name || sb.batch?.code)
-      .filter(Boolean);
-    const enrolledBatchIds: string[] = studentBatches
-      .map((sb: any) => sb.batchId)
-      .filter(Boolean);
-
     const allAssignments = await (prisma as any).assignment.findMany({
       include: {
         submissions: { where: { studentId: userId } }
@@ -749,109 +742,109 @@ export const getStudentAssignments = async (req: Request, res: Response): Promis
       orderBy: { createdAt: "desc" }
     });
 
-    // Filter assignments specifically for enrolled student batches
-    const filteredAssignments = allAssignments.filter((a: any) => {
-      // If student is not enrolled in any batch yet, show all assignments or "All Batches"
-      if (enrolledBatchNames.length === 0 && enrolledBatchIds.length === 0) {
-        return true;
+    const filteredAssignments = allAssignments
+      .map((a: any) => ({
+        assignment: a,
+        studentBatch: resolveStudentBatchForAssignment(a, studentBatches),
+      }))
+      .filter((entry: { studentBatch: unknown }) => entry.studentBatch !== null);
+
+    const mapped = filteredAssignments.map(({ assignment: a, studentBatch }: any) => {
+      const sub = a.submissions[0];
+      const batchLabel = studentBatch?.courseName || studentBatch?.name || "KATHAK";
+      let status = "PENDING";
+      let reassignmentNote: string | null = null;
+
+      if (sub) {
+        if (sub.status === "GRADED") {
+          status = "EVALUATED";
+        } else if (sub.status === "SUBMITTED") {
+          status = "SUBMITTED";
+        } else if (sub.status === "PENDING" && sub.feedback) {
+          try {
+            const parsed =
+              typeof sub.feedback === "string" ? JSON.parse(sub.feedback) : sub.feedback;
+            if (parsed?.type === "reassign") {
+              status = "REASSIGNED";
+              reassignmentNote = parsed.comment || null;
+            }
+          } catch {
+            // keep PENDING
+          }
+        }
       }
 
-      // "All Batches" or "All" targets all students
-      if (!a.batchName || a.batchName === "All Batches" || a.batchName === "All" || a.batchName === "All Batches & Courses") {
-        return true;
+      let feedbackComment: string | null = reassignmentNote;
+      let scoreBreakdown: { name: string; score: number }[] | null = null;
+      let correctionNotes: string[] = [];
+
+      if (sub?.feedback && status !== "REASSIGNED") {
+        try {
+          const parsed =
+            typeof sub.feedback === "string" ? JSON.parse(sub.feedback) : sub.feedback;
+          feedbackComment = parsed?.comment || parsed?.feedbackNotes || null;
+          if (Array.isArray(parsed?.criteriaParts)) {
+            scoreBreakdown = parsed.criteriaParts.map((p: any) => ({
+              name: String(p.name || p.label || "Criteria"),
+              score: Number(p.score) || 0,
+            }));
+          }
+          if (Array.isArray(parsed?.pointers)) {
+            correctionNotes = parsed.pointers.filter(Boolean);
+          }
+        } catch {
+          feedbackComment = typeof sub.feedback === "string" ? sub.feedback : null;
+        }
       }
 
-      // Check batch ID match
-      if (a.batchId && enrolledBatchIds.includes(a.batchId)) {
-        return true;
-      }
-
-      // Check batch name match (exact or comma-separated target batch list)
-      if (a.batchName) {
-        const targetList = a.batchName.split(",").map((s: string) => s.trim().toLowerCase());
-        const isMatch = enrolledBatchNames.some((eName: string) =>
-          targetList.some((tName: string) => tName.includes(eName.toLowerCase()) || eName.toLowerCase().includes(tName))
-        );
-        if (isMatch) return true;
-      }
-
-      return false;
+      return {
+        id: a.id,
+        submissionId: sub?.id || null,
+        name: a.title,
+        typeTag: a.typeTag || "Practical Assessment",
+        course: batchLabel,
+        batchName: studentBatch?.name || null,
+        dueDate: new Date(a.dueDate).toLocaleDateString("en-US", {
+          month: "short",
+          day: "2-digit",
+          year: "numeric",
+        }),
+        status,
+        grade: sub?.grade ? `${sub.grade}/100` : "—",
+        gradeValue: sub?.grade ? Number(sub.grade) : null,
+        feedback: feedbackComment || sub?.notes || null,
+        scoreBreakdown,
+        correctionNotes,
+        notes: sub?.notes || null,
+        fileUrl: sub?.fileUrl,
+        referenceFileUrl: a.referenceFileUrl || null,
+        referenceFileName: a.referenceFileName || null,
+        teacherName: a.teacherName || null,
+        evaluationCriteria: a.evaluationCriteria || null,
+        description: a.description || null,
+        maxPoints: a.totalPoints ? `${a.totalPoints} pts` : "100 pts",
+        totalPoints: a.totalPoints || 100,
+        submittedAt: sub?.submittedAt
+          ? new Date(sub.submittedAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : null,
+        evaluatedAt: sub?.updatedAt && sub.status === "GRADED"
+          ? new Date(sub.updatedAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })
+          : null,
+      };
     });
 
-const mapped = filteredAssignments.map((a: any) => {
-  const sub = a.submissions[0];
-  let status = "PENDING";
-  if (sub) {
-    status = sub.status === "GRADED" ? "EVALUATED" : "SUBMITTED";
-  }
-
-  let feedbackComment: string | null = null;
-  let scoreBreakdown: { label: string; score: number }[] | null = null;
-  let correctionNotes: string[] = [];
-
-  if (sub?.feedback) {
-    try {
-      const parsed =
-        typeof sub.feedback === "string" ? JSON.parse(sub.feedback) : sub.feedback;
-      feedbackComment = parsed?.comment || parsed?.feedbackNotes || null;
-      if (Array.isArray(parsed?.criteriaParts)) {
-        scoreBreakdown = parsed.criteriaParts.map((p: any) => ({
-          label: String(p.name || p.label || "Criteria"),
-          score: Number(p.score) || 0,
-        }));
-      }
-      if (Array.isArray(parsed?.pointers)) {
-        correctionNotes = parsed.pointers.filter(Boolean);
-      }
-    } catch {
-      feedbackComment = typeof sub.feedback === "string" ? sub.feedback : null;
-    }
-  }
-
-  return {
-    id: a.id,
-    submissionId: sub?.id || null,
-    name: a.title,
-    typeTag: a.typeTag || "Practical Assessment",
-    course: a.batchName || "KATHAK",
-    dueDate: new Date(a.dueDate).toLocaleDateString("en-US", {
-      month: "short",
-      day: "2-digit",
-      year: "numeric",
-    }),
-    status,
-    grade: sub?.grade ? `${sub.grade}/100` : "—",
-    gradeValue: sub?.grade ? Number(sub.grade) : null,
-    feedback: feedbackComment || sub?.notes || null,
-    scoreBreakdown,
-    correctionNotes,
-    notes: sub?.notes || null,
-    fileUrl: sub?.fileUrl,
-    referenceFileUrl: a.referenceFileUrl || null,
-    description: a.description || null,
-    maxPoints: a.totalPoints ? `${a.totalPoints} pts` : "100 pts",
-    totalPoints: a.totalPoints || 100,
-    submittedAt: sub?.submittedAt
-      ? new Date(sub.submittedAt).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      : null,
-    evaluatedAt: sub?.updatedAt && sub.status === "GRADED"
-      ? new Date(sub.updatedAt).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })
-      : null,
-  };
-});
-
     const totalAssigned = mapped.length;
-    const pendingCount = mapped.filter((m: any) => m.status === "PENDING").length;
+    const pendingCount = mapped.filter((m: any) => m.status === "PENDING" || m.status === "REASSIGNED").length;
     const completedCount = mapped.filter((m: any) => m.status === "EVALUATED" || m.status === "SUBMITTED").length;
 
     res.json({
@@ -897,7 +890,9 @@ export const submitStudentAssignment = async (req: Request, res: Response): Prom
         fileUrl,
         notes,
         submittedAt: new Date(),
-        status: "SUBMITTED"
+        status: "SUBMITTED",
+        grade: null,
+        feedback: null,
       },
       create: {
         assignmentId,
@@ -1172,12 +1167,22 @@ export const getStudentDashboard = async (req: Request, res: Response): Promise<
     }) : [];
 
     const todayStr = new Date().toISOString().split("T")[0];
-    const todayClass = liveClasses.find((lc: any) => {
-      const lcDate = new Date(lc.scheduledStart).toISOString().split("T")[0];
-      return lcDate === todayStr;
-    });
+    const activeClasses = liveClasses.filter(
+      (lc: any) => lc.status !== "COMPLETED" && lc.status !== "CANCELLED" && new Date(lc.scheduledEnd).getTime() > Date.now()
+    );
 
-    const upcomingClass = liveClasses.find((lc: any) => new Date(lc.scheduledStart).getTime() > Date.now());
+    const todayClass =
+      activeClasses.find((lc: any) => lc.status === "LIVE") ||
+      activeClasses.find((lc: any) => {
+        const lcDate = new Date(lc.scheduledStart).toISOString().split("T")[0];
+        return lcDate === todayStr;
+      });
+
+    const upcomingClass =
+      activeClasses.find((lc: any) => lc.status === "LIVE") ||
+      activeClasses.find(
+        (lc: any) => lc.status === "SCHEDULED" && new Date(lc.scheduledStart).getTime() > Date.now()
+      );
 
     // Calculate pending assignments
     const allBatchAssignments = enrolledBatches.flatMap((b: any) => b.assignments || []);
