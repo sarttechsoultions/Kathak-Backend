@@ -64,7 +64,7 @@ export function assignmentAppliesToStudentBatch(
 
 export function resolveStudentBatchForAssignment<
   T extends { batchId?: string | null; batchName?: string | null },
-  B extends { id: string; name: string; code: string; courseName?: string }
+  B extends { id: string; name: string; code: string; courseName?: string | null }
 >(
   assignment: T,
   studentBatches: Array<{ batchId: string; batch: B }>
