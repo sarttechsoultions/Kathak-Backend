@@ -75,4 +75,10 @@ export const env = {
   publicUrl: isProduction
     ? requireEnv("PUBLIC_BACKEND_URL")
     : (process.env.PUBLIC_BACKEND_URL?.trim() || `http://localhost:${Number(process.env.PORT) || 5000}`),
+
+  googlePlacesApiKey: process.env.GOOGLE_PLACES_API_KEY?.trim() || "",
+  googlePlaceId: process.env.GOOGLE_PLACE_ID?.trim() || "",
+  googlePlaceQuery:
+    process.env.GOOGLE_PLACE_QUERY?.trim() ||
+    "Kathak by Harshita G-A-63 Bhawani Nagar Sikar Road Jaipur",
 } as const;
