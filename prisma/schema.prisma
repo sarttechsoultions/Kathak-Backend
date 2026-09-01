@@ -241,6 +241,12 @@ model Course {
   oneToOneClassesCount String         // Perfect: Store "Minimum 4 classes per month"
   badgeBgColor         String         @default("#76D7C4")
   borderColor          String         @default("border-[#76D7C4]")
+  intro                String?
+  marketingCategory    String         @default("beginners")
+  aliases              String[]       @default([])
+  showOnHome           Boolean        @default(true)
+  homepageSortOrder    Int            @default(0)
+  showExam             Boolean        @default(true)
   published            Boolean        @default(true)
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt

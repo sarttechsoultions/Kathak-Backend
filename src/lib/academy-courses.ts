@@ -1,5 +1,6 @@
 import { CourseCategory } from "@prisma/client";
 import { prisma } from "./prisma";
+import { SLUG_MARKETING_DEFAULTS } from "./publicCourseMapper";
 
 export type AcademyCourseSeed = {
   slug: string;
@@ -290,6 +291,22 @@ const matchesCourse = (
   return false;
 };
 
+function inferMarketingCategory(slug: string, title: string): string {
+  const key = `${slug} ${title}`.toLowerCase();
+  if (key.includes("kid")) return "kids";
+  if (key.includes("ladies") || key.includes("wellness")) return "ladies";
+  if (key.includes("hobby")) return "hobby";
+  if (key.includes("intermediate")) return "intermediate";
+  if (key.includes("advanced") || key.includes("premium")) return "advanced";
+  return "beginners";
+}
+
+function firstIntroFromDescription(description: string): string {
+  const about = description.split(/\n\s*\n/)[0]?.trim() || description.trim();
+  if (about.length <= 180) return about;
+  return `${about.slice(0, 177).trim()}...`;
+}
+
 export const upsertAcademyCourses = async () => {
   const existing = await prisma.course.findMany({
     select: { id: true, slug: true, title: true, thumbnail: true },
@@ -312,6 +329,11 @@ export const upsertAcademyCourses = async () => {
         ) || null;
     }
 
+    const marketingDefaults = SLUG_MARKETING_DEFAULTS[course.slug] || {
+      marketingCategory: inferMarketingCategory(course.slug, course.title),
+      aliases: course.aliases,
+    };
+
     const data = {
       title: course.title,
       slug: course.slug,
@@ -325,6 +347,12 @@ export const upsertAcademyCourses = async () => {
       oneToOneClassesCount: course.oneToOneClassesCount,
       badgeBgColor: course.badgeBgColor,
       borderColor: course.borderColor,
+      intro: marketingDefaults.intro || firstIntroFromDescription(course.description),
+      marketingCategory: marketingDefaults.marketingCategory,
+      aliases: marketingDefaults.aliases || [],
+      showOnHome: true,
+      homepageSortOrder: academyCourses.findIndex((item) => item.slug === course.slug),
+      showExam: marketingDefaults.showExam ?? true,
       published: true,
       thumbnail:
         found?.thumbnail && found.thumbnail.startsWith("http")

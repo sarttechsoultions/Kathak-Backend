@@ -83,6 +83,61 @@ export function resolveStudentBatchForAssignment<
   return null;
 }
 
+export type StudentBatchMembershipRow = {
+  batchId: string;
+  batch: { id: string; name: string; code: string; courseName?: string | null };
+};
+
+/** All batch memberships for a student (supports multi-batch enrollment). */
+export async function getStudentBatchMembershipRows(studentId: string): Promise<StudentBatchMembershipRow[]> {
+  const memberships = await prisma.batchStudent.findMany({
+    where: { studentId },
+    include: {
+      batch: {
+        select: { id: true, name: true, code: true, courseName: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return memberships.map((membership) => ({
+    batchId: membership.batch.id,
+    batch: membership.batch,
+  }));
+}
+
+/** Prisma where-clause for content targeted at a student's enrolled batches. */
+export function buildStudentBatchTargetWhere(
+  memberships: StudentBatchMembershipRow[]
+): Record<string, unknown> {
+  if (memberships.length === 0) {
+    return { id: { in: [] } };
+  }
+
+  const orConditions: Record<string, unknown>[] = [
+    { batchName: { equals: "all batches", mode: "insensitive" } },
+    { batchName: { equals: "All Batches", mode: "insensitive" } },
+    { batchName: "" },
+  ];
+
+  for (const membership of memberships) {
+    orConditions.push({ batchId: membership.batch.id });
+    orConditions.push({ batchName: membership.batch.name });
+    orConditions.push({ batchName: membership.batch.code });
+    orConditions.push({ batchName: { contains: membership.batch.name, mode: "insensitive" } });
+    orConditions.push({ batchName: { contains: membership.batch.code, mode: "insensitive" } });
+  }
+
+  return { OR: orConditions };
+}
+
+export function studentCanAccessBatchTarget<
+  T extends { batchId?: string | null; batchName?: string | null },
+  B extends { id: string; name: string; code: string; courseName?: string | null }
+>(target: T, memberships: Array<{ batchId: string; batch: B }>): boolean {
+  return resolveStudentBatchForAssignment(target, memberships) !== null;
+}
+
 /** Retrieve batch names assigned to the teacher using teacherId or exact teacherName */
 export async function getTeacherBatchNames(teacherId: string, teacherName?: string): Promise<string[]> {
   try {

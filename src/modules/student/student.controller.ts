@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt, { SignOptions } from "jsonwebtoken";
 import { prisma } from "../../lib/prisma";
+import { mapCourseToPublicMarketingCourse } from "../../lib/publicCourseMapper";
 import { env } from "../../config/env";
 import {
   setPortalAuthCookie,
@@ -880,6 +881,29 @@ export const submitStudentAssignment = async (req: Request, res: Response): Prom
       return;
     }
 
+    const studentBatches = await (prisma as any).batchStudent.findMany({
+      where: { studentId: userId },
+      include: { batch: true },
+    });
+
+    const assignment = await (prisma as any).assignment.findUnique({
+      where: { id: assignmentId },
+    });
+
+    if (!assignment) {
+      res.status(404).json({ status: "error", message: "Assignment not found." });
+      return;
+    }
+
+    const matchedBatch = resolveStudentBatchForAssignment(assignment, studentBatches);
+    if (!matchedBatch) {
+      res.status(403).json({
+        status: "error",
+        message: "Access denied: this assignment is not assigned to your batch.",
+      });
+      return;
+    }
+
     const student = await prisma.user.findUnique({ where: { id: userId } });
 
     const submission = await (prisma as any).assignmentSubmission.upsert({
@@ -1331,6 +1355,61 @@ export const getPublicCourses = async (req: Request, res: Response) => {
     });
   } catch (error) {
     res.status(500).json({ status: "error", message: "Failed to fetch courses" });
+  }
+};
+
+export const getPublicMarketingCourses = async (req: Request, res: Response) => {
+  try {
+    const homepageOnly = String(req.query.homepage || "") === "true";
+
+    const courses = await prisma.course.findMany({
+      where: {
+        published: true,
+        ...(homepageOnly ? { showOnHome: true } : {}),
+      },
+      orderBy: [{ homepageSortOrder: "asc" }, { createdAt: "asc" }],
+    });
+
+    res.json({
+      status: "success",
+      data: {
+        courses: courses.map(mapCourseToPublicMarketingCourse),
+      },
+    });
+  } catch (error) {
+    console.error("Public marketing courses error:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch public courses" });
+  }
+};
+
+export const getPublicMarketingCourseBySlug = async (req: Request, res: Response) => {
+  try {
+    const slug = String(req.params.slug || "").trim().toLowerCase();
+    if (!slug) {
+      return res.status(400).json({ status: "error", message: "Course slug is required." });
+    }
+
+    const courses = await prisma.course.findMany({
+      where: { published: true },
+    });
+
+    const matched = courses.find(
+      (course) =>
+        course.slug.toLowerCase() === slug ||
+        (course.aliases || []).some((alias) => alias.toLowerCase() === slug)
+    );
+
+    if (!matched) {
+      return res.status(404).json({ status: "error", message: "Course not found." });
+    }
+
+    res.json({
+      status: "success",
+      data: mapCourseToPublicMarketingCourse(matched),
+    });
+  } catch (error) {
+    console.error("Public marketing course error:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch course details" });
   }
 };
 
