@@ -1,15 +1,44 @@
 import { LiveClassStatus, Role } from "@prisma/client";
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
+import {
+  formatClassSlotTitle,
+  formatMonthYearLabel,
+  generateMonthlyClassSlots,
+} from "../../lib/classScheduleGenerator";
+import { parseLiveClassReminderPrefs } from "../../lib/liveClassReminders";
+import {
+  canTeacherJoinClass,
+  isTeacherUpcomingVisible,
+  minutesUntilTeacherCanJoin,
+  TEACHER_EARLY_JOIN_MINUTES,
+} from "../../lib/liveClassAccess";
 import { getIO } from "../../lib/socket";
+import { teacherOwnsBatch } from "../../lib/teacherBatchAccess";
+import { createNotification } from "../notification/notification.controller";
 import { agoraKeyReady, buildAgoraToken, numericUidFromString } from "./agoraToken";
 
-const serialise = (liveClass: any) => ({
+const serialise = (liveClass: any, extras?: Record<string, unknown>) => ({
   ...liveClass,
   batchName: liveClass.batch?.name,
   batchCode: liveClass.batch?.code,
   courseName: liveClass.batch?.courseName,
+  ...extras,
 });
+
+const serialiseForTeacher = (liveClass: any) => {
+  const now = new Date();
+  const payload = {
+    scheduledStart: liveClass.scheduledStart,
+    scheduledEnd: liveClass.scheduledEnd,
+    status: liveClass.status,
+  };
+  return serialise(liveClass, {
+    teacherVisible: isTeacherUpcomingVisible(payload, now),
+    teacherCanJoin: canTeacherJoinClass(payload, now),
+    minutesUntilJoin: minutesUntilTeacherCanJoin(payload, now),
+  });
+};
 
 const broadcastClass = (liveClass: any) => {
   try {
@@ -19,14 +48,38 @@ const broadcastClass = (liveClass: any) => {
   }
 };
 
-const batchSelect = { name: true, code: true, courseName: true, teacherId: true } as const;
+const batchSelect = { name: true, code: true, courseName: true, teacherId: true, teacherName: true, schedule: true } as const;
+
+const notifyBatchStudents = async (
+  batchId: string,
+  opts: { type: string; title: string; message: string; link?: string }
+) => {
+  const memberships = await prisma.batchStudent.findMany({
+    where: { batchId },
+    select: {
+      studentId: true,
+      student: { select: { notificationPrefs: true } },
+    },
+  });
+
+  await Promise.all(
+    memberships.map(async (row) => {
+      const prefs = parseLiveClassReminderPrefs(row.student.notificationPrefs);
+      if (!prefs.liveClassReminders) return;
+      await createNotification(row.studentId, opts.type, opts.title, opts.message, opts.link);
+    })
+  );
+};
+
+const buildRoomName = (batchCode: string) =>
+  `kathak-${batchCode.toLowerCase().replace(/[^a-z0-9]/g, "")}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
 export const listAdminLiveClasses = async (_req: Request, res: Response) => {
   const classes = await prisma.liveClass.findMany({
     include: { batch: { select: batchSelect } },
     orderBy: { scheduledStart: "asc" },
   });
-  res.json({ status: "success", data: { classes: classes.map(serialise) } });
+  res.json({ status: "success", data: { classes: classes.map((c) => serialise(c)) } });
 };
 
 export const listStudentLiveClasses = async (req: Request, res: Response) => {
@@ -69,7 +122,7 @@ export const listStudentLiveClasses = async (req: Request, res: Response) => {
   res.json({
     status: "success",
     data: {
-      classes: classes.map(serialise),
+      classes: classes.map((c) => serialise(c)),
       stats: { completedCount, upcomingCount, overallAttendance },
     },
   });
@@ -92,7 +145,7 @@ export const createLiveClass = async (req: Request, res: Response) => {
     res.status(400).json({ status: "error", message: "A live class can be created only for an active batch." });
     return;
   }
-  const roomName = `kathak-${batch.code.toLowerCase().replace(/[^a-z0-9]/g, "")}-${Date.now().toString(36)}`;
+  const roomName = buildRoomName(batch.code);
   const liveClass = await prisma.liveClass.create({
     data: {
       batchId,
@@ -142,6 +195,13 @@ export const setLiveClassStatus = async (req: Request, res: Response) => {
       res.status(403).json({ status: "error", message: "You can only start or end classes for your own batches." });
       return;
     }
+    if (status === "LIVE" && existing.status === "SCHEDULED" && !canTeacherJoinClass(existing)) {
+      res.status(403).json({
+        status: "error",
+        message: `You can start this class ${TEACHER_EARLY_JOIN_MINUTES} minutes before the scheduled time.`,
+      });
+      return;
+    }
   }
 
   const liveClass = await prisma.liveClass.update({
@@ -150,6 +210,216 @@ export const setLiveClassStatus = async (req: Request, res: Response) => {
     include: { batch: { select: batchSelect } },
   });
   broadcastClass(liveClass);
+
+  if (status === "CANCELLED") {
+    await notifyBatchStudents(existing.batchId, {
+      type: "LIVE_CLASS_CANCELLED",
+      title: "Class Cancelled",
+      message: `"${existing.title}" scheduled for ${existing.scheduledStart.toLocaleDateString("en-IN", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        timeZone: "Asia/Kolkata",
+      })} has been cancelled.`,
+      link: "/student/classes",
+    });
+  }
+
+  res.json({ status: "success", data: serialise(liveClass) });
+};
+
+export const generateMonthLiveClasses = async (req: Request, res: Response) => {
+  const { batchId, year, month, durationMinutes, titlePrefix, skipExisting = true } = req.body;
+
+  if (!batchId || !year || !month) {
+    res.status(400).json({ status: "error", message: "Batch, year, and month are required." });
+    return;
+  }
+
+  const targetYear = parseInt(String(year), 10);
+  const targetMonth = parseInt(String(month), 10);
+  if (
+    Number.isNaN(targetYear) ||
+    Number.isNaN(targetMonth) ||
+    targetMonth < 1 ||
+    targetMonth > 12
+  ) {
+    res.status(400).json({ status: "error", message: "Invalid year or month." });
+    return;
+  }
+
+  const duration = Math.max(15, parseInt(String(durationMinutes || 60), 10) || 60);
+
+  const batch = await prisma.batch.findUnique({ where: { id: String(batchId) } });
+  if (!batch || batch.status !== "Active") {
+    res.status(400).json({ status: "error", message: "Select an active batch with a timetable." });
+    return;
+  }
+
+  if (!batch.schedule || batch.schedule === "Not Scheduled") {
+    res.status(400).json({
+      status: "error",
+      message: "This batch has no weekly timetable. Edit the batch and set class days & time first.",
+    });
+    return;
+  }
+
+  const slots = generateMonthlyClassSlots({
+    scheduleRaw: batch.schedule,
+    year: targetYear,
+    month: targetMonth,
+    durationMinutes: duration,
+    skipPast: true,
+  });
+
+  if (slots.length === 0) {
+    res.status(400).json({
+      status: "error",
+      message: "No class slots found for this month. Check batch days, time, and date range.",
+    });
+    return;
+  }
+
+  const teacherName =
+    batch.teacherName && batch.teacherName !== "Unassigned"
+      ? batch.teacherName
+      : String(req.body.teacherName || "Faculty Instructor").trim();
+
+  const created: ReturnType<typeof serialise>[] = [];
+  let skipped = 0;
+
+  for (const slot of slots) {
+    if (skipExisting) {
+      const windowStart = new Date(slot.scheduledStart.getTime() - 30 * 60 * 1000);
+      const windowEnd = new Date(slot.scheduledStart.getTime() + 30 * 60 * 1000);
+      const existing = await prisma.liveClass.findFirst({
+        where: {
+          batchId: batch.id,
+          status: { not: "CANCELLED" },
+          scheduledStart: { gte: windowStart, lte: windowEnd },
+        },
+      });
+      if (existing) {
+        skipped += 1;
+        continue;
+      }
+    }
+
+    const title =
+      String(titlePrefix || "").trim() ||
+      formatClassSlotTitle(batch.name, batch.courseName, slot.scheduledStart);
+
+    const liveClass = await prisma.liveClass.create({
+      data: {
+        batchId: batch.id,
+        title,
+        teacherName,
+        scheduledStart: slot.scheduledStart,
+        scheduledEnd: slot.scheduledEnd,
+        roomName: buildRoomName(batch.code),
+      },
+      include: { batch: { select: batchSelect } },
+    });
+
+    created.push(serialise(liveClass));
+    broadcastClass(liveClass);
+  }
+
+  if (created.length > 0) {
+    const monthLabel = formatMonthYearLabel(targetYear, targetMonth);
+    await notifyBatchStudents(batch.id, {
+      type: "LIVE_CLASS_SCHEDULE",
+      title: "Live Class Schedule Updated",
+      message: `${created.length} live class${created.length === 1 ? "" : "es"} scheduled for ${batch.name} in ${monthLabel}.`,
+      link: "/student/classes",
+    });
+  }
+
+  res.status(201).json({
+    status: "success",
+    message: `Created ${created.length} class${created.length === 1 ? "" : "es"}${skipped ? `, skipped ${skipped} existing` : ""}.`,
+    data: { created: created.length, skipped, classes: created },
+  });
+};
+
+export const rescheduleLiveClass = async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const { scheduledStart, scheduledEnd, durationMinutes, notifyStudents = true } = req.body;
+
+  if (!scheduledStart) {
+    res.status(400).json({ status: "error", message: "New date and time are required." });
+    return;
+  }
+
+  const start = new Date(scheduledStart);
+  if (Number.isNaN(start.getTime())) {
+    res.status(400).json({ status: "error", message: "Invalid start time." });
+    return;
+  }
+
+  const existing = await prisma.liveClass.findUnique({
+    where: { id },
+    include: { batch: { select: batchSelect } },
+  });
+
+  if (!existing) {
+    res.status(404).json({ status: "error", message: "Live class not found." });
+    return;
+  }
+
+  if (existing.status === "COMPLETED" || existing.status === "CANCELLED") {
+    res.status(400).json({ status: "error", message: "Cannot reschedule a completed or cancelled class." });
+    return;
+  }
+
+  let end: Date;
+  if (scheduledEnd) {
+    end = new Date(scheduledEnd);
+  } else if (durationMinutes) {
+    end = new Date(start.getTime() + Math.max(15, parseInt(String(durationMinutes), 10) || 60) * 60 * 1000);
+  } else {
+    const previousDuration = existing.scheduledEnd.getTime() - existing.scheduledStart.getTime();
+    end = new Date(start.getTime() + Math.max(15 * 60 * 1000, previousDuration));
+  }
+
+  if (Number.isNaN(end.getTime()) || end <= start) {
+    res.status(400).json({ status: "error", message: "Class end time must be after start time." });
+    return;
+  }
+
+  const liveClass = await prisma.liveClass.update({
+    where: { id },
+    data: {
+      scheduledStart: start,
+      scheduledEnd: end,
+      status: existing.status === "LIVE" ? "SCHEDULED" : existing.status,
+    },
+    include: { batch: { select: batchSelect } },
+  });
+
+  broadcastClass(liveClass);
+
+  if (notifyStudents) {
+    const newDateStr = start.toLocaleDateString("en-IN", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      timeZone: "Asia/Kolkata",
+    });
+    const newTimeStr = start.toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Asia/Kolkata",
+    });
+
+    await notifyBatchStudents(existing.batchId, {
+      type: "LIVE_CLASS_RESCHEDULED",
+      title: "Class Rescheduled",
+      message: `"${existing.title}" has been moved to ${newDateStr} at ${newTimeStr}.`,
+      link: "/student/classes",
+    });
+  }
+
   res.json({ status: "success", data: serialise(liveClass) });
 };
 
@@ -215,21 +485,29 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
     }
   }
 
-  if (isTeacher && liveClass.batch.teacherId && liveClass.batch.teacherId !== user.id) {
-    res.status(403).json({ status: "error", message: "You are not assigned to this class." });
-    return;
+  if (isTeacher) {
+    const allowed = await teacherOwnsBatch(user.id, liveClass.batch, user.role);
+    if (!allowed) {
+      res.status(403).json({ status: "error", message: "You are not assigned to this class." });
+      return;
+    }
   }
 
-  if (isTeacher && !liveClass.batch.teacherId) {
-    res.status(403).json({
-      status: "error",
-      message: "This batch has no assigned teacher. Contact admin before hosting this class.",
-    });
-    return;
+  if (isTeacher && liveClass.status === "SCHEDULED") {
+    const joinWindowStart = new Date(
+      liveClass.scheduledStart.getTime() - TEACHER_EARLY_JOIN_MINUTES * 60 * 1000
+    );
+    if (now < joinWindowStart) {
+      res.status(403).json({
+        status: "error",
+        message: `You can join this class ${TEACHER_EARLY_JOIN_MINUTES} minutes before the scheduled time.`,
+      });
+      return;
+    }
   }
 
-  // Teacher/admin joining a scheduled class starts it so students can enter.
-  if ((isTeacher || isAdmin) && liveClass.status === "SCHEDULED") {
+  // Teacher/admin goes live once class time arrives; early join stays in prep mode.
+  if ((isTeacher || isAdmin) && liveClass.status === "SCHEDULED" && now >= liveClass.scheduledStart) {
     liveClass = await prisma.liveClass.update({
       where: { id: liveClass.id },
       data: { status: "LIVE" },
@@ -329,7 +607,9 @@ export const listTeacherLiveClasses = async (req: Request, res: Response) => {
   });
 
   const completedCount = classes.filter((c) => c.status === "COMPLETED").length;
-  const upcomingCount = classes.filter((c) => c.status === "SCHEDULED" || c.status === "LIVE").length;
+  const upcomingCount = classes.filter(
+    (c) => (c.status === "SCHEDULED" || c.status === "LIVE") && new Date(c.scheduledEnd) >= new Date()
+  ).length;
 
   let overallAttendance: string | null = null;
   const [totalAttendance, presentAttendance] = await Promise.all([
@@ -343,7 +623,7 @@ export const listTeacherLiveClasses = async (req: Request, res: Response) => {
   res.json({
     status: "success",
     data: {
-      classes: classes.map(serialise),
+      classes: classes.map(serialiseForTeacher),
       stats: { completedCount, upcomingCount, overallAttendance },
     },
   });

@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { Permission, Role } from "@prisma/client";
 import { env } from "../config/env";
+import { getTokenFromCookies } from "./authHelpers";
 import { isTokenRevoked } from "./tokenBlocklist";
 import { AuthUser } from "../types/auth";
 
@@ -11,7 +12,11 @@ interface JwtPayload {
   permissions: Permission[];
 }
 
-export function extractSocketToken(auth: Record<string, unknown> | undefined, authorization?: string): string | null {
+export function extractSocketToken(
+  auth: Record<string, unknown> | undefined,
+  authorization?: string,
+  cookieHeader?: string
+): string | null {
   const fromAuth = auth?.token;
   if (typeof fromAuth === "string" && fromAuth.trim().length > 0) {
     return fromAuth.trim();
@@ -20,7 +25,7 @@ export function extractSocketToken(auth: Record<string, unknown> | undefined, au
     const token = authorization.slice(7).trim();
     if (token.length > 0) return token;
   }
-  return null;
+  return getTokenFromCookies(cookieHeader);
 }
 
 export async function verifySocketToken(token: string): Promise<AuthUser | null> {

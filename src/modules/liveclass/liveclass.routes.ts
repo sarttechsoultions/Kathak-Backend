@@ -1,11 +1,18 @@
 import { Router } from "express";
 import { Permission, Role } from "@prisma/client";
 import { authenticate, requireAnyPermission, requirePermission, requireRole } from "../../middleware/auth.middleware";
-import { createLiveClass, getLiveClassToken, listAdminLiveClasses, listStudentLiveClasses, listTeacherLiveClasses, setLiveClassStatus } from "./liveclass.controller";
+import { createLiveClass, generateMonthLiveClasses, getLiveClassToken, listAdminLiveClasses, listStudentLiveClasses, listTeacherLiveClasses, rescheduleLiveClass, setLiveClassStatus } from "./liveclass.controller";
 const router = Router();
 
 router.get("/admin/classes", authenticate, requirePermission(Permission.MANAGE_CLASSES), listAdminLiveClasses);
 router.post("/admin/classes", authenticate, requirePermission(Permission.MANAGE_CLASSES), createLiveClass);
+router.post("/admin/classes/generate-month", authenticate, requirePermission(Permission.MANAGE_CLASSES), generateMonthLiveClasses);
+router.patch(
+  "/admin/classes/:id/reschedule",
+  authenticate,
+  requirePermission(Permission.MANAGE_CLASSES),
+  rescheduleLiveClass
+);
 router.patch(
   "/admin/classes/:id/status",
   authenticate,

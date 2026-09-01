@@ -4,6 +4,8 @@ import { Role } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { extractSocketToken, verifySocketToken } from "../../lib/socketAuth";
 import { AuthUser } from "../../types/auth";
+import { canTeacherJoinClass, TEACHER_EARLY_JOIN_MINUTES } from "../../lib/liveClassAccess";
+import { teacherOwnsBatch } from "../../lib/teacherBatchAccess";
 
 type ChatMessage = { id: string; senderName: string; text: string; sentAt: string };
 type Participant = {
@@ -56,7 +58,7 @@ async function loadChatHistory(liveClassId: string): Promise<ChatMessage[]> {
 async function assertLiveClassRoomAccess(user: AuthUser, roomName: string) {
   const liveClass = await prisma.liveClass.findUnique({
     where: { roomName },
-    include: { batch: { select: { name: true, code: true, courseName: true, teacherId: true } } },
+    include: { batch: { select: { id: true, name: true, code: true, courseName: true, teacherId: true } } },
   });
 
   if (!liveClass) {
@@ -81,11 +83,14 @@ async function assertLiveClassRoomAccess(user: AuthUser, roomName: string) {
   }
 
   if (user.role === Role.TEACHER) {
-    if (!liveClass.batch.teacherId) {
-      throw new Error("This batch has no assigned teacher.");
-    }
-    if (liveClass.batch.teacherId !== user.id) {
+    const allowed = await teacherOwnsBatch(user.id, liveClass.batch, user.role);
+    if (!allowed) {
       throw new Error("You are not assigned to this class.");
+    }
+    if (liveClass.status === "SCHEDULED" && !canTeacherJoinClass(liveClass)) {
+      throw new Error(
+        `You can join this class ${TEACHER_EARLY_JOIN_MINUTES} minutes before the scheduled time.`
+      );
     }
   }
 
@@ -97,7 +102,8 @@ export function registerLiveClassSocket(io: Server) {
     try {
       const token = extractSocketToken(
         socket.handshake.auth as Record<string, unknown> | undefined,
-        socket.handshake.headers.authorization
+        socket.handshake.headers.authorization,
+        socket.handshake.headers.cookie
       );
 
       if (!token) {
@@ -153,6 +159,7 @@ export function registerLiveClassSocket(io: Server) {
 
           const history = await loadChatHistory(liveClass.id);
           socket.emit("liveclass:chat-history", history);
+          socket.emit("liveclass:joined", { roomName });
 
           const joinTime = new Date();
           participantJoinTimes[socket.id] = joinTime;
@@ -287,7 +294,12 @@ export function registerLiveClassSocket(io: Server) {
 
     socket.on("liveclass:message", async (payload: { roomName: string; message: ChatMessage }) => {
       if (!payload?.roomName || !payload?.message?.text?.trim()) return;
-      if (socket.data.roomName !== payload.roomName) return;
+      if (socket.data.roomName !== payload.roomName) {
+        socket.emit("liveclass:error", {
+          message: "Chat is not connected yet. Wait a moment and try again.",
+        });
+        return;
+      }
 
       const now = Date.now();
       const lastSent = messageRateLimit[socket.id] || 0;
@@ -337,12 +349,14 @@ export function registerLiveClassSocket(io: Server) {
       io.to(payload.roomName).emit("liveclass:message", saved);
     });
 
-    socket.on("liveclass:raise-hand", (payload: { roomName: string; senderName?: string }) => {
+    socket.on("liveclass:raise-hand", (payload: { roomName: string; raised?: boolean; senderName?: string }) => {
       if (!payload?.roomName || socket.data.roomName !== payload.roomName) return;
       if (!isStudentRole(String(socket.data.userRole))) return;
 
       io.to(payload.roomName).emit("liveclass:raise-hand", {
-        senderName: String(socket.data.userName || "Student"),
+        senderName: String(payload.senderName || socket.data.userName || "Student"),
+        studentId: socket.data.studentId as string | undefined,
+        raised: payload.raised !== false,
         at: new Date().toISOString(),
       });
     });

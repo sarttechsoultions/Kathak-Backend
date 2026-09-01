@@ -12,6 +12,7 @@ import {
   signUserToken,
 } from "../../lib/authHelpers";
 import { getUserDisplayName, getTeacherBatchNames, getStudentBatchName, isOneToOneBatch, resolveStudentBatchForAssignment } from "../../lib/batchHelpers";
+import { buildLiveClassReminders, parseLiveClassReminderPrefs } from "../../lib/liveClassReminders";
 import { sendEmail } from "../../lib/mailer";
 import {
   completePendingEnrollment,
@@ -1224,19 +1225,35 @@ export const getStudentDashboard = async (req: Request, res: Response): Promise<
     });
 
     // Reminders
-    const reminders: { title: string; subtitle: string }[] = [];
-    if (upcomingClass) {
-      reminders.push({
-        title: upcomingClass.title || "Live Practice Session",
-        subtitle: `Starting at ${new Date(upcomingClass.scheduledStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-      });
-    }
+    const reminderPrefs = parseLiveClassReminderPrefs(student.notificationPrefs);
+    const liveClassReminders = buildLiveClassReminders(
+      liveClasses.map((lc: any) => ({
+        id: lc.id,
+        title: lc.title,
+        scheduledStart: lc.scheduledStart,
+        scheduledEnd: lc.scheduledEnd,
+        status: lc.status,
+        teacherName: lc.teacherName,
+        batch: enrolledBatches.find((b: any) => b.id === lc.batchId) || firstBatch,
+      })),
+      { enabled: reminderPrefs.liveClassReminders, max: 5, daysAhead: 14 }
+    );
+
+    const reminders: { title: string; subtitle: string; kind?: string; href?: string }[] =
+      liveClassReminders.map((r) => ({
+        title: r.title,
+        subtitle: r.subtitle,
+        kind: r.kind,
+        href: r.href,
+      }));
 
     const unsubmittedWithDueDate = allBatchAssignments.filter((a: any) => !submittedAssignmentIds.has(a.id) && a.dueDate);
     unsubmittedWithDueDate.slice(0, 2).forEach((a: any) => {
       reminders.push({
         title: a.title || "Assignment Submission",
-        subtitle: `Due: ${new Date(a.dueDate).toLocaleDateString()}`
+        subtitle: `Due: ${new Date(a.dueDate).toLocaleDateString()}`,
+        kind: "assignment",
+        href: "/student/assignments",
       });
     });
 
