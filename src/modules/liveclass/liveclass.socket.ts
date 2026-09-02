@@ -122,7 +122,10 @@ async function assertLiveClassRoomAccess(
   }
 
   if (user.role === Role.STUDENT) {
-    if (liveClass.status !== "LIVE") {
+    if (
+      liveClass.status !== "LIVE" &&
+      new Date() < liveClass.scheduledStart
+    ) {
       throw new Error("This class has not started yet.");
     }
 

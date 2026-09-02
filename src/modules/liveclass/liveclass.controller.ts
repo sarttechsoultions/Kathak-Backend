@@ -230,9 +230,13 @@ export const setLiveClassStatus = async (req: Request, res: Response) => {
 
 export const generateMonthLiveClasses = async (req: Request, res: Response) => {
   const { batchId, year, month, durationMinutes, titlePrefix, skipExisting = true } = req.body;
+  const monthsToGenerate = Math.min(
+    12,
+    Math.max(1, parseInt(String(req.body.months || 1), 10) || 1)
+  );
 
   if (!batchId || !year || !month) {
-    res.status(400).json({ status: "error", message: "Batch, year, and month are required." });
+    res.status(400).json({ status: "error", message: "Batch, year, and starting month are required." });
     return;
   }
 
@@ -263,14 +267,18 @@ export const generateMonthLiveClasses = async (req: Request, res: Response) => {
     });
     return;
   }
+  const scheduleRaw = batch.schedule;
 
-  const slots = generateMonthlyClassSlots({
-    scheduleRaw: batch.schedule,
-    year: targetYear,
-    month: targetMonth,
-    durationMinutes: duration,
-    skipPast: true,
-  });
+  const slots = Array.from({ length: monthsToGenerate }, (_, offset) => {
+    const date = new Date(targetYear, targetMonth - 1 + offset, 1);
+    return generateMonthlyClassSlots({
+      scheduleRaw,
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      durationMinutes: duration,
+      skipPast: true,
+    });
+  }).flat();
 
   if (slots.length === 0) {
     res.status(400).json({
@@ -330,7 +338,7 @@ export const generateMonthLiveClasses = async (req: Request, res: Response) => {
     await notifyBatchStudents(batch.id, {
       type: "LIVE_CLASS_SCHEDULE",
       title: "Live Class Schedule Updated",
-      message: `${created.length} live class${created.length === 1 ? "" : "es"} scheduled for ${batch.name} in ${monthLabel}.`,
+      message: `${created.length} live class${created.length === 1 ? "" : "es"} scheduled for ${batch.name} in ${monthsToGenerate === 1 ? monthLabel : `${monthsToGenerate} months`}.`,
       link: "/student/classes",
     });
   }
@@ -506,8 +514,9 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
     }
   }
 
-  // Teacher/admin goes live once class time arrives; early join stays in prep mode.
-  if ((isTeacher || isAdmin) && liveClass.status === "SCHEDULED" && now >= liveClass.scheduledStart) {
+  // A class becomes live at its scheduled start, even if the teacher
+  // has not joined yet, so enrolled students can enter on time.
+  if (liveClass.status === "SCHEDULED" && now >= liveClass.scheduledStart) {
     liveClass = await prisma.liveClass.update({
       where: { id: liveClass.id },
       data: { status: "LIVE" },
@@ -517,7 +526,7 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
   }
 
   if (liveClass.status === "SCHEDULED" && !isTeacher && !isAdmin) {
-    res.status(403).json({ status: "error", message: "The class has not started yet. Wait for your teacher to go live." });
+    res.status(403).json({ status: "error", message: "The class has not started yet." });
     return;
   }
 
