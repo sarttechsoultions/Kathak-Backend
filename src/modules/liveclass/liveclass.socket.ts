@@ -476,6 +476,68 @@ export function registerLiveClassSocket(io: Server) {
           ] = joinTime;
 
           /**
+           * Automatically create the teacher's attendance record
+           * when they join a live class. Teacher attendance uses
+           * the dedicated Teacher/Staff batch marker so it appears
+           * in the teacher attendance page.
+           */
+          if (
+            isHostRole(userRole) &&
+            authUser.role === Role.TEACHER
+          ) {
+            try {
+              const todayStart = new Date();
+              todayStart.setHours(0, 0, 0, 0);
+
+              const todayEnd = new Date();
+              todayEnd.setHours(23, 59, 59, 999);
+
+              const existingAttendance =
+                await prisma.attendance.findFirst({
+                  where: {
+                    studentId: authUser.id,
+                    batchName: "Teacher/Staff",
+                    batchId: liveClass.batchId,
+                    date: {
+                      gte: todayStart,
+                      lte: todayEnd,
+                    },
+                    session: liveClass.title,
+                  },
+                });
+
+              if (!existingAttendance) {
+                const startDiffMinutes =
+                  (joinTime.getTime() -
+                    liveClass.scheduledStart.getTime()) /
+                  (1000 * 60);
+
+                await prisma.attendance.create({
+                  data: {
+                    studentId: authUser.id,
+                    studentName: userName,
+                    batchId: liveClass.batchId,
+                    batchName: "Teacher/Staff",
+                    session: liveClass.title,
+                    status:
+                      startDiffMinutes > 15
+                        ? "LATE"
+                        : "PRESENT",
+                    date: joinTime,
+                    remarks:
+                      "Auto-marked: Joined live class.",
+                  },
+                });
+              }
+            } catch (err) {
+              console.error(
+                "Auto-Attendance Teacher Join Error:",
+                err
+              );
+            }
+          }
+
+          /**
            * Store trusted socket state.
            */
           socket.data.roomName =
@@ -725,9 +787,12 @@ export function registerLiveClassSocket(io: Server) {
        */
       if (
         joinTime &&
-        isStudentRole(userRole) &&
-        authUser?.role ===
-          Role.STUDENT
+        authUser &&
+        ((
+          isStudentRole(userRole) &&
+          authUser.role === Role.STUDENT
+        ) ||
+          authUser.role === Role.TEACHER)
       ) {
         try {
           const leaveTime =
@@ -790,6 +855,14 @@ export function registerLiveClassSocket(io: Server) {
 
                     session:
                       liveClass.title,
+
+                    ...(authUser.role ===
+                      Role.TEACHER
+                      ? {
+                          batchName:
+                            "Teacher/Staff",
+                        }
+                      : {}),
                   },
                 }
               );
