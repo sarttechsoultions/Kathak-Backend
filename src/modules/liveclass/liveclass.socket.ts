@@ -1,13 +1,26 @@
 import { randomUUID } from "crypto";
 import { Server, Socket } from "socket.io";
 import { Role } from "@prisma/client";
+
 import { prisma } from "../../lib/prisma";
-import { extractSocketToken, verifySocketToken } from "../../lib/socketAuth";
+import {
+  extractSocketToken,
+  verifySocketToken,
+} from "../../lib/socketAuth";
 import { AuthUser } from "../../types/auth";
-import { canTeacherJoinClass, TEACHER_EARLY_JOIN_MINUTES } from "../../lib/liveClassAccess";
+import {
+  canTeacherJoinClass,
+  TEACHER_EARLY_JOIN_MINUTES,
+} from "../../lib/liveClassAccess";
 import { teacherOwnsBatch } from "../../lib/teacherBatchAccess";
 
-type ChatMessage = { id: string; senderName: string; text: string; sentAt: string };
+type ChatMessage = {
+  id: string;
+  senderName: string;
+  text: string;
+  sentAt: string;
+};
+
 type Participant = {
   id: string;
   userName: string;
@@ -15,6 +28,19 @@ type Participant = {
   joinedAt: string;
   studentId?: string;
   agoraUid?: number;
+
+  // Real-time media state
+  cameraOn: boolean;
+  micOn: boolean;
+
+  // Meeting state
+  handRaised: boolean;
+};
+
+type MediaStatePayload = {
+  roomName: string;
+  cameraOn?: boolean;
+  micOn?: boolean;
 };
 
 const isHostRole = (role?: string) => {
@@ -27,7 +53,15 @@ const isStudentRole = (role?: string) => {
   return value === "student";
 };
 
+/**
+ * In-memory room state.
+ *
+ * This is fine for a single backend instance.
+ * If the backend is later horizontally scaled,
+ * move this presence state to Redis + Socket.IO Redis adapter.
+ */
 const roomParticipants: Record<string, Map<string, Participant>> = {};
+
 const participantJoinTimes: Record<string, Date> = {};
 const messageRateLimit: Record<string, number> = {};
 
@@ -40,7 +74,9 @@ function roleLabel(user: AuthUser): string {
   return "Student";
 }
 
-async function loadChatHistory(liveClassId: string): Promise<ChatMessage[]> {
+async function loadChatHistory(
+  liveClassId: string
+): Promise<ChatMessage[]> {
   const rows = await prisma.liveClassChatMessage.findMany({
     where: { liveClassId },
     orderBy: { sentAt: "asc" },
@@ -55,17 +91,33 @@ async function loadChatHistory(liveClassId: string): Promise<ChatMessage[]> {
   }));
 }
 
-async function assertLiveClassRoomAccess(user: AuthUser, roomName: string) {
+async function assertLiveClassRoomAccess(
+  user: AuthUser,
+  roomName: string
+) {
   const liveClass = await prisma.liveClass.findUnique({
     where: { roomName },
-    include: { batch: { select: { id: true, name: true, code: true, courseName: true, teacherId: true } } },
+    include: {
+      batch: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          courseName: true,
+          teacherId: true,
+        },
+      },
+    },
   });
 
   if (!liveClass) {
     throw new Error("Live class room not found.");
   }
 
-  if (liveClass.status === "COMPLETED" || liveClass.status === "CANCELLED") {
+  if (
+    liveClass.status === "COMPLETED" ||
+    liveClass.status === "CANCELLED"
+  ) {
     throw new Error("This class is no longer active.");
   }
 
@@ -73,21 +125,41 @@ async function assertLiveClassRoomAccess(user: AuthUser, roomName: string) {
     if (liveClass.status !== "LIVE") {
       throw new Error("This class has not started yet.");
     }
+
     const membership = await prisma.batchStudent.findFirst({
-      where: { studentId: user.id, batchId: liveClass.batchId },
-      select: { id: true },
+      where: {
+        studentId: user.id,
+        batchId: liveClass.batchId,
+      },
+      select: {
+        id: true,
+      },
     });
+
     if (!membership) {
-      throw new Error("You are not enrolled in this class batch.");
+      throw new Error(
+        "You are not enrolled in this class batch."
+      );
     }
   }
 
   if (user.role === Role.TEACHER) {
-    const allowed = await teacherOwnsBatch(user.id, liveClass.batch, user.role);
+    const allowed = await teacherOwnsBatch(
+      user.id,
+      liveClass.batch,
+      user.role
+    );
+
     if (!allowed) {
-      throw new Error("You are not assigned to this class.");
+      throw new Error(
+        "You are not assigned to this class."
+      );
     }
-    if (liveClass.status === "SCHEDULED" && !canTeacherJoinClass(liveClass)) {
+
+    if (
+      liveClass.status === "SCHEDULED" &&
+      !canTeacherJoinClass(liveClass)
+    ) {
       throw new Error(
         `You can join this class ${TEACHER_EARLY_JOIN_MINUTES} minutes before the scheduled time.`
       );
@@ -97,40 +169,137 @@ async function assertLiveClassRoomAccess(user: AuthUser, roomName: string) {
   return liveClass;
 }
 
+function getRoomParticipants(
+  roomName: string
+): Participant[] {
+  const room = roomParticipants[roomName];
+
+  if (!room) {
+    return [];
+  }
+
+  return Array.from(room.values());
+}
+
+function broadcastRoomUsers(
+  io: Server,
+  roomName: string
+) {
+  const currentList = getRoomParticipants(roomName);
+
+  io.to(roomName).emit(
+    "liveclass:room-users",
+    currentList
+  );
+}
+
+/**
+ * Broadcast a single participant's updated state.
+ *
+ * Useful for lightweight real-time updates without forcing
+ * every client to rebuild the entire participant list.
+ */
+function broadcastParticipantState(
+  io: Server,
+  roomName: string,
+  participant: Participant
+) {
+  io.to(roomName).emit(
+    "liveclass:participant-state",
+    participant
+  );
+}
+
+/**
+ * Remove a participant from server-side presence.
+ *
+ * Returns true only when an actual participant was removed.
+ */
+function removeParticipantFromRoom(
+  roomName: string,
+  socketId: string
+): Participant | null {
+  const room = roomParticipants[roomName];
+
+  if (!room) {
+    return null;
+  }
+
+  const participant = room.get(socketId);
+
+  if (!participant) {
+    return null;
+  }
+
+  room.delete(socketId);
+
+  if (room.size === 0) {
+    delete roomParticipants[roomName];
+  }
+
+  return participant;
+}
+
 export function registerLiveClassSocket(io: Server) {
+  /**
+   * ---------------------------------------------------------
+   * SOCKET AUTHENTICATION
+   * ---------------------------------------------------------
+   */
   io.use(async (socket, next) => {
     try {
       const token = extractSocketToken(
-        socket.handshake.auth as Record<string, unknown> | undefined,
+        socket.handshake.auth as
+          | Record<string, unknown>
+          | undefined,
         socket.handshake.headers.authorization,
         socket.handshake.headers.cookie
       );
 
       if (!token) {
-        next(new Error("Authentication required."));
+        next(
+          new Error("Authentication required.")
+        );
         return;
       }
 
       const user = await verifySocketToken(token);
+
       if (!user) {
-        next(new Error("Invalid or expired session."));
+        next(
+          new Error("Invalid or expired session.")
+        );
         return;
       }
 
       socket.data.user = user;
+
       next();
     } catch (error) {
-      next(error instanceof Error ? error : new Error("Socket authentication failed."));
+      next(
+        error instanceof Error
+          ? error
+          : new Error(
+              "Socket authentication failed."
+            )
+      );
     }
   });
 
   io.on("connection", (socket: Socket) => {
-    const authUser = socket.data.user as AuthUser | undefined;
+    const authUser =
+      socket.data.user as AuthUser | undefined;
+
     if (!authUser) {
       socket.disconnect(true);
       return;
     }
 
+    /**
+     * -------------------------------------------------------
+     * JOIN ROOM
+     * -------------------------------------------------------
+     */
     socket.on(
       "liveclass:join",
       async ({
@@ -143,224 +312,760 @@ export function registerLiveClassSocket(io: Server) {
         studentId?: string;
         agoraUid?: number;
       }) => {
-        if (!roomName) return;
+        if (!roomName) {
+          return;
+        }
 
         try {
-          const liveClass = await assertLiveClassRoomAccess(authUser, roomName);
-          const dbUser = await prisma.user.findUnique({
-            where: { id: authUser.id },
-            select: { fullName: true, email: true },
-          });
-          const userName = dbUser?.fullName?.trim() || authUser.email || "User";
-          const userRole = roleLabel(authUser);
-          const studentId = authUser.role === Role.STUDENT ? authUser.id : authUser.id;
+          /**
+           * If this socket is already inside another room,
+           * clean it up before joining the new room.
+           */
+          const previousRoom =
+            socket.data.roomName as
+              | string
+              | undefined;
 
-          socket.join(roomName);
+          if (previousRoom) {
+            if (previousRoom === roomName) {
+              /**
+               * Same-room duplicate join.
+               *
+               * Instead of creating another participant,
+               * send current state again.
+               */
+              const existing =
+                roomParticipants[
+                  roomName
+                ]?.get(socket.id);
 
-          const history = await loadChatHistory(liveClass.id);
-          socket.emit("liveclass:chat-history", history);
-          socket.emit("liveclass:joined", { roomName });
+              if (existing) {
+                socket.emit(
+                  "liveclass:room-users",
+                  getRoomParticipants(roomName)
+                );
 
-          const joinTime = new Date();
-          participantJoinTimes[socket.id] = joinTime;
+                socket.emit(
+                  "liveclass:participant-state",
+                  existing
+                );
 
-          socket.data.roomName = roomName;
-          socket.data.userName = userName;
-          socket.data.userRole = userRole;
-          socket.data.studentId = studentId;
-          socket.data.liveClassId = liveClass.id;
+                socket.emit(
+                  "liveclass:joined",
+                  { roomName }
+                );
 
-          if (!roomParticipants[roomName]) {
-            roomParticipants[roomName] = new Map();
+                return;
+              }
+
+              socket.data.roomName = undefined;
+            } else {
+              /**
+               * Remove old room membership.
+               */
+              const previousParticipant =
+                removeParticipantFromRoom(
+                  previousRoom,
+                  socket.id
+                );
+
+              socket.leave(previousRoom);
+
+              if (previousParticipant) {
+                broadcastRoomUsers(
+                  io,
+                  previousRoom
+                );
+
+                io.to(previousRoom).emit(
+                  "liveclass:user-left",
+                  {
+                    id: socket.id,
+                    userName:
+                      previousParticipant.userName,
+                  }
+                );
+              }
+
+              delete participantJoinTimes[
+                socket.id
+              ];
+
+              socket.data.roomName = undefined;
+              socket.data.liveClassId =
+                undefined;
+            }
           }
 
+          /**
+           * Authorize room access using the
+           * authenticated server-side user.
+           */
+          const liveClass =
+            await assertLiveClassRoomAccess(
+              authUser,
+              roomName
+            );
+
+          /**
+           * NEVER trust userName/userRole/studentId
+           * sent by the browser.
+           *
+           * Load the authenticated user from DB.
+           */
+          const dbUser =
+            await prisma.user.findUnique({
+              where: {
+                id: authUser.id,
+              },
+              select: {
+                fullName: true,
+                email: true,
+              },
+            });
+
+          const userName =
+            dbUser?.fullName?.trim() ||
+            authUser.email ||
+            "User";
+
+          const userRole =
+            roleLabel(authUser);
+
+          const studentId =
+            authUser.role === Role.STUDENT
+              ? authUser.id
+              : undefined;
+
+          const normalizedAgoraUid =
+            Number.isFinite(Number(agoraUid)) &&
+            Number(agoraUid) > 0
+              ? Number(agoraUid)
+              : undefined;
+
+          /**
+           * Join Socket.IO room.
+           */
+          socket.join(roomName);
+
+          /**
+           * Load chat history.
+           */
+          const history =
+            await loadChatHistory(
+              liveClass.id
+            );
+
+          socket.emit(
+            "liveclass:chat-history",
+            history
+          );
+
+          socket.emit(
+            "liveclass:joined",
+            { roomName }
+          );
+
+          /**
+           * Participant timing.
+           */
+          const joinTime = new Date();
+
+          participantJoinTimes[
+            socket.id
+          ] = joinTime;
+
+          /**
+           * Store trusted socket state.
+           */
+          socket.data.roomName =
+            roomName;
+
+          socket.data.userName =
+            userName;
+
+          socket.data.userRole =
+            userRole;
+
+          socket.data.studentId =
+            studentId;
+
+          socket.data.liveClassId =
+            liveClass.id;
+
+          /**
+           * Create room map.
+           */
+          if (!roomParticipants[roomName]) {
+            roomParticipants[roomName] =
+              new Map();
+          }
+
+          /**
+           * Initial media state.
+           *
+           * IMPORTANT:
+           * These values represent what the participant
+           * says their local state is at join time.
+           *
+           * The frontend will immediately synchronize
+           * the actual Agora track state after connecting.
+           */
           const participant: Participant = {
             id: socket.id,
             userName,
             userRole,
-            joinedAt: joinTime.toISOString(),
-            studentId: authUser.role === Role.STUDENT ? authUser.id : undefined,
-            agoraUid: Number.isFinite(Number(agoraUid)) && Number(agoraUid) > 0 ? Number(agoraUid) : undefined,
+            joinedAt:
+              joinTime.toISOString(),
+
+            studentId,
+
+            agoraUid:
+              normalizedAgoraUid,
+
+            cameraOn: false,
+            micOn: false,
+
+            handRaised: false,
           };
 
-          roomParticipants[roomName].set(socket.id, participant);
-          broadcastRoomUsers(io, roomName);
-          io.to(roomName).emit("liveclass:user-joined", participant);
+          roomParticipants[
+            roomName
+          ].set(
+            socket.id,
+            participant
+          );
 
-          if (isHostRole(userRole) && liveClass.status === "SCHEDULED") {
-            const updated = await prisma.liveClass.update({
-              where: { id: liveClass.id },
-              data: { status: "LIVE" },
-              include: { batch: { select: { name: true, code: true, courseName: true, teacherId: true } } },
-            });
-            io.to(roomName).emit("liveclass:status-changed", "LIVE");
-            io.emit("liveclass:class-updated", {
-              ...updated,
-              batchName: updated.batch.name,
-              batchCode: updated.batch.code,
-              courseName: updated.batch.courseName,
-            });
+          /**
+           * Everyone gets the complete participant list.
+           */
+          broadcastRoomUsers(
+            io,
+            roomName
+          );
+
+          /**
+           * Existing compatibility event.
+           */
+          io.to(roomName).emit(
+            "liveclass:user-joined",
+            participant
+          );
+
+          /**
+           * If teacher/admin joins a scheduled class,
+           * automatically transition it to LIVE.
+           */
+          if (
+            isHostRole(userRole) &&
+            liveClass.status ===
+              "SCHEDULED"
+          ) {
+            const updated =
+              await prisma.liveClass.update({
+                where: {
+                  id: liveClass.id,
+                },
+                data: {
+                  status: "LIVE",
+                },
+                include: {
+                  batch: {
+                    select: {
+                      name: true,
+                      code: true,
+                      courseName: true,
+                      teacherId: true,
+                    },
+                  },
+                },
+              });
+
+            io.to(roomName).emit(
+              "liveclass:status-changed",
+              "LIVE"
+            );
+
+            io.emit(
+              "liveclass:class-updated",
+              {
+                ...updated,
+                batchName:
+                  updated.batch.name,
+                batchCode:
+                  updated.batch.code,
+                courseName:
+                  updated.batch.courseName,
+              }
+            );
           }
         } catch (error) {
-          socket.emit("liveclass:error", {
-            message: error instanceof Error ? error.message : "Unable to join this room.",
-          });
+          socket.emit(
+            "liveclass:error",
+            {
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Unable to join this room.",
+            }
+          );
         }
       }
     );
 
-    const handleUserLeave = async (socket: Socket) => {
-      const roomName = socket.data.roomName as string | undefined;
-      const userName = socket.data.userName as string | undefined;
-      const studentId = socket.data.studentId as string | undefined;
-      const userRole = socket.data.userRole as string | undefined;
-      const joinTime = participantJoinTimes[socket.id];
-      const authUser = socket.data.user as AuthUser | undefined;
+    /**
+     * -------------------------------------------------------
+     * USER LEAVE / DISCONNECT
+     * -------------------------------------------------------
+     */
+    const handleUserLeave = async (
+      socket: Socket
+    ) => {
+      /**
+       * Capture everything before clearing socket data.
+       */
+      const roomName =
+        socket.data.roomName as
+          | string
+          | undefined;
 
-      if (roomName && roomParticipants[roomName]) {
-        const removed = roomParticipants[roomName].delete(socket.id);
+      const userName =
+        socket.data.userName as
+          | string
+          | undefined;
 
-        if (removed) {
-          broadcastRoomUsers(io, roomName);
-          io.to(roomName).emit("liveclass:user-left", {
-            id: socket.id,
-            userName: userName || "User",
-          });
-        }
+      const userRole =
+        socket.data.userRole as
+          | string
+          | undefined;
 
-        if (roomParticipants[roomName].size === 0) {
-          delete roomParticipants[roomName];
-        }
+      const authUser =
+        socket.data.user as
+          | AuthUser
+          | undefined;
 
-        if (joinTime && isStudentRole(userRole) && authUser?.role === Role.STUDENT) {
-          try {
-            const leaveTime = new Date();
-            const durationMinutes = Math.max(1, Math.round((leaveTime.getTime() - joinTime.getTime()) / (1000 * 60)));
-            delete participantJoinTimes[socket.id];
+      const joinTime =
+        participantJoinTimes[
+          socket.id
+        ];
 
-            const liveClass = await prisma.liveClass.findUnique({ where: { roomName } });
-            if (liveClass) {
-              const todayStart = new Date();
-              todayStart.setHours(0, 0, 0, 0);
-              const todayEnd = new Date();
-              todayEnd.setHours(23, 59, 59, 999);
+      /**
+       * Prevent duplicate cleanup.
+       *
+       * This is important because explicit leave
+       * can be followed by disconnect.
+       */
+      if (!roomName) {
+        delete participantJoinTimes[
+          socket.id
+        ];
 
-              const existingAttendance = await prisma.attendance.findFirst({
-                where: {
-                  studentId: authUser.id,
-                  batchId: liveClass.batchId,
-                  date: { gte: todayStart, lte: todayEnd },
-                  session: liveClass.title,
-                },
-              });
+        delete messageRateLimit[
+          socket.id
+        ];
 
-              if (existingAttendance) {
-                const joinTimeString = joinTime.toLocaleTimeString("en-US", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: true,
-                });
-                const leaveTimeString = leaveTime.toLocaleTimeString("en-US", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: true,
-                });
-
-                await prisma.attendance.update({
-                  where: { id: existingAttendance.id },
-                  data: {
-                    remarks: `Auto-marked: Joined at ${joinTimeString}, Left at ${leaveTimeString} (${durationMinutes} mins attended).`,
-                  },
-                });
-              }
-            }
-          } catch (err) {
-            console.error("Auto-Attendance Leave Recording Error:", err);
-          }
-        }
-      } else {
-        delete participantJoinTimes[socket.id];
-      }
-
-      delete messageRateLimit[socket.id];
-    };
-
-    socket.on("liveclass:leave", ({ roomName }: { roomName: string }) => {
-      if (roomName) {
-        socket.leave(roomName);
-        void handleUserLeave(socket);
-      }
-    });
-
-    socket.on("liveclass:message", async (payload: { roomName: string; message: ChatMessage }) => {
-      if (!payload?.roomName || !payload?.message?.text?.trim()) return;
-      if (socket.data.roomName !== payload.roomName) {
-        socket.emit("liveclass:error", {
-          message: "Chat is not connected yet. Wait a moment and try again.",
-        });
         return;
       }
 
-      const now = Date.now();
-      const lastSent = messageRateLimit[socket.id] || 0;
-      if (now - lastSent < MESSAGE_COOLDOWN_MS) return;
-      messageRateLimit[socket.id] = now;
+      /**
+       * Immediately clear socket's room state.
+       */
+      socket.data.roomName =
+        undefined;
 
-      const text = payload.message.text.trim().slice(0, MAX_MESSAGE_LENGTH);
-      const senderName = String(socket.data.userName || "User");
-      const liveClassId = socket.data.liveClassId as string | undefined;
-      const authUser = socket.data.user as AuthUser | undefined;
+      socket.data.liveClassId =
+        undefined;
 
-      let saved: ChatMessage;
-      try {
-        if (liveClassId) {
-          const row = await prisma.liveClassChatMessage.create({
-            data: {
-              liveClassId,
-              senderId: authUser?.id,
-              senderName,
-              text,
-            },
-          });
-          saved = {
-            id: row.id,
-            senderName: row.senderName,
-            text: row.text,
-            sentAt: row.sentAt.toISOString(),
-          };
-        } else {
-          saved = {
-            id: payload.message.id || randomUUID(),
-            senderName,
-            text,
-            sentAt: new Date().toISOString(),
-          };
-        }
-      } catch (err) {
-        console.error("Failed to persist chat message:", err);
-        saved = {
-          id: payload.message.id || randomUUID(),
-          senderName,
-          text,
-          sentAt: new Date().toISOString(),
-        };
+      socket.data.userName =
+        undefined;
+
+      socket.data.userRole =
+        undefined;
+
+      socket.data.studentId =
+        undefined;
+
+      /**
+       * Remove from server-side presence.
+       */
+      const removed =
+        removeParticipantFromRoom(
+          roomName,
+          socket.id
+        );
+
+      if (removed) {
+        broadcastRoomUsers(
+          io,
+          roomName
+        );
+
+        io.to(roomName).emit(
+          "liveclass:user-left",
+          {
+            id: socket.id,
+            userName:
+              removed.userName ||
+              userName ||
+              "User",
+          }
+        );
       }
 
-      io.to(payload.roomName).emit("liveclass:message", saved);
-    });
+      delete participantJoinTimes[
+        socket.id
+      ];
 
-    socket.on("liveclass:raise-hand", (payload: { roomName: string; raised?: boolean; senderName?: string }) => {
-      if (!payload?.roomName || socket.data.roomName !== payload.roomName) return;
-      if (!isStudentRole(String(socket.data.userRole))) return;
+      delete messageRateLimit[
+        socket.id
+      ];
 
-      io.to(payload.roomName).emit("liveclass:raise-hand", {
-        senderName: String(payload.senderName || socket.data.userName || "Student"),
-        studentId: socket.data.studentId as string | undefined,
-        raised: payload.raised !== false,
-        at: new Date().toISOString(),
-      });
-    });
+      /**
+       * Attendance tracking.
+       */
+      if (
+        joinTime &&
+        isStudentRole(userRole) &&
+        authUser?.role ===
+          Role.STUDENT
+      ) {
+        try {
+          const leaveTime =
+            new Date();
 
+          const durationMinutes =
+            Math.max(
+              1,
+              Math.round(
+                (leaveTime.getTime() -
+                  joinTime.getTime()) /
+                  (1000 * 60)
+              )
+            );
+
+          const liveClass =
+            await prisma.liveClass.findUnique(
+              {
+                where: {
+                  roomName,
+                },
+              }
+            );
+
+          if (liveClass) {
+            const todayStart =
+              new Date();
+
+            todayStart.setHours(
+              0,
+              0,
+              0,
+              0
+            );
+
+            const todayEnd =
+              new Date();
+
+            todayEnd.setHours(
+              23,
+              59,
+              59,
+              999
+            );
+
+            const existingAttendance =
+              await prisma.attendance.findFirst(
+                {
+                  where: {
+                    studentId:
+                      authUser.id,
+
+                    batchId:
+                      liveClass.batchId,
+
+                    date: {
+                      gte: todayStart,
+                      lte: todayEnd,
+                    },
+
+                    session:
+                      liveClass.title,
+                  },
+                }
+              );
+
+            if (existingAttendance) {
+              const joinTimeString =
+                joinTime.toLocaleTimeString(
+                  "en-US",
+                  {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: true,
+                  }
+                );
+
+              const leaveTimeString =
+                leaveTime.toLocaleTimeString(
+                  "en-US",
+                  {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: true,
+                  }
+                );
+
+              await prisma.attendance.update(
+                {
+                  where: {
+                    id:
+                      existingAttendance.id,
+                  },
+                  data: {
+                    remarks:
+                      `Auto-marked: Joined at ${joinTimeString}, Left at ${leaveTimeString} (${durationMinutes} mins attended).`,
+                  },
+                }
+              );
+            }
+          }
+        } catch (err) {
+          console.error(
+            "Auto-Attendance Leave Recording Error:",
+            err
+          );
+        }
+      }
+    };
+
+    /**
+     * Explicit leave.
+     */
+    socket.on(
+      "liveclass:leave",
+      ({
+        roomName,
+      }: {
+        roomName: string;
+      }) => {
+        /**
+         * Only allow leaving the room this socket
+         * is actually registered in.
+         */
+        if (
+          !roomName ||
+          socket.data.roomName !==
+            roomName
+        ) {
+          return;
+        }
+
+        socket.leave(roomName);
+
+        void handleUserLeave(
+          socket
+        );
+      }
+    );
+
+    /**
+     * -------------------------------------------------------
+     * MEDIA STATE
+     * -------------------------------------------------------
+     *
+     * Sent by every participant whenever their local
+     * microphone/camera state changes.
+     */
+    socket.on(
+      "liveclass:media-state",
+      (payload: MediaStatePayload) => {
+        const roomName =
+          String(
+            payload?.roomName || ""
+          );
+
+        if (!roomName) {
+          return;
+        }
+
+        /**
+         * Prevent spoofing another room.
+         */
+        if (
+          socket.data.roomName !==
+          roomName
+        ) {
+          return;
+        }
+
+        const room =
+          roomParticipants[
+            roomName
+          ];
+
+        if (!room) {
+          return;
+        }
+
+        const participant =
+          room.get(socket.id);
+
+        if (!participant) {
+          return;
+        }
+
+        /**
+         * Update only supplied fields.
+         */
+        if (
+          typeof payload.cameraOn ===
+          "boolean"
+        ) {
+          participant.cameraOn =
+            payload.cameraOn;
+        }
+
+        if (
+          typeof payload.micOn ===
+          "boolean"
+        ) {
+          participant.micOn =
+            payload.micOn;
+        }
+
+        /**
+         * Save updated participant.
+         */
+        room.set(
+          socket.id,
+          participant
+        );
+
+        /**
+         * Lightweight update.
+         */
+        broadcastParticipantState(
+          io,
+          roomName,
+          participant
+        );
+
+        /**
+         * Also send complete state for compatibility.
+         */
+        broadcastRoomUsers(
+          io,
+          roomName
+        );
+      }
+    );
+
+    /**
+     * -------------------------------------------------------
+     * RAISE HAND
+     * -------------------------------------------------------
+     */
+    socket.on(
+      "liveclass:raise-hand",
+      (payload: {
+        roomName: string;
+        raised?: boolean;
+        senderName?: string;
+      }) => {
+        const roomName =
+          String(
+            payload?.roomName || ""
+          );
+
+        if (!roomName) {
+          return;
+        }
+
+        if (
+          socket.data.roomName !==
+          roomName
+        ) {
+          return;
+        }
+
+        if (
+          !isStudentRole(
+            String(
+              socket.data.userRole
+            )
+          )
+        ) {
+          return;
+        }
+
+        const room =
+          roomParticipants[
+            roomName
+          ];
+
+        if (!room) {
+          return;
+        }
+
+        const participant =
+          room.get(socket.id);
+
+        if (!participant) {
+          return;
+        }
+
+        const raised =
+          payload.raised !== false;
+
+        participant.handRaised =
+          raised;
+
+        room.set(
+          socket.id,
+          participant
+        );
+
+        /**
+         * Broadcast complete participant state.
+         */
+        broadcastParticipantState(
+          io,
+          roomName,
+          participant
+        );
+
+        broadcastRoomUsers(
+          io,
+          roomName
+        );
+
+        /**
+         * Existing event retained.
+         */
+        io.to(roomName).emit(
+          "liveclass:raise-hand",
+          {
+            senderName:
+              participant.userName ||
+              "Student",
+
+            studentId:
+              participant.studentId,
+
+            raised,
+
+            at:
+              new Date().toISOString(),
+          }
+        );
+      }
+    );
+
+    /**
+     * -------------------------------------------------------
+     * TEACHER MEDIA CONTROL
+     * -------------------------------------------------------
+     */
     socket.on(
       "liveclass:media-control",
       (payload: {
@@ -371,66 +1076,398 @@ export function registerLiveClassSocket(io: Server) {
         camera?: boolean;
         mic?: boolean;
       }) => {
-        if (!isHostRole(String(socket.data.userRole)) || !payload?.roomName) return;
-        if (socket.data.roomName !== payload.roomName) return;
-        if (payload.camera === undefined && payload.mic === undefined) return;
+        const roomName =
+          String(
+            payload?.roomName || ""
+          );
 
-        const participants = roomParticipants[payload.roomName];
-        if (!participants) return;
+        if (!roomName) {
+          return;
+        }
 
-        const list = Array.from(participants.values());
+        /**
+         * Only teacher/admin can control students.
+         */
+        if (
+          !isHostRole(
+            String(
+              socket.data.userRole
+            )
+          )
+        ) {
+          return;
+        }
+
+        /**
+         * Sender must actually be inside
+         * this room.
+         */
+        if (
+          socket.data.roomName !==
+          roomName
+        ) {
+          return;
+        }
+
+        if (
+          payload.camera ===
+            undefined &&
+          payload.mic ===
+            undefined
+        ) {
+          return;
+        }
+
+        const participants =
+          roomParticipants[
+            roomName
+          ];
+
+        if (!participants) {
+          return;
+        }
+
+        const list =
+          Array.from(
+            participants.values()
+          );
+
+        /**
+         * Find target.
+         */
         const target =
-          (payload.targetSocketId ? participants.get(payload.targetSocketId) : undefined) ||
-          (payload.targetStudentId
-            ? list.find((p) => p.studentId && p.studentId === payload.targetStudentId)
-            : undefined) ||
-          (payload.targetAgoraUid != null
-            ? list.find((p) => p.agoraUid === payload.targetAgoraUid)
-            : undefined);
+          payload.targetSocketId
+            ? participants.get(
+                payload.targetSocketId
+              )
+            : payload.targetStudentId
+              ? list.find(
+                  (p) =>
+                    p.studentId ===
+                    payload.targetStudentId
+                )
+              : payload.targetAgoraUid !=
+                  null
+                ? list.find(
+                    (p) =>
+                      p.agoraUid ===
+                      payload.targetAgoraUid
+                  )
+                : undefined;
 
-        if (!target || !isStudentRole(target.userRole)) return;
+        if (!target) {
+          return;
+        }
 
-        io.to(target.id).emit("liveclass:media-control", {
-          camera: payload.camera,
-          mic: payload.mic,
-          requestedBy: socket.data.userName || "Host",
-        });
+        /**
+         * Teacher can control students only.
+         */
+        if (
+          !isStudentRole(
+            target.userRole
+          )
+        ) {
+          return;
+        }
+
+        /**
+         * Update server-side desired/current state.
+         */
+        if (
+          typeof payload.camera ===
+          "boolean"
+        ) {
+          target.cameraOn =
+            payload.camera;
+        }
+
+        if (
+          typeof payload.mic ===
+          "boolean"
+        ) {
+          target.micOn =
+            payload.mic;
+        }
+
+        participants.set(
+          target.id,
+          target
+        );
+
+        /**
+         * Send command to target.
+         */
+        io.to(target.id).emit(
+          "liveclass:media-control",
+          {
+            camera:
+              payload.camera,
+            mic: payload.mic,
+
+            requestedBy:
+              socket.data.userName ||
+              "Host",
+          }
+        );
+
+        /**
+         * Tell everyone about the new state.
+         */
+        broadcastParticipantState(
+          io,
+          roomName,
+          target
+        );
+
+        broadcastRoomUsers(
+          io,
+          roomName
+        );
       }
     );
 
-    socket.on("disconnect", () => {
-      void handleUserLeave(socket);
-    });
+    /**
+     * -------------------------------------------------------
+     * CHAT MESSAGE
+     * -------------------------------------------------------
+     */
+    socket.on(
+      "liveclass:message",
+      async (payload: {
+        roomName: string;
+        message: ChatMessage;
+      }) => {
+        if (
+          !payload?.roomName ||
+          !payload?.message?.text?.trim()
+        ) {
+          return;
+        }
+
+        /**
+         * Must be inside requested room.
+         */
+        if (
+          socket.data.roomName !==
+          payload.roomName
+        ) {
+          socket.emit(
+            "liveclass:error",
+            {
+              message:
+                "Chat is not connected yet. Wait a moment and try again.",
+            }
+          );
+
+          return;
+        }
+
+        const now =
+          Date.now();
+
+        const lastSent =
+          messageRateLimit[
+            socket.id
+          ] || 0;
+
+        if (
+          now - lastSent <
+          MESSAGE_COOLDOWN_MS
+        ) {
+          return;
+        }
+
+        messageRateLimit[
+          socket.id
+        ] = now;
+
+        const text =
+          String(
+            payload.message.text
+          )
+            .trim()
+            .slice(
+              0,
+              MAX_MESSAGE_LENGTH
+            );
+
+        if (!text) {
+          return;
+        }
+
+        /**
+         * Never trust senderName from client.
+         */
+        const senderName =
+          String(
+            socket.data.userName ||
+              "User"
+          );
+
+        const liveClassId =
+          socket.data.liveClassId as
+            | string
+            | undefined;
+
+        const authUser =
+          socket.data.user as
+            | AuthUser
+            | undefined;
+
+        let saved: ChatMessage;
+
+        try {
+          if (liveClassId) {
+            const row =
+              await prisma.liveClassChatMessage.create(
+                {
+                  data: {
+                    liveClassId,
+
+                    senderId:
+                      authUser?.id,
+
+                    senderName,
+
+                    text,
+                  },
+                }
+              );
+
+            saved = {
+              id: row.id,
+              senderName:
+                row.senderName,
+              text: row.text,
+              sentAt:
+                row.sentAt.toISOString(),
+            };
+          } else {
+            saved = {
+              id:
+                payload.message.id ||
+                randomUUID(),
+
+              senderName,
+
+              text,
+
+              sentAt:
+                new Date().toISOString(),
+            };
+          }
+        } catch (err) {
+          console.error(
+            "Failed to persist chat message:",
+            err
+          );
+
+          saved = {
+            id:
+              payload.message.id ||
+              randomUUID(),
+
+            senderName,
+
+            text,
+
+            sentAt:
+              new Date().toISOString(),
+          };
+        }
+
+        io.to(
+          payload.roomName
+        ).emit(
+          "liveclass:message",
+          saved
+        );
+      }
+    );
+
+    /**
+     * -------------------------------------------------------
+     * DISCONNECT
+     * -------------------------------------------------------
+     */
+    socket.on(
+      "disconnect",
+      () => {
+        void handleUserLeave(
+          socket
+        );
+      }
+    );
   });
 
+  /**
+   * ---------------------------------------------------------
+   * STALE PARTICIPANT CLEANUP
+   * ---------------------------------------------------------
+   *
+   * This is only a safety net.
+   * Normal disconnect handling removes participants immediately.
+   */
   setInterval(() => {
-    for (const roomName of Object.keys(roomParticipants)) {
-      const liveRoom = io.sockets.adapter.rooms.get(roomName);
-      const liveSocketIds = liveRoom ? new Set(liveRoom) : new Set<string>();
+    for (const roomName of Object.keys(
+      roomParticipants
+    )) {
+      const liveRoom =
+        io.sockets.adapter.rooms.get(
+          roomName
+        );
+
+      const liveSocketIds =
+        liveRoom
+          ? new Set(liveRoom)
+          : new Set<string>();
 
       let changed = false;
-      for (const socketId of Array.from(roomParticipants[roomName].keys())) {
-        if (!liveSocketIds.has(socketId)) {
-          roomParticipants[roomName].delete(socketId);
-          delete participantJoinTimes[socketId];
-          delete messageRateLimit[socketId];
+
+      for (const socketId of Array.from(
+        roomParticipants[
+          roomName
+        ].keys()
+      )) {
+        if (
+          !liveSocketIds.has(
+            socketId
+          )
+        ) {
+          roomParticipants[
+            roomName
+          ].delete(socketId);
+
+          delete participantJoinTimes[
+            socketId
+          ];
+
+          delete messageRateLimit[
+            socketId
+          ];
+
           changed = true;
         }
       }
 
-      if (roomParticipants[roomName].size === 0) {
-        delete roomParticipants[roomName];
+      if (
+        roomParticipants[
+          roomName
+        ].size === 0
+      ) {
+        delete roomParticipants[
+          roomName
+        ];
+
         continue;
       }
 
       if (changed) {
-        broadcastRoomUsers(io, roomName);
+        broadcastRoomUsers(
+          io,
+          roomName
+        );
       }
     }
   }, 30000);
-}
-
-function broadcastRoomUsers(io: Server, roomName: string) {
-  const currentList = roomParticipants[roomName] ? Array.from(roomParticipants[roomName].values()) : [];
-  io.to(roomName).emit("liveclass:room-users", currentList);
 }
