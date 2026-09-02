@@ -1,10 +1,808 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
+model User {
+  id                         String                   @id @default(uuid())
+  fullName                   String
+  email                      String                   @unique
+  phone                      String                   @unique
+  passwordHash               String
+  role                       Role                     @default(STUDENT)
+  avatarUrl                  String?
+  country                    String                   @default("India")
+  countryCode                String?
+  address                    String?
+  dob                        DateTime?
+  gender                     String?
+  city                       String?
+  region                     String?
+  postalCode                 String?
+  skillLevel                 String?
+  joiningDate                DateTime?
+  isUnder18                  Boolean                  @default(false)
+  guardianName               String?
+  relationship               String?
+  emergencyContact           String?
+  paymentMethod              String?
+  maritalStatus              String?
+  nationality                String?                  @default("Indian")
+  languagesKnown             String?
+  bankDetails                String[]                 @default([])
+  bankAccounts               Json[]                   @default([])
+  idProofType                String?
+  idProofUrl                 String?
+  documents                  Json[]                   @default([])
+  notificationPrefs          Json?
+  designation                String?
+  primaryExpertise           String?
+  salaryRate                 String?
+  isActive                   Boolean                  @default(true)
+  createdAt                  DateTime                 @default(now())
+  updatedAt                  DateTime                 @updatedAt
+  assignmentSubmissions      AssignmentSubmission[]
+  attendances                Attendance[]
+  batchesAsTeacher           Batch[]                  @relation("BatchTeacher")
+  batchMemberships           BatchStudent[]
+  competitionParticipations  CompetitionParticipant[] @relation("CompetitionParticipant")
+  uploadedResources          ContentResource[]        @relation("UploadedResources")
+  enrollments                Enrollment[]
+  createdEvents              Event[]                  @relation("EventCreator")
+  eventsAsInstructor         Event[]                  @relation("EventInstructor")
+  eventRegistrations         EventRegistration[]
+  createdExams               Exam[]
+  examResults                ExamResult[]
+  uploadedGalleryItems       GalleryItem[]            @relation("UploadedGalleryItems")
+  updatedHeroBanners         HeroBanner[]             @relation("UpdatedHeroBanners")
+  inquiries                  Inquiry[]
+  updatedLeadPopups          LeadPopup[]              @relation("UpdatedLeadPopups")
+  leaveRequests              LeaveRequest[]
+  createdLetterheads         Letterhead[]             @relation("CreatedLetterheads")
+  notifications              Notification[]
+  payments                   Payment[]
+  recordedClassViews         RecordedClassView[]
+  uploadedStudentCornerItems StudentCornerItem[]      @relation("UploadedStudentCornerItems")
+  permissions                TeacherPermission[]
+}
+
+model TeacherPermission {
+  id         String     @id @default(uuid())
+  userId     String
+  permission Permission
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permission])
+}
+
+model Course {
+  id                   String          @id @default(uuid())
+  title                String
+  slug                 String          @unique
+  description          String
+  thumbnail            String?
+  videoUrl             String?
+  category             CourseCategory  @default(BASIC)
+  groupFeeINR          Float
+  groupFeeUSD          Float
+  groupClassesCount    String
+  oneToOneFeeINR       Float
+  oneToOneFeeUSD       Float
+  oneToOneClassesCount String
+  badgeBgColor         String          @default("#76D7C4")
+  borderColor          String          @default("border-[#76D7C4]")
+  published            Boolean         @default(true)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  aliases              String[]        @default([])
+  homepageSortOrder    Int             @default(0)
+  intro                String?
+  marketingCategory    String          @default("beginners")
+  showExam             Boolean         @default(true)
+  showOnHome           Boolean         @default(true)
+  batches              Batch[]
+  enrollments          Enrollment[]
+  exams                Exam[]
+  lessons              Lesson[]
+  recordedClasses      RecordedClass[]
+}
+
+model Lesson {
+  id             String   @id @default(uuid())
+  courseId       String
+  title          String
+  description    String?
+  orderIndex     Int
+  durationSec    Int
+  bunnyVideoId   String
+  videoLibraryId String
+  isFreePreview  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  course         Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+}
+
+model Batch {
+  id               String            @id @default(uuid())
+  name             String
+  code             String            @unique
+  courseId         String?
+  teacherId        String?
+  courseName       String
+  level            String            @default("BEGINNER")
+  teacherName      String            @default("Unassigned")
+  schedule         String?
+  totalStudents    Int               @default(0)
+  status           String            @default("Active")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  assignments      Assignment[]
+  attendances      Attendance[]
+  course           Course?           @relation(fields: [courseId], references: [id])
+  teacher          User?             @relation("BatchTeacher", fields: [teacherId], references: [id])
+  students         BatchStudent[]
+  contentResources ContentResource[]
+  exams            Exam[]
+  liveClasses      LiveClass[]
+  recordedClasses  RecordedClass[]
+}
+
+model RecordedClass {
+  id             String              @id @default(uuid())
+  title          String
+  description    String?
+  videoUrl       String
+  thumbnail      String?
+  videoId        String?
+  duration       String?
+  resources      String[]            @default([])
+  tags           String[]            @default([])
+  isPublic       Boolean             @default(true)
+  isDownloadable Boolean             @default(true)
+  courseId       String?
+  viewsCount     Int                 @default(0)
+  batchId        String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  batch          Batch?              @relation(fields: [batchId], references: [id])
+  course         Course?             @relation(fields: [courseId], references: [id])
+  viewHistory    RecordedClassView[]
+}
+
+model RecordedClassView {
+  id              String        @id @default(uuid())
+  recordedClassId String
+  userId          String
+  viewedAt        DateTime      @default(now())
+  deviceType      String?
+  browser         String?
+  ipAddress       String?
+  location        String?
+  watchTimeSec    Int           @default(0)
+  recordedClass   RecordedClass @relation(fields: [recordedClassId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([recordedClassId, userId])
+}
+
+model BatchStudent {
+  id        String   @id @default(uuid())
+  batchId   String
+  studentId String
+  createdAt DateTime @default(now())
+  batch     Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, studentId])
+  @@index([studentId])
+}
+
+model Enrollment {
+  id        String    @id @default(uuid())
+  userId    String
+  courseId  String
+  mode      ClassMode @default(ONLINE)
+  type      String    @default("GROUP")
+  active    Boolean   @default(true)
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  course    Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments  Payment[]
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  userId        String
+  enrollmentId  String?
+  amount        Float
+  currency      Currency      @default(INR)
+  gateway       String
+  transactionId String        @unique
+  orderId       String        @unique
+  status        PaymentStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+  enrollment    Enrollment?   @relation(fields: [enrollmentId], references: [id])
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PendingEnrollment {
+  id              String                  @id @default(uuid())
+  email           String
+  phone           String
+  passwordHash    String
+  payload         Json
+  batchId         String
+  courseId        String
+  razorpayOrderId String?                 @unique
+  status          PendingEnrollmentStatus @default(PENDING)
+  userId          String?
+  errorMessage    String?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  @@index([email])
+  @@index([status])
+}
+
+model VerificationOtp {
+  id         String    @id @default(uuid())
+  channel    String
+  target     String
+  codeHash   String
+  expiresAt  DateTime
+  verifiedAt DateTime?
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
+
+  @@index([channel, target])
+}
+
+model Inquiry {
+  id          String   @id @default(uuid())
+  userId      String?
+  fullName    String
+  contactInfo String
+  classMode   String
+  subject     String
+  message     String
+  status      String   @default("NEW")
+  createdAt   DateTime @default(now())
+  details     Json?
+  source      String   @default("SUPPORT")
+  user        User?    @relation(fields: [userId], references: [id])
+
+  @@index([source])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model LiveClass {
+  id             String                 @id @default(uuid())
+  batchId        String
+  title          String
+  teacherName    String
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  roomName       String                 @unique
+  status         LiveClassStatus        @default(SCHEDULED)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  batch          Batch                  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  chatMessages   LiveClassChatMessage[]
+
+  @@index([batchId, scheduledStart])
+}
+
+model LiveClassChatMessage {
+  id          String    @id @default(uuid())
+  liveClassId String
+  senderId    String?
+  senderName  String
+  text        String
+  sentAt      DateTime  @default(now())
+  liveClass   LiveClass @relation(fields: [liveClassId], references: [id], onDelete: Cascade)
+
+  @@index([liveClassId, sentAt])
+}
+
+model Attendance {
+  id          String           @id @default(uuid())
+  studentId   String
+  studentName String
+  batchId     String?
+  batchName   String
+  session     String           @default("General")
+  date        DateTime         @default(now())
+  status      AttendanceStatus @default(PRESENT)
+  remarks     String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  batch       Batch?           @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  student     User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, date, session])
+}
+
+model LeaveRequest {
+  id         String      @id @default(uuid())
+  userId     String
+  userName   String
+  leaveType  String
+  startDate  DateTime
+  endDate    DateTime
+  totalDays  Int
+  reason     String
+  attachment String?
+  status     LeaveStatus @default(PENDING)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Assignment {
+  id                 String                 @id @default(uuid())
+  batchId            String?
+  batchName          String                 @default("All Batches")
+  title              String
+  description        String
+  typeTag            String                 @default("Practical Assessment")
+  dueDate            DateTime
+  totalPoints        Int                    @default(100)
+  referenceFileUrl   String?
+  status             String                 @default("ACTIVE")
+  teacherId          String?
+  teacherName        String?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  referenceFileName  String?
+  evaluationCriteria String?
+  batch              Batch?                 @relation(fields: [batchId], references: [id])
+  submissions        AssignmentSubmission[]
+}
+
+model AssignmentSubmission {
+  id           String           @id @default(uuid())
+  assignmentId String
+  studentId    String
+  studentName  String
+  fileUrl      String?
+  notes        String?
+  submittedAt  DateTime         @default(now())
+  status       SubmissionStatus @default(SUBMITTED)
+  grade        String?
+  feedback     String?
+  assignment   Assignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, studentId])
+}
+
+model VideoTask {
+  id                   String            @id @default(uuid())
+  title                String
+  category             String            @default("Kathak")
+  course               String            @default("Kathak Advanced")
+  batchId              String?
+  batchName            String            @default("Alpha-2024")
+  priority             PriorityLevel     @default(Low)
+  submissionDate       DateTime
+  cutOffTime           String            @default("18:00")
+  strictDeadline       Boolean           @default(false)
+  detailedInstructions String?
+  referenceFileUrl     String?
+  creatorRole          Role              @default(ADMIN)
+  createdById          String?
+  createdByName        String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  videoSubmissions     VideoSubmission[]
+}
+
+model VideoSubmission {
+  id               String                @id @default(uuid())
+  taskId           String?
+  studentId        String
+  studentName      String
+  studentAvatar    String?
+  studentBatch     String                @default("Alpha-2024")
+  submissionDate   DateTime              @default(now())
+  courseAndBatch   String                @default("Kathak Foundations • #402")
+  videoTitle       String
+  fileUrl          String?
+  status           VideoSubmissionStatus @default(PENDING)
+  marks            Float?
+  feedbackNotes    String?
+  correctionNotes  String[]              @default([])
+  evaluationRubric Json?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  task             VideoTask?            @relation(fields: [taskId], references: [id])
+}
+
+model Exam {
+  id            String       @id @default(uuid())
+  title         String
+  description   String?
+  examCode      String       @unique
+  type          ExamType     @default(THEORY)
+  date          DateTime
+  durationMins  Int          @default(120)
+  totalMarks    Float        @default(100)
+  passingMarks  Float        @default(40)
+  status        ExamStatus   @default(SCHEDULED)
+  questionsData Json?
+  batchId       String?
+  courseId      String?
+  createdById   String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  batch         Batch?       @relation(fields: [batchId], references: [id])
+  course        Course?      @relation(fields: [courseId], references: [id])
+  createdBy     User?        @relation(fields: [createdById], references: [id])
+  results       ExamResult[]
+}
+
+model ExamResult {
+  id                  String   @id @default(uuid())
+  examId              String
+  studentId           String
+  marksObtained       Float?
+  grade               String?
+  status              String   @default("PENDING")
+  feedback            String?
+  fileUrl             String?
+  submittedAt         DateTime @default(now())
+  answersData         Json?
+  flagged             Boolean  @default(false)
+  questionEvaluations Json?
+  exam                Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student             User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, studentId])
+}
+
+model Event {
+  id               String              @id @default(uuid())
+  title            String
+  category         EventCategory       @default(Workshop)
+  description      String
+  startDate        DateTime            @db.Date
+  endDate          DateTime            @db.Date
+  startTime        String
+  durationMins     Int                 @default(60)
+  leadInstructorId String?
+  capacity         Int
+  level            EventLevel          @default(Beginner)
+  registrationFee  Float               @default(0.0)
+  locationOrLink   String
+  status           EventStatus         @default(DRAFT)
+  createdById      String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  isFeatured       Boolean             @default(false)
+  badgeTag         String?
+  bannerImage      String?
+  thumbnailImage   String?
+  createdBy        User?               @relation("EventCreator", fields: [createdById], references: [id])
+  leadInstructor   User?               @relation("EventInstructor", fields: [leadInstructorId], references: [id])
+  registrations    EventRegistration[]
+  tickets          EventTicket[]
+}
+
+model EventRegistration {
+  id            String        @id @default(uuid())
+  eventId       String
+  studentId     String
+  paymentStatus PaymentStatus @default(PENDING)
+  paymentId     String?
+  registeredAt  DateTime      @default(now())
+  event         Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  student       User          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, studentId])
+}
+
+model EventTicket {
+  id                String        @id @default(uuid())
+  bookingId         String        @unique
+  eventId           String
+  fullName          String
+  email             String
+  phone             String
+  city              String        @default("")
+  quantity          Int           @default(1)
+  amount            Float         @default(0)
+  paymentMethod     String?
+  paymentStatus     PaymentStatus @default(PENDING)
+  ticketEmail       String
+  createdAt         DateTime      @default(now())
+  adultCount        Int           @default(0)
+  childCount        Int           @default(0)
+  razorpayOrderId   String?       @unique
+  razorpayPaymentId String?
+  event             Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@index([email])
+}
+
+model Competition {
+  id           String                   @id @default(uuid())
+  title        String
+  status       String                   @default("ACTIVE")
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  participants CompetitionParticipant[]
+  updates      CompetitionUpdate[]
+}
+
+model CompetitionParticipant {
+  id              String      @id @default(uuid())
+  competitionId   String
+  studentId       String
+  performanceSlot DateTime?
+  stageLocation   String?
+  createdAt       DateTime    @default(now())
+  competition     Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  student         User        @relation("CompetitionParticipant", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([competitionId, studentId])
+}
+
+model CompetitionUpdate {
+  id            String      @id @default(uuid())
+  competitionId String
+  title         String
+  description   String
+  dueDate       DateTime?
+  timeLabel     String?
+  order         Int         @default(0)
+  createdAt     DateTime    @default(now())
+  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+}
+
+model Offer {
+  id              String    @id @default(uuid())
+  badgeLabel      String
+  title           String
+  description     String
+  ctaLabel        String    @default("Claim Offer")
+  ctaLink         String?
+  discountPercent Int?
+  isActive        Boolean   @default(true)
+  startDate       DateTime?
+  endDate         DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  isUnread  Boolean  @default(true)
+  link      String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ContentResource {
+  id           String       @id @default(uuid())
+  title        String
+  description  String?
+  type         ResourceType @default(DOCUMENT)
+  fileUrl      String
+  category     String       @default("General")
+  isGlobal     Boolean      @default(true)
+  batchId      String?
+  uploadedById String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  batch        Batch?       @relation(fields: [batchId], references: [id])
+  uploadedBy   User         @relation("UploadedResources", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([category])
+  @@index([batchId])
+}
+
+model GalleryItem {
+  id              String           @id @default(uuid())
+  title           String
+  altText         String?
+  category        GalleryCategory
+  mediaType       GalleryMediaType
+  url             String
+  thumbnailUrl    String?
+  showOnHome      Boolean          @default(true)
+  sortOrder       Int              @default(0)
+  fileName        String?
+  fileSize        String?
+  uploadedById    String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  journeyCarousel Boolean          @default(false)
+  uploadedBy      User             @relation("UploadedGalleryItems", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([category])
+  @@index([showOnHome])
+  @@index([sortOrder])
+  @@index([createdAt])
+}
+
+model JourneyCarouselSettings {
+  id                 String   @id @default("journey-carousel")
+  intervalMs         Int      @default(1000)
+  transition         String   @default("fade")
+  transitionDuration Int      @default(500)
+  updatedAt          DateTime @updatedAt
+}
+
+model JourneyCarouselItem {
+  id        String   @id @default(uuid())
+  title     String
+  altText   String?
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model HeroBanner {
+  id                String        @id @default(uuid())
+  pageKey           HeroPage      @unique
+  title             String
+  highlight         String?
+  subtitle          String        @default("")
+  tagline           String?
+  mediaType         HeroMediaType @default(IMAGE)
+  mediaUrl          String
+  imageAlt          String?
+  ctaLabel          String?
+  ctaLink           String?
+  ctaSecondaryLabel String?
+  ctaSecondaryLink  String?
+  updatedById       String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  ctaAction         String?       @default("LINK")
+  ctaColor          String?       @default("#9E0C25")
+  ctaLayout         String?       @default("SOLID")
+  ctaPosition       String?       @default("CENTER")
+  ctaBorderRadius   String?       @default("FULL")
+  updatedBy         User?         @relation("UpdatedHeroBanners", fields: [updatedById], references: [id])
+
+  @@index([pageKey])
+}
+
+model LeadPopup {
+  id           String   @id @default("default")
+  isEnabled    Boolean  @default(true)
+  delaySeconds Int      @default(300)
+  title        String   @default("Get in Touch")
+  subtitle     String   @default("Start Your Kathak Journey With Us")
+  imageUrl     String
+  imageAlt     String   @default("Kathak dancer")
+  updatedById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  updatedBy    User?    @relation("UpdatedLeadPopups", fields: [updatedById], references: [id])
+}
+
+model DemoSettings {
+  id                   String   @id @default("default")
+  oneToOneFeeINR       Float    @default(499)
+  oneToOneDurationMins Int      @default(45)
+  isOneToOneEnabled    Boolean  @default(true)
+  isGroupEnabled       Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
+}
+
+model DemoGroupSession {
+  id           String        @id @default(uuid())
+  title        String
+  startsAt     DateTime
+  durationMins Int           @default(60)
+  classMode    String        @default("Online")
+  capacity     Int           @default(20)
+  location     String        @default("")
+  notes        String        @default("")
+  isPublished  Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  bookings     DemoBooking[]
+
+  @@index([startsAt])
+  @@index([isPublished])
+}
+
+model DemoBooking {
+  id                String            @id @default(uuid())
+  type              DemoClassType
+  status            DemoBookingStatus @default(PENDING)
+  fullName          String
+  email             String
+  phone             String
+  course            String
+  classMode         String
+  message           String            @default("")
+  preferredDate     DateTime?
+  preferredTime     String?
+  sessionId         String?
+  amount            Float             @default(0)
+  paymentStatus     PaymentStatus     @default(PENDING)
+  razorpayOrderId   String?           @unique
+  razorpayPaymentId String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  session           DemoGroupSession? @relation(fields: [sessionId], references: [id])
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@index([email])
+}
+
+model StudentCornerItem {
+  id           String            @id @default(uuid())
+  kind         StudentCornerKind
+  studentName  String
+  level        String
+  description  String            @default("")
+  duration     String?
+  videoUrl     String
+  thumbnailUrl String?
+  sortOrder    Int               @default(0)
+  isPublished  Boolean           @default(true)
+  fileName     String?
+  fileSize     String?
+  uploadedById String
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  uploadedBy   User              @relation("UploadedStudentCornerItems", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([kind])
+  @@index([isPublished])
+  @@index([sortOrder])
+  @@index([createdAt])
+}
+
+model LetterheadTemplate {
+  id          String       @id @default(uuid())
+  name        String
+  imageUrl    String
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  letterheads Letterhead[]
+
+  @@index([isActive])
+  @@index([createdAt])
+}
+
+model Letterhead {
+  id          String             @id @default(uuid())
+  title       String
+  contentHtml String
+  fontFamily  String             @default("Georgia, serif")
+  isDefault   Boolean            @default(false)
+  usageCount  Int                @default(0)
+  templateId  String
+  createdById String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  pagesJson   Json?
+  createdBy   User?              @relation("CreatedLetterheads", fields: [createdById], references: [id])
+  template    LetterheadTemplate @relation(fields: [templateId], references: [id])
+
+  @@index([isDefault])
+  @@index([updatedAt])
+  @@index([templateId])
 }
 
 enum Role {
@@ -15,65 +813,51 @@ enum Role {
 
 enum Permission {
   VIEW_DASHBOARD
-
   MANAGE_COURSES
   VIEW_COURSES
   CREATE_COURSE
   EDIT_COURSE
   DELETE_COURSE
-
   MANAGE_STUDENTS
   VIEW_STUDENTS
   CREATE_STUDENT
   EDIT_STUDENT
   DELETE_STUDENT
-
   MANAGE_TEACHERS
   VIEW_TEACHERS
   CREATE_TEACHER
   EDIT_TEACHER
   DELETE_TEACHER
-
   MANAGE_BATCHES
   VIEW_BATCHES
   CREATE_BATCH
   EDIT_BATCH
   DELETE_BATCH
-
   MANAGE_ASSIGNMENTS
   VIEW_ASSIGNMENTS
   CREATE_ASSIGNMENT
   GRADE_ASSIGNMENT
-
   MANAGE_CLASSES
   VIEW_CLASSES
   START_LIVE_CLASS
-
   MANAGE_RECORDED_CLASSES
   UPLOAD_RECORDED_CLASS
-
   MANAGE_VIDEO_REVIEWS
   VIEW_VIDEO_REVIEWS
   EVALUATE_VIDEO_REVIEW
-
   MANAGE_EXAMS
   VIEW_EXAMS
   CREATE_EXAM
   GRADE_EXAMS
-
   VIEW_EXAM_RESULTS
-
   MANAGE_ATTENDANCE
   VIEW_ATTENDANCE
   MARK_ATTENDANCE
-
   MANAGE_EVENTS
   VIEW_EVENTS
-
   MANAGE_COMMUNICATION
   VIEW_COMMUNICATION
   SEND_COMMUNICATION
-
   MANAGE_CONTENT_LIBRARY
   VIEW_PAYMENTS
   MANAGE_WEBSITE
@@ -114,12 +898,11 @@ enum Currency {
   EUR
 }
 
-
 enum EventCategory {
-  Event
   Workshop
   Competition
   Seminar
+  Event
 }
 
 enum EventStatus {
@@ -137,309 +920,10 @@ enum EventLevel {
   All_Levels
 }
 
-
-
-model User {
-  id           String  @id @default(uuid())
-  fullName     String
-  email        String  @unique
-  phone        String  @unique
-  passwordHash String
-  role         Role    @default(STUDENT)
-  avatarUrl    String?
-  country      String  @default("India")
-  countryCode  String?
-  address      String?
-
-  dob              DateTime?
-  gender           String?
-  city             String?
-  region           String?
-  postalCode       String?
-  skillLevel       String?
-  joiningDate      DateTime?
-  isUnder18        Boolean   @default(false)
-  guardianName     String?
-  relationship     String?
-  emergencyContact String?
-  paymentMethod    String?
-
-  maritalStatus    String?
-  nationality      String?   @default("Indian")
-  languagesKnown   String?
-  
-  // Legacy bank Details
-  bankDetails      String[]  @default([])
-  // New Structured Bank Accounts
-  bankAccounts     Json[]    @default([])
-  
-  // Legacy ID Proof
-  idProofType      String?
-  idProofUrl       String?
-  // New Multiple Documents
-  documents        Json[]    @default([])
-  // User Preferences
-  notificationPrefs Json?
-
-  designation      String?
-  primaryExpertise String?
-  salaryRate       String?
-
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  permissions           TeacherPermission[]
-  enrollments           Enrollment[]
-  inquiries             Inquiry[]
-  payments              Payment[]
-  attendances           Attendance[]
-  batchMemberships      BatchStudent[]
-  assignmentSubmissions AssignmentSubmission[]
-  batchesAsTeacher      Batch[]                @relation("BatchTeacher")
-  recordedClassViews RecordedClassView[]
-  createdExams          Exam[]
-  examResults            ExamResult[]
-
-  eventsAsInstructor Event[]             @relation("EventInstructor")
-  createdEvents      Event[]             @relation("EventCreator")
-  eventRegistrations EventRegistration[]
-  notifications      Notification[]
-  competitionParticipations CompetitionParticipant[] @relation("CompetitionParticipant")
-  leaveRequests      LeaveRequest[]
-  uploadedResources  ContentResource[]  @relation("UploadedResources")
-  uploadedGalleryItems GalleryItem[]    @relation("UploadedGalleryItems")
-  uploadedStudentCornerItems StudentCornerItem[] @relation("UploadedStudentCornerItems")
-  updatedHeroBanners HeroBanner[]       @relation("UpdatedHeroBanners")
-  updatedLeadPopups  LeadPopup[]        @relation("UpdatedLeadPopups")
-  createdLetterheads Letterhead[]       @relation("CreatedLetterheads")
-}
-
-model TeacherPermission {
-  id         String     @id @default(uuid())
-  userId     String
-  permission Permission
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, permission])
-}
-
-model Course {
-  id                   String         @id @default(uuid())
-  title                String
-  slug                 String         @unique
-  description          String
-  thumbnail            String?
-  videoUrl             String?
-  category             CourseCategory @default(BASIC)
-  groupFeeINR          Float
-  groupFeeUSD          Float
-  groupClassesCount    String         // Perfect: Store "10 classes per month" etc.
-  oneToOneFeeINR       Float
-  oneToOneFeeUSD       Float
-  oneToOneClassesCount String         // Perfect: Store "Minimum 4 classes per month"
-  badgeBgColor         String         @default("#76D7C4")
-  borderColor          String         @default("border-[#76D7C4]")
-  intro                String?
-  marketingCategory    String         @default("beginners")
-  aliases              String[]       @default([])
-  showOnHome           Boolean        @default(true)
-  homepageSortOrder    Int            @default(0)
-  showExam             Boolean        @default(true)
-  published            Boolean        @default(true)
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
-  recordedClasses RecordedClass[]
-  enrollments Enrollment[]
-  lessons     Lesson[]
-  batches     Batch[]
-  exams        Exam[]
-}
-
-model Lesson {
-  id             String   @id @default(uuid())
-  courseId       String
-  title          String
-  description    String?
-  orderIndex     Int
-  durationSec    Int
-  bunnyVideoId   String
-  videoLibraryId String
-  isFreePreview  Boolean  @default(false)
-  createdAt      DateTime @default(now())
-
-  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
-}
-
-model Batch {
-  id            String   @id @default(uuid())
-  name          String
-  code          String   @unique
-  courseId      String?  
-  teacherId     String?
-  courseName    String
-  level         String   @default("BEGINNER") // Ya isko default hatakar required kar dein
-  teacherName   String   @default("Unassigned") // "Arjun Sharma" ki jagah "Unassigned" best hai
-  schedule      String?  // Isko optional (?) kar dein taaki bina schedule ke bhi batch ban sake
-  totalStudents Int      @default(0)
-  status        String   @default("Active")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  course      Course?        @relation(fields: [courseId], references: [id], onDelete: SetNull)
-  teacher     User?          @relation("BatchTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
-  students    BatchStudent[]
-  attendances Attendance[]
-  liveClasses LiveClass[]
-  recordedClasses RecordedClass[]
-  assignments Assignment[]
-  exams        Exam[]
-  contentResources ContentResource[]
-}
-
-
-model RecordedClass {
-  id             String   @id @default(uuid())
-  title          String
-  description    String?
-  videoUrl       String
-  thumbnail      String?
-  videoId        String?
-  duration       String?
-  resources      String[] @default([])
-  tags           String[] @default([])
-  isPublic       Boolean  @default(true)
-  isDownloadable Boolean  @default(true)
-
-  courseId       String?
-  course         Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
-  viewsCount      Int                 @default(0) // Cache for quick total views
-  viewHistory     RecordedClassView[] // Relation to tracking table
-  batchId        String?
-  batch          Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
-
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-}
-
-model RecordedClassView {
-  id              String        @id @default(uuid())
-  recordedClassId String
-  userId          String
-  viewedAt        DateTime      @default(now())
-  deviceType      String?       // "Mobile", "Desktop", "Tablet"
-  browser         String?       // "Chrome", "Safari"
-  ipAddress       String?       // "103.11.22.33"
-  location        String?       // "Kanpur, Uttar Pradesh, India"
-  watchTimeSec    Int           @default(0) // Kitne seconds video dekhi
-
-  recordedClass   RecordedClass @relation(fields: [recordedClassId], references: [id], onDelete: Cascade)
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([recordedClassId, userId])
-}
-
-model BatchStudent {
-  id        String   @id @default(uuid())
-  batchId   String
-  studentId String
-  createdAt DateTime @default(now())
-
-  batch   Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  student User  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([batchId, studentId])
-  @@index([studentId])
-}
-
-model Enrollment {
-  id        String    @id @default(uuid())
-  userId    String
-  courseId  String
-  mode      ClassMode @default(ONLINE)
-  type      String    @default("GROUP")
-  active    Boolean   @default(true)
-  expiresAt DateTime?
-  createdAt DateTime  @default(now())
-
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  course   Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  payments Payment[]
-}
-
-model Payment {
-  id            String        @id @default(uuid())
-  userId        String
-  enrollmentId  String?
-  amount        Float
-  currency      Currency      @default(INR)
-  gateway       String
-  transactionId String        @unique
-  orderId       String        @unique
-  status        PaymentStatus @default(PENDING)
-  createdAt     DateTime      @default(now())
-
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  enrollment Enrollment? @relation(fields: [enrollmentId], references: [id], onDelete: SetNull)
-}
-
 enum PendingEnrollmentStatus {
   PENDING
   COMPLETED
   FAILED
-}
-
-model PendingEnrollment {
-  id              String                   @id @default(uuid())
-  email           String
-  phone           String
-  passwordHash    String
-  payload         Json
-  batchId         String
-  courseId        String
-  razorpayOrderId String?                  @unique
-  status          PendingEnrollmentStatus  @default(PENDING)
-  userId          String?
-  errorMessage    String?
-  createdAt       DateTime                 @default(now())
-  updatedAt       DateTime                 @updatedAt
-
-  @@index([email])
-  @@index([status])
-}
-
-model VerificationOtp {
-  id         String    @id @default(uuid())
-  channel    String
-  target     String
-  codeHash   String
-  expiresAt  DateTime
-  verifiedAt DateTime?
-  attempts   Int       @default(0)
-  createdAt  DateTime  @default(now())
-
-  @@index([channel, target])
-}
-
-model Inquiry {
-  id          String   @id @default(uuid())
-  userId      String?
-  source      String   @default("SUPPORT")
-  fullName    String
-  contactInfo String
-  classMode   String
-  subject     String
-  message     String
-  details     Json?
-  status      String   @default("NEW")
-  createdAt   DateTime @default(now())
-
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  @@index([source])
-  @@index([status])
-  @@index([createdAt])
 }
 
 enum AttendanceStatus {
@@ -456,77 +940,10 @@ enum LiveClassStatus {
   CANCELLED
 }
 
-model LiveClass {
-  id             String          @id @default(uuid())
-  batchId        String
-  title          String
-  teacherName    String
-  scheduledStart DateTime
-  scheduledEnd   DateTime
-  roomName       String          @unique
-  status         LiveClassStatus @default(SCHEDULED)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-
-  batch Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  chatMessages LiveClassChatMessage[]
-
-  @@index([batchId, scheduledStart])
-}
-
-model LiveClassChatMessage {
-  id          String   @id @default(uuid())
-  liveClassId String
-  senderId    String?
-  senderName  String
-  text        String
-  sentAt      DateTime @default(now())
-
-  liveClass LiveClass @relation(fields: [liveClassId], references: [id], onDelete: Cascade)
-
-  @@index([liveClassId, sentAt])
-}
-
-model Attendance {
-  id          String           @id @default(uuid())
-  studentId   String
-  studentName String
-  batchId     String?
-  batchName   String
-  session     String           @default("General")
-  date        DateTime         @default(now())
-  status      AttendanceStatus @default(PRESENT)
-  remarks     String?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-
-  student User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  batch   Batch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
-
-  @@index([batchId, date, session])
-}
-
 enum LeaveStatus {
   PENDING
   APPROVED
   REJECTED
-}
-
-model LeaveRequest {
-  id          String      @id @default(uuid())
-  userId      String
-  userName    String
-  leaveType   String
-  startDate   DateTime
-  endDate     DateTime
-  totalDays   Int
-  reason      String
-  attachment  String?
-  status      LeaveStatus @default(PENDING)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 enum SubmissionStatus {
@@ -534,52 +951,6 @@ enum SubmissionStatus {
   SUBMITTED
   GRADED
   OVERDUE
-}
-
-model Assignment {
-  id               String   @id @default(uuid())
-  batchId          String?
-  batchName        String   @default("All Batches")
-  title            String
-  description      String
-  typeTag          String   @default("Practical Assessment")
-  dueDate          DateTime
-  totalPoints      Int      @default(100)
-  referenceFileUrl String?
-  referenceFileName String?
-  evaluationCriteria String?
-  status           String   @default("ACTIVE")
-
-  // Teacher fields
-  teacherId   String?
-  teacherName String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  batch       Batch?                 @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  submissions AssignmentSubmission[]
-
-  // Optional: relation to User
-  // teacher         User?    @relation(fields: [teacherId], references: [id], onDelete: SetNull)
-}
-
-model AssignmentSubmission {
-  id           String           @id @default(uuid())
-  assignmentId String
-  studentId    String
-  studentName  String
-  fileUrl      String?
-  notes        String?
-  submittedAt  DateTime         @default(now())
-  status       SubmissionStatus @default(SUBMITTED)
-  grade        String?
-  feedback     String?
-
-  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  student    User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([assignmentId, studentId])
 }
 
 enum VideoSubmissionStatus {
@@ -594,54 +965,6 @@ enum PriorityLevel {
   High
 }
 
-model VideoTask {
-  id                   String        @id @default(uuid())
-  title                String
-  category             String        @default("Kathak")
-  course               String        @default("Kathak Advanced")
-  batchId              String?
-  batchName            String        @default("Alpha-2024")
-  priority             PriorityLevel @default(Low)
-  submissionDate       DateTime
-  cutOffTime           String        @default("18:00")
-  strictDeadline       Boolean       @default(false)
-  detailedInstructions String?
-  referenceFileUrl     String?
-
-  creatorRole   Role    @default(ADMIN)
-  createdById   String?
-  createdByName String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  videoSubmissions VideoSubmission[]
-}
-
-model VideoSubmission {
-  id               String                @id @default(uuid())
-  taskId           String?
-  studentId        String
-  studentName      String
-  studentAvatar    String?
-  studentBatch     String                @default("Alpha-2024")
-  submissionDate   DateTime              @default(now())
-  courseAndBatch   String                @default("Kathak Foundations • #402")
-  videoTitle       String
-  fileUrl          String?
-  status           VideoSubmissionStatus @default(PENDING)
-  marks            Float?
-  feedbackNotes    String?
-  correctionNotes  String[]              @default([])
-  evaluationRubric Json?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  task VideoTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
-}
-// ================= EXAM MANAGEMENT =================
-
 enum ExamType {
   THEORY
   PRACTICAL
@@ -655,220 +978,6 @@ enum ExamStatus {
   CANCELLED
 }
 
-model Exam {
-  id            String     @id @default(uuid())
-  title         String
-  description   String?    // Extra instructions or JSON payload
-  examCode      String     @unique
-  type          ExamType   @default(THEORY)
-  date          DateTime   // Scheduled date and start time
-  durationMins  Int        @default(120)
-  totalMarks    Float      @default(100)
-  passingMarks  Float      @default(40)
-  status        ExamStatus @default(SCHEDULED)
-  questionsData  Json?
-
-  // Relations
-  batchId       String?
-  batch         Batch?     @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  courseId      String?
-  course        Course?    @relation(fields: [courseId], references: [id], onDelete: SetNull)
-
-  // Tracker for who created it (Admin or Teacher)
-  createdById   String?
-  createdBy     User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
-
-  results       ExamResult[]
-
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-}
-
-model ExamResult {
-  id            String   @id @default(uuid())
-  examId        String
-  studentId     String
-  marksObtained Float?
-  grade         String?
-  status        String   @default("PENDING") // PASS, FAIL, PENDING
-  feedback      String?
-  fileUrl       String?  // If they need to upload a video/document for practicals
-  submittedAt   DateTime @default(now())
-  answersData    Json?
-  flagged             Boolean @default(false)
-  questionEvaluations Json?
-
-  exam          Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
-  student       User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([examId, studentId]) // Ek student ek exam ek hi baar de sakta hai
-}
-
-
-model Event {
-  id               String        @id @default(uuid())
-  title            String
-  category         EventCategory @default(Workshop)
-  description      String        @db.Text
-  
-  // Schedule Details
-  startDate        DateTime      @db.Date
-  endDate          DateTime      @db.Date
-  startTime        String        // e.g., "10:00"
-  durationMins     Int           @default(60)
-  
-  // Instructor & Capacity
-  leadInstructorId String?
-  leadInstructor   User?         @relation("EventInstructor", fields: [leadInstructorId], references: [id], onDelete: SetNull)
-  capacity         Int
-  level            EventLevel    @default(Beginner)
-  
-  // Pricing & Venue
-  registrationFee  Float         @default(0.0)
-  locationOrLink   String
-  
-  status           EventStatus   @default(DRAFT)
-  
-  // Audit & Relations
-  createdById      String?
-  createdBy        User?         @relation("EventCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  
-  registrations    EventRegistration[]
-  tickets          EventTicket[]
-
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-
-  isFeatured     Boolean  @default(false) // Hero banner ke liye (MOST ANTICIPATED wala event)
-  badgeTag       String?  // e.g. "MOST ANTICIPATED" — hero badge label, null ho to hide ho jayega
-  bannerImage    String?  // Hero banner background image
-  thumbnailImage String?  // Workshop card thumbnail image
-}
-
-model EventRegistration {
-  id               String        @id @default(uuid())
-  eventId          String
-  studentId        String
-  
-  // Payment tracking for paid events
-  paymentStatus    PaymentStatus @default(PENDING)
-  paymentId        String?       // Optional link to your existing Payment model
-  
-  registeredAt     DateTime      @default(now())
-
-  event            Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  student          User          @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([eventId, studentId]) // Ek student ek event mein ek hi baar register ho sakta hai
-}
-
-model EventTicket {
-  id                String        @id @default(uuid())
-  bookingId         String        @unique
-  eventId           String
-  fullName          String
-  email             String
-  phone             String
-  city              String        @default("")
-  adultCount        Int           @default(0)
-  childCount        Int           @default(0)
-  quantity          Int           @default(1)
-  amount            Float         @default(0)
-  paymentMethod     String?
-  paymentStatus     PaymentStatus @default(PENDING)
-  razorpayOrderId   String?       @unique
-  razorpayPaymentId String?
-  ticketEmail       String
-  createdAt         DateTime      @default(now())
-
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
-
-  @@index([eventId])
-  @@index([email])
-}
-
-// ==========================================================
-// NEW MODELS — Competition Track
-// ==========================================================
-model Competition {
-  id           String                    @id @default(uuid())
-  title        String
-  status       String                    @default("ACTIVE") // ACTIVE | COMPLETED
-  createdAt    DateTime                  @default(now())
-  updatedAt    DateTime                  @updatedAt
-
-  updates      CompetitionUpdate[]
-  participants CompetitionParticipant[]
-}
-
-// Personalized info per student (performance slot, stage, etc.)
-// studentId -> User.id (same pattern as EventRegistration.studentId in your schema;
-// there's no separate Student model, User itself carries the student role)
-model CompetitionParticipant {
-  id              String       @id @default(uuid())
-  competitionId   String
-  competition     Competition  @relation(fields: [competitionId], references: [id], onDelete: Cascade)
-  studentId       String
-  student         User         @relation("CompetitionParticipant", fields: [studentId], references: [id], onDelete: Cascade)
-
-  performanceSlot DateTime?    // e.g. "5th Aug 10:30 AM"
-  stageLocation   String?      // e.g. "Auditorium Main Stage"
-
-  createdAt       DateTime     @default(now())
-
-  @@unique([competitionId, studentId])
-}
-
-// Generic timeline items visible to all participants (Costume Fitting, Final Rehearsal, etc.)
-model CompetitionUpdate {
-  id            String      @id @default(uuid())
-  competitionId String
-  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
-
-  title         String
-  description   String
-  dueDate       DateTime?
-  timeLabel     String?     // Optional custom display label e.g. "3rd Aug • 2:00 PM"
-  order         Int         @default(0)
-
-  createdAt     DateTime    @default(now())
-}
-
-// ==========================================================
-// NEW MODEL — Promotional Offer Banner (Masterclass Pass etc.)
-// ==========================================================
-model Offer {
-  id              String    @id @default(uuid())
-  badgeLabel      String    // "EARLY BIRD SPECIAL"
-  title           String    // "Masterclass Series Pass"
-  description     String    // "Get 25% off when you book 3 or more workshops this month."
-  ctaLabel        String    @default("Claim Offer")
-  ctaLink         String?
-  discountPercent Int?
-  isActive        Boolean   @default(true)
-  startDate       DateTime?
-  endDate         DateTime?
-
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-}
-
-model Notification {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String
-  title     String
-  message   String
-  isUnread  Boolean  @default(true)
-  link      String?
-  createdAt DateTime @default(now())
-}
-
-// ==========================================================
-// NEW MODELS — Content Library
-// ==========================================================
-
 enum ResourceType {
   PDF
   AUDIO
@@ -877,34 +986,6 @@ enum ResourceType {
   IMAGE
   OTHER
 }
-
-model ContentResource {
-  id          String       @id @default(uuid())
-  title       String
-  description String?      @db.Text
-  type        ResourceType @default(DOCUMENT)
-  fileUrl     String
-  category    String       @default("General") // Folder-like grouping
-  
-  // Visibility
-  isGlobal    Boolean      @default(true) // If true, visible to everyone
-  batchId     String?      // If not global, visible only to specific batch
-  batch       Batch?       @relation(fields: [batchId], references: [id], onDelete: SetNull)
-
-  // Audit
-  uploadedById String
-  uploadedBy   User        @relation("UploadedResources", fields: [uploadedById], references: [id], onDelete: Cascade)
-
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-
-  @@index([category])
-  @@index([batchId])
-}
-
-// ==========================================================
-// PUBLIC WEBSITE GALLERY
-// ==========================================================
 
 enum GalleryCategory {
   HARSHITA
@@ -916,50 +997,6 @@ enum GalleryCategory {
 enum GalleryMediaType {
   IMAGE
   VIDEO
-}
-
-model GalleryItem {
-  id           String           @id @default(uuid())
-  title        String
-  altText      String?
-  category     GalleryCategory
-  mediaType    GalleryMediaType
-  url          String
-  thumbnailUrl String?
-  showOnHome   Boolean          @default(true)
-  journeyCarousel Boolean        @default(false)
-  sortOrder    Int              @default(0)
-  fileName     String?
-  fileSize     String?
-
-  uploadedById String
-  uploadedBy   User             @relation("UploadedGalleryItems", fields: [uploadedById], references: [id], onDelete: Cascade)
-
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-
-  @@index([category])
-  @@index([showOnHome])
-  @@index([sortOrder])
-  @@index([createdAt])
-}
-
-model JourneyCarouselSettings {
-  id                 String   @id @default("journey-carousel")
-  intervalMs         Int      @default(1000)
-  transition         String   @default("fade")
-  transitionDuration Int      @default(500)
-  updatedAt          DateTime @updatedAt
-}
-
-model JourneyCarouselItem {
-  id        String   @id @default(uuid())
-  title     String
-  altText   String?
-  url       String
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 }
 
 enum HeroPage {
@@ -982,52 +1019,6 @@ enum HeroMediaType {
   VIDEO
 }
 
-model HeroBanner {
-  id                String        @id @default(uuid())
-  pageKey           HeroPage      @unique
-  title             String
-  highlight         String?
-  subtitle          String        @default("")
-  tagline           String?
-  mediaType         HeroMediaType @default(IMAGE)
-  mediaUrl          String
-  imageAlt          String?
-  ctaLabel          String?
-  ctaLink           String?
-  ctaSecondaryLabel String?
-  ctaSecondaryLink  String?
-
-  ctaAction         String?  @default("LINK") // "LINK" | "MODAL_INVITATION" | "MODAL_BOOK_DEMO"
-  ctaColor          String?  @default("#9E0C25")
-  ctaLayout         String?  @default("SOLID") // "SOLID" | "OUTLINE"
-  ctaPosition       String?  @default("CENTER") // "LEFT" | "CENTER" | "RIGHT"
-  ctaBorderRadius   String?  @default("FULL") // "NONE" | "SM" | "MD" | "LG" | "FULL"
-
-  updatedById String?
-  updatedBy   User?    @relation("UpdatedHeroBanners", fields: [updatedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([pageKey])
-}
-
-model LeadPopup {
-  id           String   @id @default("default")
-  isEnabled    Boolean  @default(true)
-  delaySeconds Int      @default(300)
-  title        String   @default("Get in Touch")
-  subtitle     String   @default("Start Your Kathak Journey With Us")
-  imageUrl     String
-  imageAlt     String   @default("Kathak dancer")
-
-  updatedById String?
-  updatedBy   User?    @relation("UpdatedLeadPopups", fields: [updatedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
 enum DemoClassType {
   ONE_TO_ONE
   GROUP
@@ -1040,125 +1031,7 @@ enum DemoBookingStatus {
   COMPLETED
 }
 
-model DemoSettings {
-  id                   String   @id @default("default")
-  oneToOneFeeINR       Float    @default(499)
-  oneToOneDurationMins Int      @default(45)
-  isOneToOneEnabled    Boolean  @default(true)
-  isGroupEnabled       Boolean  @default(true)
-  updatedAt            DateTime @updatedAt
-}
-
-model DemoGroupSession {
-  id           String   @id @default(uuid())
-  title        String
-  startsAt     DateTime
-  durationMins Int      @default(60)
-  classMode    String   @default("Online")
-  capacity     Int      @default(20)
-  location     String   @default("")
-  notes        String   @default("")
-  isPublished  Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  bookings     DemoBooking[]
-
-  @@index([startsAt])
-  @@index([isPublished])
-}
-
-model DemoBooking {
-  id                String            @id @default(uuid())
-  type              DemoClassType
-  status            DemoBookingStatus @default(PENDING)
-  fullName          String
-  email             String
-  phone             String
-  course            String
-  classMode         String
-  message           String            @default("")
-  preferredDate     DateTime?
-  preferredTime     String?
-  sessionId         String?
-  amount            Float             @default(0)
-  paymentStatus     PaymentStatus     @default(PENDING)
-  razorpayOrderId   String?           @unique
-  razorpayPaymentId String?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-
-  session DemoGroupSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
-
-  @@index([type])
-  @@index([status])
-  @@index([createdAt])
-  @@index([email])
-}
-
 enum StudentCornerKind {
   MESSAGE
   VIDEO
-}
-
-model StudentCornerItem {
-  id           String            @id @default(uuid())
-  kind         StudentCornerKind
-  studentName  String
-  level        String
-  description  String            @default("")
-  duration     String?
-  videoUrl     String
-  thumbnailUrl String?
-  sortOrder    Int               @default(0)
-  isPublished  Boolean           @default(true)
-  fileName     String?
-  fileSize     String?
-
-  uploadedById String
-  uploadedBy   User              @relation("UploadedStudentCornerItems", fields: [uploadedById], references: [id], onDelete: Cascade)
-
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-
-  @@index([kind])
-  @@index([isPublished])
-  @@index([sortOrder])
-  @@index([createdAt])
-}
-
-model LetterheadTemplate {
-  id        String   @id @default(uuid())
-  name      String
-  imageUrl  String
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  letterheads Letterhead[]
-
-  @@index([isActive])
-  @@index([createdAt])
-}
-
-model Letterhead {
-  id          String   @id @default(uuid())
-  title       String
-  contentHtml String   @db.Text
-  pagesJson   Json?
-  fontFamily  String   @default("Georgia, serif")
-  isDefault   Boolean  @default(false)
-  usageCount  Int      @default(0)
-
-  templateId String
-  template   LetterheadTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
-
-  createdById String?
-  createdBy   User?   @relation("CreatedLetterheads", fields: [createdById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([isDefault])
-  @@index([updatedAt])
-  @@index([templateId])
 }
