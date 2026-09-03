@@ -25,6 +25,20 @@ function inferMarketingCategory(slug: string, title: string): string {
   return "beginners";
 }
 
+function resolveMarketingCategory(course: Course): string {
+  const configured = course.marketingCategory?.trim().toLowerCase();
+  const inferred = inferMarketingCategory(course.slug, course.title);
+
+  // Older records may contain display labels instead of canonical category keys.
+  // Prefer the inferred key when the stored value is not one of our known keys.
+  if (!configured || !MARKETING_LABELS[configured]) return inferred;
+
+  // Older records may have the default "beginners" value even when their
+  // slug/title clearly identifies a specialized or higher-level course.
+  if (configured === "beginners" && inferred !== "beginners") return inferred;
+  return configured;
+}
+
 function parseBulletSection(text: string, heading: string): string[] {
   const pattern = new RegExp(`${heading}:\\n([\\s\\S]*?)(?=\\n\\n|$)`, "i");
   const match = text.match(pattern);
@@ -52,14 +66,30 @@ function formatCurrency(amount: number, currency: "INR" | "USD", suffix: string)
   return `$${amount.toLocaleString("en-US")}${suffix}`;
 }
 
-function resolveBadgeClasses(course: Course) {
-  const bg = course.badgeBgColor || "#1F4A3A";
-  const border = course.borderColor?.startsWith("border-")
-    ? course.borderColor
-    : `border-[${bg}]`;
+const MARKETING_BADGE_CLASSES: Record<string, string> = {
+  beginners: "bg-[#1F4A3A]",
+  intermediate: "bg-[#1D4ED8]",
+  advanced: "bg-[#6D28D9]",
+  ladies: "bg-[#C2410C]",
+  kids: "bg-[#0F766E]",
+  hobby: "bg-[#B45309]",
+};
+const MARKETING_BADGE_COLORS: Record<string, string> = {
+  beginners: "#CE1010",
+  intermediate: "#CE1010",
+  advanced: "#CE1010",
+  ladies: "#DBAE1B",
+  kids: "#DBAE1B",
+  hobby: "#DBAE1B",
+};
+
+function resolveBadgeClasses(course: Course, category: string) {
+  const badgeBg = MARKETING_BADGE_CLASSES[category] || course.badgeBgColor || "bg-[#1F4A3A]";
+  const border = course.borderColor?.startsWith("border-") ? course.borderColor : "border-[#1F4A3A]";
 
   return {
-    badgeBg: bg.startsWith("bg-") ? bg : `bg-[${bg}]`,
+    badgeBg,
+    badgeColor: MARKETING_BADGE_COLORS[category],
     badgeText: "text-white",
     borderColor: border,
   };
@@ -90,6 +120,7 @@ export type PublicMarketingCourse = {
   showExam: boolean;
   thumbnail: string;
   badgeBg: string;
+  badgeColor?: string;
   badgeText: string;
   borderColor: string;
   videoUrl?: string | null;
@@ -100,11 +131,9 @@ export type PublicMarketingCourse = {
 
 export function mapCourseToPublicMarketingCourse(course: Course): PublicMarketingCourse {
   const description = course.description || "";
-  const category =
-    course.marketingCategory?.trim() ||
-    inferMarketingCategory(course.slug, course.title);
+  const category = resolveMarketingCategory(course);
   const categoryLabel = MARKETING_LABELS[category] || category;
-  const badge = resolveBadgeClasses(course);
+  const badge = resolveBadgeClasses(course, category);
 
   const includes = parseBulletSection(description, "What this course includes");
   const learn = parseBulletSection(description, "What you will learn");
