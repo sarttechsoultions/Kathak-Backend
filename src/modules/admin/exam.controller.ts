@@ -1486,6 +1486,332 @@ export const getExamResults =
     }
   };
 
+
+  /* ============================================================
+   GET SINGLE EXAM RESULT DETAIL
+
+   GET /teacher/exams/results/:id
+
+   Returns:
+   - Student
+   - Exam
+   - Course
+   - Batch
+   - Questions
+   - Student answers
+   - Question evaluations
+   - Feedback
+   - Score
+============================================================ */
+
+export const getExamResultDetail = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const user = req.user;
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const resultId = String(req.params.id);
+
+    if (!resultId) {
+      return res.status(400).json({
+        success: false,
+        message: "Result ID is required",
+      });
+    }
+
+    // =========================================================
+    // FIND RESULT
+    // =========================================================
+
+    const result = await prisma.examResult.findUnique({
+      where: {
+        id: resultId,
+      },
+
+      include: {
+        student: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            avatarUrl: true,
+          },
+        },
+
+        exam: {
+          include: {
+            course: {
+              select: {
+                id: true,
+                title: true,
+                description: true,
+              },
+            },
+
+            batch: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                courseId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // =========================================================
+    // NOT FOUND
+    // =========================================================
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        message: "Exam result not found",
+      });
+    }
+
+    // =========================================================
+    // TEACHER AUTHORIZATION
+    // =========================================================
+
+    if (isTeacher(user)) {
+      const teacherBatchIds = await getTeacherBatchIds(
+        user.id
+      );
+
+      const resultBatchId = result.exam.batchId;
+
+      if (
+        !resultBatchId ||
+        !teacherBatchIds.includes(resultBatchId)
+      ) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "You are not authorized to view this exam result",
+        });
+      }
+    }
+
+    // =========================================================
+    // MARKS
+    // =========================================================
+
+    const totalMarks = Number(
+      result.exam.totalMarks
+    );
+
+    const passingMarks = Number(
+      result.exam.passingMarks
+    );
+
+    const marksObtained =
+      result.marksObtained !== null &&
+      result.marksObtained !== undefined
+        ? Number(result.marksObtained)
+        : null;
+
+    // =========================================================
+    // PERCENTAGE
+    // =========================================================
+
+    const percentage =
+      marksObtained !== null && totalMarks > 0
+        ? calculatePercentage(
+            marksObtained,
+            totalMarks
+          )
+        : null;
+
+    // =========================================================
+    // STATUS
+    // =========================================================
+
+    const status =
+      marksObtained !== null
+        ? marksObtained >= passingMarks
+          ? "PASSED"
+          : "FAILED"
+        : String(result.status);
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
+
+    return res.json({
+      success: true,
+
+      data: {
+        id: result.id,
+
+        // =====================================================
+        // STUDENT
+        // =====================================================
+
+        studentId: result.studentId,
+
+        studentName:
+          result.student?.fullName ?? "Unknown Student",
+
+        studentEmail:
+          result.student?.email ?? "",
+
+        studentAvatar:
+          result.student?.avatarUrl ?? "",
+
+        studentIdCode:
+          result.studentId,
+
+        // =====================================================
+        // EXAM
+        // =====================================================
+
+        examId: result.examId,
+
+        examTitle:
+          result.exam.title,
+
+        examCode:
+          result.exam.examCode,
+
+        // =====================================================
+        // COURSE
+        // =====================================================
+
+        courseId:
+          result.exam.courseId,
+
+        courseName:
+          result.exam.course?.title ??
+          "Unknown Course",
+
+        // =====================================================
+        // BATCH
+        // =====================================================
+
+        batchId:
+          result.exam.batchId,
+
+        batchName:
+          result.exam.batch?.name ??
+          "Unknown Batch",
+
+        batchCode:
+          result.exam.batch?.code ??
+          null,
+
+        // =====================================================
+        // EXAM DATA
+        // =====================================================
+
+        exam: {
+          id: result.exam.id,
+
+          title: result.exam.title,
+
+          examCode:
+            result.exam.examCode,
+
+          type:
+            result.exam.type,
+
+          description:
+            result.exam.description,
+
+          date:
+            result.exam.date,
+
+          durationMins:
+            Number(result.exam.durationMins),
+
+          totalMarks,
+
+          passingMarks,
+
+          passingPercentage:
+            totalMarks > 0
+              ? calculatePercentage(
+                  passingMarks,
+                  totalMarks
+                )
+              : 0,
+
+          course: result.exam.course,
+
+          batch: result.exam.batch,
+
+          // THIS IS THE IMPORTANT PART
+          questionsData:
+            result.exam.questionsData,
+        },
+
+        // =====================================================
+        // RESULT
+        // =====================================================
+
+        totalMarks,
+
+        passingMarks,
+
+        marksObtained,
+
+        percentage,
+
+        status,
+
+        grade:
+          result.grade ?? null,
+
+        percentile:
+          null,
+
+        feedback:
+          result.feedback ?? null,
+
+        flagged:
+          result.flagged ?? false,
+
+        submittedAt:
+          result.submittedAt ?? null,
+
+        // =====================================================
+        // STUDENT ANSWERS
+        // =====================================================
+
+        answersData:
+          result.answersData ?? {},
+
+        // =====================================================
+        // TEACHER EVALUATION
+        // =====================================================
+
+        questionEvaluations:
+          result.questionEvaluations ?? {},
+      },
+    });
+  } catch (error) {
+    console.error(
+      "getExamResultDetail error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to fetch exam result details",
+    });
+  }
+};
 /* ============================================================
    EVALUATE EXAM RESULT
    POST /admin/exams/results/:id/evaluate
