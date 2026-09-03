@@ -1126,12 +1126,21 @@ export const submitStudentExam = async (req: Request, res: Response): Promise<vo
   }
 };
 
-export const getStudentDashboard = async (req: Request, res: Response): Promise<void> => {
+export const getStudentDashboard = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const userId = req.user!.id;
 
+    // ============================================================
+    // 1. LOAD STUDENT + RELATED DATA
+    // ============================================================
+
     const student = await prisma.user.findUnique({
-      where: { id: userId },
+      where: {
+        id: userId,
+      },
       include: {
         batchMemberships: {
           include: {
@@ -1139,181 +1148,633 @@ export const getStudentDashboard = async (req: Request, res: Response): Promise<
               include: {
                 course: {
                   include: {
-                    lessons: true
-                  }
+                    lessons: true,
+                  },
                 },
                 liveClasses: true,
-                assignments: true
-              }
-            }
-          }
+                assignments: true,
+              },
+            },
+          },
         },
+
         enrollments: {
           include: {
             course: {
               include: {
-                lessons: true
-              }
-            }
-          }
+                lessons: true,
+              },
+            },
+          },
         },
+
         attendances: {
-          orderBy: { date: "desc" },
+          orderBy: {
+            date: "desc",
+          },
           take: 5,
           include: {
-            batch: true
-          }
+            batch: true,
+          },
         },
-        assignmentSubmissions: true
-      }
+
+        assignmentSubmissions: true,
+      },
     });
 
     if (!student) {
-      res.status(404).json({ status: "error", message: "Student profile not found." });
+      res.status(404).json({
+        status: "error",
+        message: "Student profile not found.",
+      });
       return;
     }
 
-    const enrolledBatches = (student.batchMemberships || []).map((m: any) => m.batch).filter(Boolean);
+    // ============================================================
+    // 2. STUDENT BATCHES
+    // ============================================================
+
+    const enrolledBatches = (student.batchMemberships || [])
+      .map((membership: any) => membership.batch)
+      .filter(Boolean);
+
     const firstBatch = enrolledBatches[0];
-    const primaryCourse = firstBatch?.course || student.enrollments[0]?.course;
 
-    const courseTitle = primaryCourse?.title || firstBatch?.courseName || firstBatch?.name || "";
-    const totalLessons = primaryCourse?.lessons?.length || 0;
-    const completedSubmissions = student.assignmentSubmissions?.length || 0;
-    const progressPercent = totalLessons > 0 ? Math.min(100, Math.round((completedSubmissions / totalLessons) * 100)) : (completedSubmissions > 0 ? 100 : 0);
+    // ============================================================
+    // 3. PRIMARY COURSE
+    // ============================================================
 
-    // Fetch live classes across student's enrolled batches
-    const batchIds = enrolledBatches.map((b: any) => b.id);
-    const liveClasses = batchIds.length > 0 ? await (prisma as any).liveClass.findMany({
-      where: {
-        batchId: { in: batchIds }
-      },
-      orderBy: { scheduledStart: "asc" }
-    }) : [];
+    const primaryCourse =
+      firstBatch?.course ||
+      student.enrollments?.[0]?.course ||
+      null;
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    const courseTitle =
+      primaryCourse?.title ||
+      firstBatch?.courseName ||
+      firstBatch?.name ||
+      "";
+
+    const batchName =
+      firstBatch?.name ||
+      firstBatch?.courseName ||
+      "Batch not assigned";
+
+    const totalLessons =
+      primaryCourse?.lessons?.length || 0;
+
+    const completedSubmissions =
+      student.assignmentSubmissions?.length || 0;
+
+    const progressPercent =
+      totalLessons > 0
+        ? Math.min(
+            100,
+            Math.round(
+              (completedSubmissions / totalLessons) * 100
+            )
+          )
+        : completedSubmissions > 0
+          ? 100
+          : 0;
+
+    // ============================================================
+    // 4. STUDENT BATCH IDS
+    // ============================================================
+
+    const batchIds = enrolledBatches
+      .map((batch: any) => batch.id)
+      .filter(Boolean);
+
+    // ============================================================
+    // 5. LIVE CLASSES
+    // ============================================================
+
+    const liveClasses =
+      batchIds.length > 0
+        ? await (prisma as any).liveClass.findMany({
+            where: {
+              batchId: {
+                in: batchIds,
+              },
+            },
+            orderBy: {
+              scheduledStart: "asc",
+            },
+          })
+        : [];
+
+    const now = Date.now();
+
+    const todayStr = new Date()
+      .toISOString()
+      .split("T")[0];
+
+    // Only classes that have not ended
     const activeClasses = liveClasses.filter(
-      (lc: any) => lc.status !== "COMPLETED" && lc.status !== "CANCELLED" && new Date(lc.scheduledEnd).getTime() > Date.now()
+      (liveClass: any) => {
+        if (
+          liveClass.status === "COMPLETED" ||
+          liveClass.status === "CANCELLED"
+        ) {
+          return false;
+        }
+
+        return (
+          new Date(
+            liveClass.scheduledEnd
+          ).getTime() > now
+        );
+      }
     );
+
+    // ============================================================
+    // 6. TODAY'S LIVE CLASS
+    // ============================================================
 
     const todayClass =
-      activeClasses.find((lc: any) => lc.status === "LIVE") ||
-      activeClasses.find((lc: any) => {
-        const lcDate = new Date(lc.scheduledStart).toISOString().split("T")[0];
-        return lcDate === todayStr;
-      });
-
-    const upcomingClass =
-      activeClasses.find((lc: any) => lc.status === "LIVE") ||
       activeClasses.find(
-        (lc: any) => lc.status === "SCHEDULED" && new Date(lc.scheduledStart).getTime() > Date.now()
+        (liveClass: any) =>
+          liveClass.status === "LIVE"
+      ) ||
+      activeClasses.find(
+        (liveClass: any) => {
+          const liveClassDate = new Date(
+            liveClass.scheduledStart
+          )
+            .toISOString()
+            .split("T")[0];
+
+          return liveClassDate === todayStr;
+        }
       );
 
-    // Calculate pending assignments
-    const allBatchAssignments = enrolledBatches.flatMap((b: any) => b.assignments || []);
-    const submittedAssignmentIds = new Set((student.assignmentSubmissions || []).map((s: any) => s.assignmentId));
-    const pendingAssignmentsCount = allBatchAssignments.filter((a: any) => !submittedAssignmentIds.has(a.id)).length;
+    // ============================================================
+    // 7. UPCOMING LIVE CLASS
+    // ============================================================
 
-    // Course progress list
-    const courseProgressList = (student.enrollments || []).map((e: any) => {
-      const cLessons = e.course?.lessons?.length || 0;
-      const percent = cLessons > 0 ? Math.min(100, Math.round((completedSubmissions / cLessons) * 100)) : 0;
-      return {
-        name: e.course?.title || "Enrolled Course",
-        percent
-      };
-    });
+    const upcomingClass =
+      activeClasses.find(
+        (liveClass: any) =>
+          liveClass.status === "LIVE"
+      ) ||
+      activeClasses.find(
+        (liveClass: any) =>
+          liveClass.status === "SCHEDULED" &&
+          new Date(
+            liveClass.scheduledStart
+          ).getTime() > now
+      );
 
-    // Reminders
-    const reminderPrefs = parseLiveClassReminderPrefs(student.notificationPrefs);
-    const liveClassReminders = buildLiveClassReminders(
-      liveClasses.map((lc: any) => ({
-        id: lc.id,
-        title: lc.title,
-        scheduledStart: lc.scheduledStart,
-        scheduledEnd: lc.scheduledEnd,
-        status: lc.status,
-        teacherName: lc.teacherName,
-        batch: enrolledBatches.find((b: any) => b.id === lc.batchId) || firstBatch,
-      })),
-      { enabled: reminderPrefs.liveClassReminders, max: 5, daysAhead: 14 }
+    // ============================================================
+    // 8. PENDING ASSIGNMENTS
+    // ============================================================
+
+    const allBatchAssignments =
+      enrolledBatches.flatMap(
+        (batch: any) =>
+          batch.assignments || []
+      );
+
+    const submittedAssignmentIds =
+      new Set(
+        (student.assignmentSubmissions || []).map(
+          (submission: any) =>
+            submission.assignmentId
+        )
+      );
+
+    const pendingAssignmentsCount =
+      allBatchAssignments.filter(
+        (assignment: any) =>
+          !submittedAssignmentIds.has(
+            assignment.id
+          )
+      ).length;
+
+    // ============================================================
+    // 9. COURSE PROGRESS
+    // ============================================================
+
+    const courseProgressList =
+      (student.enrollments || []).map(
+        (enrollment: any) => {
+          const course =
+            enrollment.course;
+
+          const courseLessons =
+            course?.lessons?.length || 0;
+
+          const percent =
+            courseLessons > 0
+              ? Math.min(
+                  100,
+                  Math.round(
+                    (completedSubmissions /
+                      courseLessons) *
+                      100
+                  )
+                )
+              : 0;
+
+          // Find the student's batch belonging
+          // to this course.
+          const matchingBatch =
+            enrolledBatches.find(
+              (batch: any) =>
+                batch.course?.id ===
+                course?.id
+            );
+
+          return {
+            name:
+              course?.title ||
+              "Enrolled Course",
+
+            batchName:
+              matchingBatch?.name ||
+              "Batch not assigned",
+
+            percent,
+          };
+        }
+      );
+
+    // ============================================================
+    // 10. LIVE CLASS REMINDERS
+    // ============================================================
+
+    const reminderPrefs =
+      parseLiveClassReminderPrefs(
+        student.notificationPrefs
+      );
+
+    const liveClassReminders =
+      buildLiveClassReminders(
+        liveClasses.map(
+          (liveClass: any) => ({
+            id: liveClass.id,
+
+            title:
+              liveClass.title,
+
+            scheduledStart:
+              liveClass.scheduledStart,
+
+            scheduledEnd:
+              liveClass.scheduledEnd,
+
+            status:
+              liveClass.status,
+
+            teacherName:
+              liveClass.teacherName,
+
+            batch:
+              enrolledBatches.find(
+                (batch: any) =>
+                  batch.id ===
+                  liveClass.batchId
+              ) || firstBatch,
+          })
+        ),
+        {
+          enabled:
+            reminderPrefs.liveClassReminders,
+
+          max: 5,
+
+          daysAhead: 14,
+        }
+      );
+
+    // ============================================================
+    // 11. GENERAL REMINDERS
+    // ============================================================
+
+    const reminders: {
+      title: string;
+      subtitle: string;
+      kind?: string;
+      href?: string;
+    }[] = liveClassReminders.map(
+      (reminder: any) => ({
+        title:
+          reminder.title,
+
+        subtitle:
+          reminder.subtitle,
+
+        kind:
+          reminder.kind,
+
+        href:
+          reminder.href,
+      })
     );
 
-    const reminders: { title: string; subtitle: string; kind?: string; href?: string }[] =
-      liveClassReminders.map((r) => ({
-        title: r.title,
-        subtitle: r.subtitle,
-        kind: r.kind,
-        href: r.href,
-      }));
+    // ============================================================
+    // 12. ASSIGNMENT REMINDERS
+    // ============================================================
 
-    const unsubmittedWithDueDate = allBatchAssignments.filter((a: any) => !submittedAssignmentIds.has(a.id) && a.dueDate);
-    unsubmittedWithDueDate.slice(0, 2).forEach((a: any) => {
-      reminders.push({
-        title: a.title || "Assignment Submission",
-        subtitle: `Due: ${new Date(a.dueDate).toLocaleDateString()}`,
-        kind: "assignment",
-        href: "/student/assignments",
+    const unsubmittedWithDueDate =
+      allBatchAssignments.filter(
+        (assignment: any) =>
+          !submittedAssignmentIds.has(
+            assignment.id
+          ) &&
+          assignment.dueDate
+      );
+
+    unsubmittedWithDueDate
+      .slice(0, 2)
+      .forEach((assignment: any) => {
+        reminders.push({
+          title:
+            assignment.title ||
+            "Assignment Submission",
+
+          subtitle:
+            `Due: ${new Date(
+              assignment.dueDate
+            ).toLocaleDateString()}`,
+
+          kind: "assignment",
+
+          href:
+            "/student/assignments",
+        });
       });
-    });
+
+    // ============================================================
+    // 13. FEE REMINDERS
+    // ============================================================
+    //
+    // Fee/payment model has not been included in the
+    // controller you provided.
+    //
+    // Keep the API contract ready without making assumptions
+    // about your Prisma schema.
+    //
+    // Once the actual fee model is provided, this array can
+    // be populated from the database.
+    //
+    // ============================================================
+
+    const feeReminders: {
+      id: string;
+      title: string;
+      subtitle: string;
+      amount?: number;
+      dueDate?: string;
+      status?: string;
+      href?: string;
+    }[] = [];
+
+    // ============================================================
+    // 14. DASHBOARD RESPONSE
+    // ============================================================
 
     const dashboardData = {
+      // ----------------------------------------------------------
+      // STUDENT
+      // ----------------------------------------------------------
+
       user: {
         id: student.id,
-        fullName: student.fullName,
-        email: student.email,
-        phone: student.phone,
-        profileImage: student.avatarUrl
+
+        fullName:
+          student.fullName,
+
+        email:
+          student.email,
+
+        phone:
+          student.phone,
+
+        profileImage:
+          student.avatarUrl,
       },
-      currentCourse: courseTitle ? {
-        title: courseTitle,
-        subtitle: primaryCourse?.description || "Master the rhythm of the soul. Practice your Mudras & Tatkaar today!",
-        completedLessons: completedSubmissions,
-        totalLessons: totalLessons,
-        progressPercent: progressPercent
-      } : null,
-      todayLiveClass: todayClass ? {
-        id: todayClass.id,
-        title: todayClass.title,
-        instructor: todayClass.teacherName || firstBatch?.teacherName || "Faculty Instructor",
-        timeStr: new Date(todayClass.scheduledStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        isLive: todayClass.status === "LIVE",
-        meetingLink: todayClass.status === "LIVE"
-          ? `/student/classes/room/${todayClass.id}`
-          : "/student/classes"
-      } : null,
-      // Attendance has four real states (PRESENT/ABSENT/LATE/LEAVE) — show
-      // the actual status instead of collapsing LATE/LEAVE into "Absent".
-      recentClasses: (student.attendances || []).map((att: any) => ({
-        title: att.batch?.name || "Practice Session",
-        subtitle: att.batch?.courseName || "Kathak Lesson",
-        status: att.status,
-        date: new Date(att.date).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
-      })),
-      upcomingLiveClass: upcomingClass ? {
-        id: upcomingClass.id,
-        title: upcomingClass.title,
-        subtitle: `With ${upcomingClass.teacherName || firstBatch?.teacherName || "your instructor"}`,
-        timeStr: new Date(upcomingClass.scheduledStart).toLocaleString([], { dateStyle: "short", timeStyle: "short" }),
-        durationStr: `${Math.max(1, Math.round((new Date(upcomingClass.scheduledEnd).getTime() - new Date(upcomingClass.scheduledStart).getTime()) / 60000))} min`,
-        isLive: upcomingClass.status === "LIVE",
-        meetingLink: upcomingClass.status === "LIVE"
-          ? `/student/classes/room/${upcomingClass.id}`
-          : "/student/classes"
-      } : null,
-      courseProgress: courseProgressList,
+
+      // ----------------------------------------------------------
+      // CURRENT COURSE
+      // ----------------------------------------------------------
+
+      currentCourse: courseTitle
+        ? {
+            title:
+              courseTitle,
+
+            // NEW:
+            // Relevant batch for the current course
+            batchName:
+              batchName,
+
+            subtitle:
+              primaryCourse?.description ||
+              "Master the rhythm of the soul. Practice your Mudras & Tatkaar today!",
+
+            completedLessons:
+              completedSubmissions,
+
+            totalLessons:
+              totalLessons,
+
+            progressPercent:
+              progressPercent,
+          }
+        : null,
+
+      // ----------------------------------------------------------
+      // TODAY'S LIVE CLASS
+      // ----------------------------------------------------------
+
+      todayLiveClass:
+        todayClass
+          ? {
+              id:
+                todayClass.id,
+
+              title:
+                todayClass.title,
+
+              instructor:
+                todayClass.teacherName ||
+                firstBatch?.teacherName ||
+                "Faculty Instructor",
+
+              timeStr:
+                new Date(
+                  todayClass.scheduledStart
+                ).toLocaleTimeString(
+                  [],
+                  {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }
+                ),
+
+              isLive:
+                todayClass.status ===
+                "LIVE",
+
+              meetingLink:
+                todayClass.status ===
+                "LIVE"
+                  ? `/student/classes/room/${todayClass.id}`
+                  : "/student/classes",
+            }
+          : null,
+
+      // ----------------------------------------------------------
+      // RECENT CLASSES / ATTENDANCE
+      // ----------------------------------------------------------
+
+      recentClasses:
+        (student.attendances || []).map(
+          (attendance: any) => ({
+            title:
+              attendance.batch?.name ||
+              "Practice Session",
+
+            subtitle:
+              attendance.batch?.courseName ||
+              "Kathak Lesson",
+
+            status:
+              attendance.status,
+
+            date:
+              new Date(
+                attendance.date
+              ).toLocaleDateString(
+                "en-US",
+                {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                }
+              ),
+          })
+        ),
+
+      // ----------------------------------------------------------
+      // UPCOMING LIVE CLASS
+      // ----------------------------------------------------------
+
+      upcomingLiveClass:
+        upcomingClass
+          ? {
+              id:
+                upcomingClass.id,
+
+              title:
+                upcomingClass.title,
+
+              subtitle:
+                `With ${
+                  upcomingClass.teacherName ||
+                  firstBatch?.teacherName ||
+                  "your instructor"
+                }`,
+
+              timeStr:
+                new Date(
+                  upcomingClass.scheduledStart
+                ).toLocaleString(
+                  [],
+                  {
+                    dateStyle:
+                      "short",
+                    timeStyle:
+                      "short",
+                  }
+                ),
+
+              durationStr:
+                `${Math.max(
+                  1,
+                  Math.round(
+                    (
+                      new Date(
+                        upcomingClass.scheduledEnd
+                      ).getTime() -
+                      new Date(
+                        upcomingClass.scheduledStart
+                      ).getTime()
+                    ) /
+                      60000
+                  )
+                )} min`,
+
+              isLive:
+                upcomingClass.status ===
+                "LIVE",
+
+              meetingLink:
+                upcomingClass.status ===
+                "LIVE"
+                  ? `/student/classes/room/${upcomingClass.id}`
+                  : "/student/classes",
+            }
+          : null,
+
+      // ----------------------------------------------------------
+      // COURSE PROGRESS
+      // ----------------------------------------------------------
+
+      courseProgress:
+        courseProgressList,
+
+      // ----------------------------------------------------------
+      // METRICS
+      // ----------------------------------------------------------
+
       metrics: {
-        completedLessons: completedSubmissions,
-        practiceHours: `${Math.floor(completedSubmissions * 1.5)}h 00m`,
-        assignmentsPending: pendingAssignmentsCount
+        completedLessons:
+          completedSubmissions,
+
+        practiceHours:
+          `${Math.floor(
+            completedSubmissions * 1.5
+          )}h 00m`,
+
+        assignmentsPending:
+          pendingAssignmentsCount,
       },
-      reminders
+
+      // ----------------------------------------------------------
+      // GENERAL REMINDERS
+      // ----------------------------------------------------------
+
+      reminders,
+
+      // ----------------------------------------------------------
+      // FEE REMINDERS
+      // ----------------------------------------------------------
+
+      feeReminders,
     };
 
-    res.json({ status: "success", data: dashboardData });
+    // ============================================================
+    // 15. RESPONSE
+    // ============================================================
+
+    res.json({
+      status: "success",
+      data: dashboardData,
+    });
   } catch (error) {
-    console.error("Get Student Dashboard Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to fetch student dashboard data." });
+    console.error(
+      "Get Student Dashboard Error:",
+      error
+    );
+
+    res.status(500).json({
+      status: "error",
+      message:
+        "Failed to fetch student dashboard data.",
+    });
   }
 };
 
