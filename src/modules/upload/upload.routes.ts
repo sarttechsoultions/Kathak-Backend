@@ -10,13 +10,13 @@ const storage = multer.memoryStorage();
 // Full 500MB allowance — only for authenticated video/image uploads.
 const uploadAnyMulter = multer({
   storage,
-  limits: { fileSize: 500 * 1024 * 1024 },
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
 });
 
 // A profile photo never needs to be more than a few MB. The public route
 // gets its own, much smaller cap so it can't be used to push huge payloads
 // through an unauthenticated endpoint.
-const PUBLIC_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const PUBLIC_IMAGE_MAX_BYTES = 50 * 1024 * 1024;
 const uploadPublicImageMulter = multer({
   storage,
   limits: { fileSize: PUBLIC_IMAGE_MAX_BYTES },
