@@ -66,6 +66,7 @@ model User {
   createdLetterheads         Letterhead[]             @relation("CreatedLetterheads")
   notifications              Notification[]
   payments                   Payment[]
+  monthlyDues                MonthlyDue[]
   recordedClassViews         RecordedClassView[]
   uploadedStudentCornerItems StudentCornerItem[]      @relation("UploadedStudentCornerItems")
   permissions                TeacherPermission[]
@@ -105,10 +106,16 @@ model Course {
   marketingCategory    String          @default("beginners")
   showExam             Boolean         @default(true)
   showOnHome           Boolean         @default(true)
+  // ── Payment Configuration ──
+  joiningFeeINR        Float           @default(1100)
+  bulkDiscountTiers    Json            @default(dbgenerated("'[]'::jsonb"))
+  autoPayEnabled       Boolean         @default(true)
+  courseDurationMonths Int             @default(0)
   batches              Batch[]
   enrollments          Enrollment[]
   exams                Exam[]
   lessons              Lesson[]
+  monthlyDues          MonthlyDue[]
   recordedClasses      RecordedClass[]
 }
 
@@ -202,17 +209,23 @@ model BatchStudent {
 }
 
 model Enrollment {
-  id        String    @id @default(uuid())
-  userId    String
-  courseId  String
-  mode      ClassMode @default(ONLINE)
-  type      String    @default("GROUP")
-  active    Boolean   @default(true)
-  expiresAt DateTime?
-  createdAt DateTime  @default(now())
-  course    Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payments  Payment[]
+  id             String       @id @default(uuid())
+  userId         String
+  courseId       String
+  mode           ClassMode    @default(ONLINE)
+  type           String       @default("GROUP")
+  active         Boolean      @default(true)
+  expiresAt      DateTime?
+  createdAt      DateTime     @default(now())
+  // ── Payment Mode ──
+  paymentMode    String       @default("MONTHLY") // MONTHLY | FULL_COURSE
+  monthsPaid     Int          @default(0)
+  nextDueDate    DateTime?
+  subscriptionId String?
+  course         Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments       Payment[]
+  monthlyDues    MonthlyDue[]
 }
 
 model Payment {
@@ -247,6 +260,31 @@ model PendingEnrollment {
 
   @@index([email])
   @@index([status])
+}
+
+model MonthlyDue {
+  id           String        @id @default(uuid())
+  enrollmentId String
+  userId       String
+  courseId     String
+  dueMonth     String        // Format: "YYYY-MM" e.g. "2026-09"
+  dueDate      DateTime
+  amount       Float
+  currency     Currency      @default(INR)
+  status       PaymentStatus @default(PENDING)
+  paymentId    String?
+  paidAt       DateTime?
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  enrollment   Enrollment    @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course       Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, dueMonth])
+  @@index([userId])
+  @@index([status])
+  @@index([dueDate])
 }
 
 model VerificationOtp {

@@ -15,7 +15,9 @@ const allowedOrigins = [
   "http://127.0.0.1:3000",
   "http://localhost:3001",
   "http://127.0.0.1:3001",
-  "https://kathak-theta.vercel.app"
+  "https://kathak-theta.vercel.app",
+  "https://kathakbyharshita.com",
+  "https://www.kathakbyharshita.com"
 ];
 
 const io = new Server(httpServer, {
