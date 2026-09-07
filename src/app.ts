@@ -55,6 +55,8 @@ const app = express();
 app.use(helmet());
 const allowedOrigins = [
   env.frontendUrl,
+  "https://kathakbyharshita.com",
+  "https://www.kathakbyharshita.com",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "https://kathak-theta.vercel.app"
