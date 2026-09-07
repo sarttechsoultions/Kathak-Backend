@@ -3,6 +3,7 @@ import { Readable } from "stream";
 import fs from "fs";
 import path from "path";
 import axios from "axios";
+import sharp from "sharp";
 import cloudinary from "../../config/cloudinary.config";
 import { BUNNY_CONFIG } from "../../config/bunny.config";
 import { env } from "../../config/env";
@@ -30,12 +31,28 @@ export const uploadImage = async (req: Request, res: Response): Promise<void> =>
     }
 
     try {
-      const fileBase64 = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
       const isPdf = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
-      const result = await cloudinary.uploader.upload(fileBase64, {
-        folder: "kathak_courses",
-        resource_type: isPdf ? "image" : "auto",
-        format: isPdf ? "pdf" : undefined,
+      const isImage = file.mimetype.startsWith("image/");
+      
+      let uploadBuffer = file.buffer;
+      if (isImage && !isPdf) {
+        // Compress the image before uploading to stay under Cloudinary's 10MB free tier limit
+        uploadBuffer = await sharp(file.buffer)
+          .resize(1920, 1920, { fit: "inside", withoutEnlargement: true }) // Max HD size
+          .jpeg({ quality: 80 }) // Convert to high-quality JPEG to guarantee size reduction
+          .toBuffer();
+      }
+
+      const result = await new Promise<any>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: "kathak_courses",
+            resource_type: isPdf ? "image" : "auto",
+            format: isPdf ? "pdf" : undefined,
+          },
+          (error, result) => (result ? resolve(result) : reject(error))
+        );
+        stream.end(uploadBuffer);
       });
 
       if (result && result.secure_url) {
@@ -133,7 +150,7 @@ export const uploadVideoToBunny = async (req: Request, res: Response): Promise<v
           { resource_type: "video", folder: "kathak_videos" },
           (error, result) => (result ? resolve(result) : reject(error))
         );
-        Readable.from(file.buffer).pipe(stream);
+        stream.end(file.buffer);
       }) as any;
 
       if (cloudResult?.secure_url) {

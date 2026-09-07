@@ -174,7 +174,7 @@ export const getTeacherBatchStudents = async (req: Request, res: Response): Prom
           fullName: bs.student.fullName,
           name: bs.student.fullName,
           email: bs.student.email,
-          avatar: bs.student.avatarUrl || "/Ananya.png",
+          avatar: bs.student.avatarUrl || "",
           studentId: `#KL-2024-${bs.student.id.slice(0, 4).toUpperCase()}`,
           batchName: batch.code || batch.name,
           batchId: batch.id,

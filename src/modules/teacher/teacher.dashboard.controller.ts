@@ -264,7 +264,7 @@ export const getTeacherDashboard = async (req: Request, res: Response): Promise<
     const assignmentSubmissionItems = recentAssignmentSubs.map((sub) => ({
       id: sub.id,
       studentName: sub.studentName,
-      avatar: sub.student?.avatarUrl || "/Ananya.png",
+      avatar: sub.student?.avatarUrl || "",
       topic: sub.assignment?.title || "Assignment submission",
       timeAgo: timeAgo(new Date(sub.submittedAt)),
       href: "/teacher/assignments",
@@ -274,7 +274,7 @@ export const getTeacherDashboard = async (req: Request, res: Response): Promise<
     const videoSubmissionItems = recentVideoSubs.map((sub) => ({
       id: sub.id,
       studentName: sub.studentName,
-      avatar: sub.studentAvatar || "/Ananya.png",
+      avatar: sub.studentAvatar || "",
       topic: sub.videoTitle || "Video submission",
       timeAgo: timeAgo(new Date(sub.submissionDate)),
       href: "/teacher/video",

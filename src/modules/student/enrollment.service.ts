@@ -504,6 +504,11 @@ const fulfillEnrollment = async (
 
   const enrollmentType = parseEnrollmentType(payload.enrollmentType);
 
+  // Read payment mode from payload (set by payment controller)
+  const paymentModeRaw = String((payload as Record<string, unknown>).paymentMode || "MONTHLY").toUpperCase();
+  const paymentMode = paymentModeRaw === "FULL_COURSE" ? "FULL_COURSE" : "MONTHLY";
+  const monthsPaid = Math.max(1, parseInt(String((payload as Record<string, unknown>).months || "1"), 10));
+
   if (!enrollment) {
     enrollment = await tx.enrollment.create({
       data: {
@@ -512,12 +517,14 @@ const fulfillEnrollment = async (
         mode: ClassMode.ONLINE,
         type: enrollmentType,
         active: true,
+        paymentMode,
+        monthsPaid,
       },
     });
   } else if (enrollment.type !== enrollmentType) {
     enrollment = await tx.enrollment.update({
       where: { id: enrollment.id },
-      data: { type: enrollmentType, active: true },
+      data: { type: enrollmentType, active: true, paymentMode, monthsPaid },
     });
   }
 
@@ -528,7 +535,9 @@ const fulfillEnrollment = async (
 
   const monthlyFee =
     enrollmentType === "ONE_TO_ONE" ? course.oneToOneFeeINR || 0 : course.groupFeeINR || 0;
-  const feePaid = enrollmentAmountINR(monthlyFee);
+  const joiningFee = course.joiningFeeINR ?? 1100;
+  // feePaid is the actual amount charged (from the Razorpay order)
+  const feePaid = enrollmentAmountINR(monthlyFee, joiningFee);
 
   const existingPayment = await tx.payment.findFirst({
     where: {

@@ -50,6 +50,8 @@ import {
   refundPayment,
   getPaymentInvoice,
   exportFinanceCsv,
+  getMonthlyDues,
+  recordMonthlyDuePayment,
   getInquiries,
   updateInquiryStatus,
   deleteInquiry,
@@ -141,6 +143,10 @@ router.get("/finance/export.csv", requirePermission(Permission.VIEW_PAYMENTS), e
 router.get("/payments/:id/invoice", requirePermission(Permission.VIEW_PAYMENTS), getPaymentInvoice);
 router.post("/payments", requirePermission(Permission.VIEW_PAYMENTS), recordFeePayment);
 router.post("/payments/:id/refund", requirePermission(Permission.VIEW_PAYMENTS), refundPayment);
+
+// 7b. Monthly Dues
+router.get("/monthly-dues", requirePermission(Permission.VIEW_PAYMENTS), getMonthlyDues);
+router.post("/monthly-dues/:dueId/pay", requirePermission(Permission.VIEW_PAYMENTS), recordMonthlyDuePayment);
 
 // 8. Inquiries
 router.get("/inquiries", requireAnyPermission(Permission.MANAGE_COMMUNICATION, Permission.MANAGE_WEBSITE), getInquiries);

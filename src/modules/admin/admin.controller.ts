@@ -256,7 +256,7 @@ export const getStudents = async (req: Request, res: Response): Promise<void> =>
       email: student.email,
       phone: student.phone,
       avatarUrl: student.avatarUrl,
-      avatar: student.avatarUrl || "/Ananya.png",
+      avatar: student.avatarUrl || "",
       country: student.country,
       // Real values only — no hardcoded "Kathak Beginner" / "Beginners
       // Morning Zen" / fixed Mon-Wed time shown for every student regardless
@@ -789,7 +789,7 @@ export const getBatchStudents = async (req: Request, res: Response): Promise<voi
           fullName: bs.student.fullName,
           email: bs.student.email,
           phone: bs.student.phone,
-          avatar: bs.student.avatarUrl || "/Ananya.png",
+          avatar: bs.student.avatarUrl || "",
           studentId: `#KL-2024-${bs.student.id.slice(0, 4).toUpperCase()}`,
           batchName: bs.batch.code || bs.batch.name,
           batchId: bs.batch.id,
@@ -1184,7 +1184,7 @@ export const getCourses = async (req: Request, res: Response): Promise<void> => 
       level: c.category || "BEGINNER",
       duration: c.groupClassesCount || "12 Sessions",
       status: c.published !== false ? "Active" : "Draft",
-      thumbnail: (c as any).thumbnail || "/Ananya.png"
+      thumbnail: (c as any).thumbnail || ""
     }));
 
     res.json({
@@ -1231,7 +1231,7 @@ export const getCourseById = async (req: Request, res: Response): Promise<void> 
       level: course.category || "BEGINNER",
       duration: course.groupClassesCount || "12 Sessions",
       status: course.published !== false ? "Active" : "Draft",
-      thumbnail: (course as any).thumbnail || "/Ananya.png" // Agar Prisma schema me thumbnail add nahi hai toh as any
+      thumbnail: (course as any).thumbnail || "" // Agar Prisma schema me thumbnail add nahi hai toh as any
     };
 
     // Final response bhejenge
@@ -1269,6 +1269,11 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
       homepageSortOrder,
       aliases,
       showExam,
+      // ── Payment Configuration ──
+      joiningFeeINR,
+      bulkDiscountTiers,
+      autoPayEnabled,
+      courseDurationMonths,
     } = req.body;
 
     // 1. Strict Validation
@@ -1286,6 +1291,13 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
     const slug = requestedSlug
       ? baseSlug
       : `${baseSlug}-${Date.now().toString(36)}`;
+
+    // Validate and sanitize bulk discount tiers
+    const sanitizedTiers = Array.isArray(bulkDiscountTiers)
+      ? bulkDiscountTiers
+          .filter((t: { months?: unknown; discountPercent?: unknown }) => t && typeof t === "object" && Number(t.months) > 0)
+          .map((t: { months: unknown; discountPercent: unknown }) => ({ months: Number(t.months), discountPercent: Number(t.discountPercent) || 0 }))
+      : [];
 
     // 3. Database Creation
     const newCourse = await prisma.course.create({
@@ -1312,6 +1324,12 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
         homepageSortOrder: Number(homepageSortOrder) || 0,
         aliases: Array.isArray(aliases) ? aliases : [],
         showExam: typeof showExam === "boolean" ? showExam : true,
+        
+        // Payment Configuration
+        joiningFeeINR: joiningFeeINR !== undefined ? Number(joiningFeeINR) : 1100,
+        bulkDiscountTiers: sanitizedTiers,
+        autoPayEnabled: typeof autoPayEnabled === "boolean" ? autoPayEnabled : true,
+        courseDurationMonths: Number(courseDurationMonths) || 0,
         
         published: true
       }
@@ -1346,7 +1364,21 @@ export const updateCourse = async (req: Request, res: Response): Promise<void> =
       aliases,
       showExam,
       published,
+      // ── Payment Configuration ──
+      joiningFeeINR,
+      bulkDiscountTiers,
+      autoPayEnabled,
+      courseDurationMonths,
     } = req.body;
+
+    const sanitizedTiers =
+      bulkDiscountTiers !== undefined
+        ? Array.isArray(bulkDiscountTiers)
+          ? bulkDiscountTiers
+              .filter((t: { months?: unknown; discountPercent?: unknown }) => t && typeof t === "object" && Number(t.months) > 0)
+              .map((t: { months: unknown; discountPercent: unknown }) => ({ months: Number(t.months), discountPercent: Number(t.discountPercent) || 0 }))
+          : []
+        : undefined;
 
     const updated = await prisma.course.update({
       where: { id },
@@ -1354,10 +1386,10 @@ export const updateCourse = async (req: Request, res: Response): Promise<void> =
         title: title ?? undefined,
         description: description ?? undefined,
         category: category ? mapCategoryToEnum(category) : undefined,
-        groupFeeINR: groupFeeINR ? Number(groupFeeINR) : undefined,
-        groupFeeUSD: groupFeeUSD ? Number(groupFeeUSD) : undefined,
-        oneToOneFeeINR: oneToOneFeeINR ? Number(oneToOneFeeINR) : undefined,
-        oneToOneFeeUSD: oneToOneFeeUSD ? Number(oneToOneFeeUSD) : undefined,
+        groupFeeINR: groupFeeINR !== undefined ? Number(groupFeeINR) : undefined,
+        groupFeeUSD: groupFeeUSD !== undefined ? Number(groupFeeUSD) : undefined,
+        oneToOneFeeINR: oneToOneFeeINR !== undefined ? Number(oneToOneFeeINR) : undefined,
+        oneToOneFeeUSD: oneToOneFeeUSD !== undefined ? Number(oneToOneFeeUSD) : undefined,
         groupClassesCount: groupClassesCount ?? undefined,
         oneToOneClassesCount: oneToOneClassesCount ?? undefined,
         thumbnail: thumbnail ?? undefined,
@@ -1370,6 +1402,11 @@ export const updateCourse = async (req: Request, res: Response): Promise<void> =
         aliases: Array.isArray(aliases) ? aliases : undefined,
         showExam: typeof showExam === "boolean" ? showExam : undefined,
         published: typeof published === "boolean" ? published : undefined,
+        // Payment Configuration
+        joiningFeeINR: joiningFeeINR !== undefined ? Number(joiningFeeINR) : undefined,
+        bulkDiscountTiers: sanitizedTiers,
+        autoPayEnabled: typeof autoPayEnabled === "boolean" ? autoPayEnabled : undefined,
+        courseDurationMonths: courseDurationMonths !== undefined ? Number(courseDurationMonths) : undefined,
       }
     });
 
@@ -1668,7 +1705,7 @@ export const getAssignments = async (req: Request, res: Response): Promise<void>
 const mapped = await Promise.all(
   assignments.map(async (a: any) => {
     let teacherName = a.teacherName || "Unknown";
-    let teacherAvatar = "/Ananya.png";
+    let teacherAvatar = "";
     let teacherRole = "Teacher";
 
     if (a.teacherId) {
@@ -1953,7 +1990,7 @@ export const getAssignmentSubmissions = async (req: Request, res: Response): Pro
       assignmentId: s.assignment?.id,
       studentName: s.studentName || s.student?.fullName || "Student",
       studentId: `#STU-${s.studentId.substring(0, 4).toUpperCase()}`,
-      studentAvatar: s.student?.avatarUrl || "/Ananya.png",
+      studentAvatar: s.student?.avatarUrl || "",
       assignmentTitle: s.assignment?.title || "Practical Exercise",
       batch: s.assignment?.batchName || "Kathak Basics",
       submittedDate: new Date(s.submittedAt).toLocaleString("en-US", { month: "short", day: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }),
@@ -2090,7 +2127,7 @@ const id = req.params.id as string;
 
     let teacherName = assignment.teacherName || "Aswini";
     let teacherDept = "Classical Dance Dept.";
-    let teacherAvatar = "/Ananya.png";
+    let teacherAvatar = "";
     let teacherDesignation = "Senior Faculty";
 
     if (assignment.teacherId) {
@@ -2157,7 +2194,7 @@ const id = req.params.id as string;
       assignmentId: s.assignment?.id || s.assignmentId,
       studentName: s.studentName || s.student?.fullName || "Student",
       studentId: `#STU-${(s.studentId || s.student?.id || "0000").substring(0, 4).toUpperCase()}`,
-      studentAvatar: s.student?.avatarUrl || "/Ananya.png",
+      studentAvatar: s.student?.avatarUrl || "",
       assignmentTitle: s.assignment?.title || "Practical Exercise",
       batch: s.assignment?.batchName || s.assignment?.targetBatch || "Kathak Basics",
       submittedDate: s.submittedAt
@@ -2243,7 +2280,7 @@ export const getAttendanceRecords = async (req: Request, res: Response): Promise
           rawStudentId: bs.student.id,
           name: bs.student.fullName,
           email: bs.student.email,
-          avatar: bs.student.avatarUrl || "/Ananya.png",
+          avatar: bs.student.avatarUrl || "",
           batchCode: bs.batch.code,
           courseName: bs.batch.courseName || bs.batch.course?.title || "Kathak Basics",
           status
@@ -2426,7 +2463,7 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
         id: s.id,
         studentIdCode: `STU-${s.id.substring(0, 4).toUpperCase()}`,
         studentName: s.fullName,
-        studentAvatar: s.avatarUrl || "/Ananya.png",
+        studentAvatar: s.avatarUrl || "",
         email: s.email,
         phone: s.phone,
         country: s.country,
@@ -2487,6 +2524,122 @@ export const getPayments = async (req: Request, res: Response): Promise<void> =>
   } catch (error) {
     console.error("Get Payments Error:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch payments." });
+  }
+};
+
+// ─── Monthly Dues Management ──────────────────────────────────────────────────
+
+export const getMonthlyDues = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const statusFilter = req.query.status as string | undefined;
+    const monthFilter = req.query.month as string | undefined; // YYYY-MM
+
+    const dues = await prisma.monthlyDue.findMany({
+      where: {
+        ...(statusFilter && statusFilter !== "ALL" ? { status: statusFilter as any } : {}),
+        ...(monthFilter ? { dueMonth: monthFilter } : {}),
+      },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, phone: true, avatarUrl: true } },
+        course: { select: { id: true, title: true } },
+        enrollment: { select: { id: true, type: true, paymentMode: true } },
+      },
+      orderBy: { dueDate: "asc" },
+    });
+
+    // Build summary metrics
+    const totalDues = dues.length;
+    const paidDues = dues.filter((d) => d.status === "SUCCESS").length;
+    const pendingDues = dues.filter((d) => d.status === "PENDING").length;
+    const totalAmount = dues.reduce((s, d) => s + d.amount, 0);
+    const collectedAmount = dues.filter((d) => d.status === "SUCCESS").reduce((s, d) => s + d.amount, 0);
+    const pendingAmount = dues.filter((d) => d.status === "PENDING").reduce((s, d) => s + d.amount, 0);
+
+    // Mark overdue
+    const now = new Date();
+    const dueMapped = dues.map((d) => ({
+      ...d,
+      isOverdue: d.status === "PENDING" && d.dueDate < now,
+    }));
+
+    res.json({
+      status: "success",
+      data: {
+        dues: dueMapped,
+        metrics: { totalDues, paidDues, pendingDues, totalAmount, collectedAmount, pendingAmount },
+      },
+    });
+  } catch (error) {
+    console.error("getMonthlyDues error:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch monthly dues." });
+  }
+};
+
+export const recordMonthlyDuePayment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const dueId = String(req.params.dueId);
+    const { gateway, transactionId, notes } = req.body;
+
+    const due = await prisma.monthlyDue.findUnique({ where: { id: dueId } });
+    if (!due) {
+      res.status(404).json({ status: "error", message: "Monthly due record not found." });
+      return;
+    }
+
+    const txId = transactionId || `MANUAL-${Date.now().toString(36).toUpperCase()}`;
+    const orderId = `ORD-${Date.now().toString(36).toUpperCase()}`;
+
+    // Record payment in Payment table
+    const payment = await prisma.payment.create({
+      data: {
+        userId: due.userId,
+        enrollmentId: due.enrollmentId,
+        amount: due.amount,
+        currency: due.currency,
+        gateway: gateway || "MANUAL_CASH",
+        transactionId: txId,
+        orderId,
+        status: "SUCCESS",
+      },
+    });
+
+    // Mark due as paid
+    const updated = await prisma.monthlyDue.update({
+      where: { id: String(dueId) },
+      data: {
+        status: "SUCCESS",
+        paymentId: payment.id,
+        paidAt: new Date(),
+        notes: notes || null,
+      },
+    });
+
+    // Create next month's due
+    const [yyyy, mm] = due.dueMonth.split("-").map(Number);
+    const nextDate = new Date(yyyy, mm, 1); // next month
+    const nextYYYY = nextDate.getFullYear();
+    const nextMM = String(nextDate.getMonth() + 1).padStart(2, "0");
+    const nextDueMonth = `${nextYYYY}-${nextMM}`;
+
+    await prisma.monthlyDue.upsert({
+      where: { enrollmentId_dueMonth: { enrollmentId: due.enrollmentId, dueMonth: nextDueMonth } },
+      update: {},
+      create: {
+        enrollmentId: due.enrollmentId,
+        userId: due.userId,
+        courseId: due.courseId,
+        dueMonth: nextDueMonth,
+        dueDate: nextDate,
+        amount: due.amount,
+        currency: due.currency,
+        status: "PENDING",
+      },
+    });
+
+    res.json({ status: "success", message: "Monthly due payment recorded.", data: updated });
+  } catch (error) {
+    console.error("recordMonthlyDuePayment error:", error);
+    res.status(500).json({ status: "error", message: "Failed to record monthly due payment." });
   }
 };
 
