@@ -44,7 +44,7 @@ const parseTiers = (raw: unknown): BulkDiscountTier[] => {
 };
 
 // ─── Create Razorpay instance ─────────────────────────────────────────────────
-const getRazorpay = () => {
+export  const getRazorpay = () => {
   if (!env.razorpayKeyId || !env.razorpayKeySecret) return null;
   return new Razorpay({ key_id: env.razorpayKeyId, key_secret: env.razorpayKeySecret });
 };

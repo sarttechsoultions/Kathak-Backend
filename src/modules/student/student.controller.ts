@@ -6,6 +6,7 @@ import jwt, { SignOptions } from "jsonwebtoken";
 import { prisma } from "../../lib/prisma";
 import { mapCourseToPublicMarketingCourse } from "../../lib/publicCourseMapper";
 import { env } from "../../config/env";
+import { getRazorpay } from "../payment/payment.controller";
 import {
   setPortalAuthCookie,
   validatePortalAccess,
@@ -19,6 +20,8 @@ import {
   EnrollmentError,
   sendEnrollmentWelcomeEmail,
   validateEnrollmentInput,
+  initiateEnrollmentUpgrade,
+  completeEnrollmentUpgrade
 } from "./enrollment.service";
 import { OtpError, sendEnrollmentOtp, verifyEnrollmentOtp, assertContactVerified } from "../../lib/otp";
 
@@ -256,12 +259,18 @@ export const getStudentProfile = async (
 ): Promise<void> => {
   try {
     const requestingUser = req.user!;
-    // If a studentId param is passed (teacher/admin viewing someone else),
-    // use that; otherwise default to viewing own profile
-    const targetStudentId = String(req.params.studentId || requestingUser.id);
 
-    // Access control: students can only view their own profile
-    if (requestingUser.role === "STUDENT" && requestingUser.id !== targetStudentId) {
+    // If a studentId param is passed (teacher/admin viewing someone else),
+    // use that; otherwise default to viewing own profile.
+    const targetStudentId = String(
+      req.params.studentId || requestingUser.id
+    );
+
+    // Students can only view their own profile.
+    if (
+      requestingUser.role === "STUDENT" &&
+      requestingUser.id !== targetStudentId
+    ) {
       res.status(403).json({
         status: "error",
         message: "You can only view your own profile.",
@@ -269,30 +278,44 @@ export const getStudentProfile = async (
       return;
     }
 
-    // TEACHER: only students in their own assigned batches
+    // TEACHER: only students in their own assigned batches.
     if (requestingUser.role === "TEACHER") {
-      const teacherName = await getUserDisplayName(requestingUser.id, requestingUser.email);
-      const assignedBatches = await getTeacherBatchNames(requestingUser.id, teacherName);
+      const teacherName = await getUserDisplayName(
+        requestingUser.id,
+        requestingUser.email
+      );
+
+      const assignedBatches = await getTeacherBatchNames(
+        requestingUser.id,
+        teacherName
+      );
 
       if (assignedBatches.length === 0) {
-        res.status(403).json({ status: "error", message: "You have no assigned batches yet." });
+        res.status(403).json({
+          status: "error",
+          message: "You have no assigned batches yet.",
+        });
         return;
       }
 
-      const targetStudentBatch = await getStudentBatchName(targetStudentId);
-      const allowed = assignedBatches.some(
-        (b: string) => b.toLowerCase() === targetStudentBatch.toLowerCase()
+      const targetStudentBatch = await getStudentBatchName(
+        targetStudentId
       );
+
+      const allowed = assignedBatches.some(
+        (b: string) =>
+          b.toLowerCase() === targetStudentBatch.toLowerCase()
+      );
+
       if (!allowed) {
         res.status(403).json({
           status: "error",
-          message: "You can only view students in your assigned batches.",
+          message:
+            "You can only view students in your assigned batches.",
         });
         return;
       }
     }
-
-    // ADMIN → unrestricted
 
     const student = await prisma.user.findUnique({
       where: {
@@ -319,6 +342,8 @@ export const getStudentProfile = async (
         city: true,
         region: true,
         postalCode: true,
+
+        // Student's current batch memberships.
         batchMemberships: {
           select: {
             batch: {
@@ -326,9 +351,35 @@ export const getStudentProfile = async (
                 id: true,
                 name: true,
                 code: true,
+                courseId: true,
                 courseName: true,
                 teacherName: true,
                 schedule: true,
+              },
+            },
+          },
+        },
+
+        // IMPORTANT:
+        // Current course MUST come from active enrollment,
+        // not from the first batch membership.
+        enrollments: {
+          where: {
+            active: true,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+          select: {
+            id: true,
+            active: true,
+            createdAt: true,
+            course: {
+              select: {
+                id: true,
+                title: true,
+                description: true,
+                category: true,
               },
             },
           },
@@ -348,14 +399,32 @@ export const getStudentProfile = async (
       .map((membership: any) => membership.batch)
       .filter(Boolean);
 
-    const firstBatch = enrolledBatches[0];
+    const activeEnrollment =
+      student.enrollments?.[0] || null;
 
-    let father = null;
-    let mother = null;
+    const currentCourseId =
+      activeEnrollment?.course?.id || null;
+
+    // Prefer the batch belonging to the active enrollment's course.
+    const currentBatch =
+      enrolledBatches.find(
+        (batch: any) =>
+          batch.courseId === currentCourseId ||
+          batch.course?.id === currentCourseId
+      ) ||
+      enrolledBatches[enrolledBatches.length - 1] ||
+      null;
+
+    let father: string | null = null;
+    let mother: string | null = null;
+
     if (student.guardianName) {
-      if (student.relationship?.toLowerCase().includes("father")) {
+      const relationship =
+        student.relationship?.toLowerCase() || "";
+
+      if (relationship.includes("father")) {
         father = student.guardianName;
-      } else if (student.relationship?.toLowerCase().includes("mother")) {
+      } else if (relationship.includes("mother")) {
         mother = student.guardianName;
       } else {
         father = student.guardianName;
@@ -376,28 +445,70 @@ export const getStudentProfile = async (
         address: student.address,
         isActive: student.isActive,
         createdAt: student.createdAt,
+
         dob: student.dob
-          ? new Date(student.dob).toLocaleDateString("en-IN", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            })
+          ? new Date(student.dob).toLocaleDateString(
+              "en-IN",
+              {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              }
+            )
           : null,
+
         gender: student.gender,
         level: student.skillLevel,
-        batch: firstBatch?.name || firstBatch?.courseName || firstBatch?.code || null,
-        guru: firstBatch?.teacherName || null,
-        schedule: firstBatch?.schedule || null,
+
+        // CURRENT batch.
+        batch:
+          currentBatch?.name ||
+          currentBatch?.courseName ||
+          currentBatch?.code ||
+          null,
+
+        // CURRENT teacher.
+        guru:
+          currentBatch?.teacherName ||
+          null,
+
+        // CURRENT schedule.
+        schedule:
+          currentBatch?.schedule ||
+          null,
+
+        // CURRENT course.
+        course:
+          activeEnrollment?.course?.title ||
+          currentBatch?.courseName ||
+          null,
+
+        courseId:
+          activeEnrollment?.course?.id ||
+          currentBatch?.courseId ||
+          null,
+
+        enrollmentId:
+          activeEnrollment?.id ||
+          null,
+
         father,
         mother,
-        emergencyContact: student.emergencyContact,
+
+        emergencyContact:
+          student.emergencyContact,
+
         city: student.city,
         region: student.region,
         postalCode: student.postalCode,
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error(
+      "Get Student Profile Error:",
+      error
+    );
+
     res.status(500).json({
       status: "error",
       message: "Failed to fetch profile.",
@@ -670,60 +781,158 @@ export const studentLogin = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-export const getStudentFinance = async (req: Request, res: Response): Promise<void> => {
+export const getStudentFinance = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const userId = req.user!.id;
-    
+
     const user = await prisma.user.findUnique({
-      where: { id: userId },
+      where: {
+        id: userId,
+      },
       include: {
-        // Sirf Active enrollment nikalenge
-        enrollments: { 
-          where: { active: true },
-          include: { course: true } 
+        enrollments: {
+          where: {
+            active: true,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+          include: {
+            course: true,
+          },
         },
-        payments: { orderBy: { createdAt: "desc" } }
-      }
+
+        payments: {
+          orderBy: {
+            createdAt: "desc",
+          },
+        },
+      },
     });
 
     if (!user) {
-      res.status(404).json({ status: "error", message: "Student not found." });
+      res.status(404).json({
+        status: "error",
+        message: "Student not found.",
+      });
       return;
     }
 
-    // Dynamic fee extraction based on assigned course
-    const course = user.enrollments[0]?.course;
-    const courseTitle = course?.title || "Kathak Dance Advanced";
-    const totalFee = course?.groupFeeINR || 2200; // Database se actual fee uthayega
+    const enrollment =
+      user.enrollments?.[0] || null;
 
-    // Dynamic Paid & Pending Calculation
-    const successfulPayments = user.payments.filter((p) => p.status === "SUCCESS");
-    const paidAmount = successfulPayments.reduce((acc, p) => acc + p.amount, 0);
-    const pendingAmount = Math.max(0, totalFee - paidAmount);
+    const course =
+      enrollment?.course || null;
+
+    const enrollmentType = String(
+      enrollment?.type || "GROUP"
+    )
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\_-]+/g, "_");
+
+    const courseTitle =
+      course?.title ||
+      "Kathak Dance Advanced";
+
+    // IMPORTANT:
+    // ONE_TO_ONE = monthly one-to-one fee
+    // GROUP = monthly group fee
+    const totalFee =
+      enrollmentType === "ONE_TO_ONE"
+        ? Number(
+            course?.oneToOneFeeINR || 0
+          )
+        : Number(
+            course?.groupFeeINR || 0
+          );
+
+    const successfulPayments =
+      user.payments.filter(
+        (p) => p.status === "SUCCESS"
+      );
+
+    const paidAmount =
+      successfulPayments.reduce(
+        (acc, p) =>
+          acc + Number(p.amount || 0),
+        0
+      );
+
+    const pendingAmount = Math.max(
+      0,
+      totalFee - paidAmount
+    );
 
     res.json({
       status: "success",
+
       data: {
         courseTitle,
+
         totalFee,
+
         paidAmount,
+
         pendingAmount,
-        nextDueDate: pendingAmount > 0 ? "Pay Immediately" : "Cleared",
-        transactions: user.payments.map((p) => ({
-          id: p.transactionId || `TRA-${p.id.substring(0, 5).toUpperCase()}`,
-          date: new Date(p.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
-          description: `${courseTitle} - Registration Fee`,
-          amount: `₹${p.amount.toLocaleString("en-IN")}`,
-          status: p.status,
-          statusBadge: p.status === "SUCCESS" 
-            ? "text-emerald-600 font-extrabold" // ✅ Success ke liye Green text
-            : "bg-[#FDEAE2] text-[#C15C3D] px-2.5 py-0.5 rounded-md font-bold text-[10px]"
-        }))
-      }
+
+        nextDueDate:
+          pendingAmount > 0
+            ? "Pay Immediately"
+            : "Cleared",
+
+        transactions:
+          user.payments.map((p) => ({
+            id:
+              p.transactionId ||
+              `TRA-${p.id
+                .substring(0, 5)
+                .toUpperCase()}`,
+
+            date:
+              new Date(
+                p.createdAt
+              ).toLocaleDateString(
+                "en-IN",
+                {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                }
+              ),
+
+            description:
+              `${courseTitle} - Registration Fee`,
+
+            amount:
+              `₹${Number(
+                p.amount || 0
+              ).toLocaleString("en-IN")}`,
+
+            status:
+              p.status,
+
+            statusBadge:
+              p.status === "SUCCESS"
+                ? "text-emerald-600 font-extrabold"
+                : "bg-[#FDEAE2] text-[#C15C3D] px-2.5 py-0.5 rounded-md font-bold text-[10px]",
+          })),
+      },
     });
   } catch (error) {
-    console.error("Get Student Finance Error:", error);
-    res.status(500).json({ status: "error", message: "Failed to fetch student finance data." });
+    console.error(
+      "Get Student Finance Error:",
+      error
+    );
+
+    res.status(500).json({
+      status: "error",
+      message:
+        "Failed to fetch student finance data.",
+    });
   }
 };
 
@@ -1158,7 +1367,15 @@ export const getStudentDashboard = async (
           },
         },
 
+        // IMPORTANT:
+        // Only active/current enrollment is used.
         enrollments: {
+          where: {
+            active: true,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
           include: {
             course: {
               include: {
@@ -1198,26 +1415,46 @@ export const getStudentDashboard = async (
       .map((membership: any) => membership.batch)
       .filter(Boolean);
 
-    const firstBatch = enrolledBatches[0];
+    // ============================================================
+    // 3. CURRENT ACTIVE ENROLLMENT
+    // ============================================================
+
+    const activeEnrollment =
+      student.enrollments?.[0] || null;
+
+    const currentCourseId =
+      activeEnrollment?.course?.id || null;
+
+    // IMPORTANT:
+    // Find the batch that belongs to the current active course.
+    const currentBatch =
+      enrolledBatches.find(
+        (batch: any) =>
+          batch.course?.id === currentCourseId ||
+          batch.courseId === currentCourseId
+      ) ||
+      enrolledBatches[enrolledBatches.length - 1] ||
+      null;
 
     // ============================================================
-    // 3. PRIMARY COURSE
+    // 4. PRIMARY COURSE
     // ============================================================
 
     const primaryCourse =
-      firstBatch?.course ||
-      student.enrollments?.[0]?.course ||
+      activeEnrollment?.course ||
+      currentBatch?.course ||
       null;
 
     const courseTitle =
       primaryCourse?.title ||
-      firstBatch?.courseName ||
-      firstBatch?.name ||
+      currentBatch?.courseName ||
+      currentBatch?.name ||
       "";
 
     const batchName =
-      firstBatch?.name ||
-      firstBatch?.courseName ||
+      currentBatch?.name ||
+      currentBatch?.courseName ||
+      currentBatch?.code ||
       "Batch not assigned";
 
     const totalLessons =
@@ -1231,7 +1468,9 @@ export const getStudentDashboard = async (
         ? Math.min(
             100,
             Math.round(
-              (completedSubmissions / totalLessons) * 100
+              (completedSubmissions /
+                totalLessons) *
+                100
             )
           )
         : completedSubmissions > 0
@@ -1239,7 +1478,7 @@ export const getStudentDashboard = async (
           : 0;
 
     // ============================================================
-    // 4. STUDENT BATCH IDS
+    // 5. CURRENT BATCH IDS
     // ============================================================
 
     const batchIds = enrolledBatches
@@ -1247,7 +1486,7 @@ export const getStudentDashboard = async (
       .filter(Boolean);
 
     // ============================================================
-    // 5. LIVE CLASSES
+    // 6. LIVE CLASSES
     // ============================================================
 
     const liveClasses =
@@ -1270,7 +1509,10 @@ export const getStudentDashboard = async (
       .toISOString()
       .split("T")[0];
 
-    // Only classes that have not ended
+    // ============================================================
+    // 7. ACTIVE LIVE CLASSES
+    // ============================================================
+
     const activeClasses = liveClasses.filter(
       (liveClass: any) => {
         if (
@@ -1289,7 +1531,7 @@ export const getStudentDashboard = async (
     );
 
     // ============================================================
-    // 6. TODAY'S LIVE CLASS
+    // 8. TODAY'S LIVE CLASS
     // ============================================================
 
     const todayClass =
@@ -1299,18 +1541,19 @@ export const getStudentDashboard = async (
       ) ||
       activeClasses.find(
         (liveClass: any) => {
-          const liveClassDate = new Date(
-            liveClass.scheduledStart
-          )
-            .toISOString()
-            .split("T")[0];
+          const liveClassDate =
+            new Date(
+              liveClass.scheduledStart
+            )
+              .toISOString()
+              .split("T")[0];
 
           return liveClassDate === todayStr;
         }
       );
 
     // ============================================================
-    // 7. UPCOMING LIVE CLASS
+    // 9. UPCOMING LIVE CLASS
     // ============================================================
 
     const upcomingClass =
@@ -1327,7 +1570,7 @@ export const getStudentDashboard = async (
       );
 
     // ============================================================
-    // 8. PENDING ASSIGNMENTS
+    // 10. PENDING ASSIGNMENTS
     // ============================================================
 
     const allBatchAssignments =
@@ -1353,7 +1596,7 @@ export const getStudentDashboard = async (
       ).length;
 
     // ============================================================
-    // 9. COURSE PROGRESS
+    // 11. COURSE PROGRESS
     // ============================================================
 
     const courseProgressList =
@@ -1377,13 +1620,13 @@ export const getStudentDashboard = async (
                 )
               : 0;
 
-          // Find the student's batch belonging
-          // to this course.
           const matchingBatch =
             enrolledBatches.find(
               (batch: any) =>
                 batch.course?.id ===
-                course?.id
+                  course?.id ||
+                batch.courseId ===
+                  course?.id
             );
 
           return {
@@ -1393,6 +1636,8 @@ export const getStudentDashboard = async (
 
             batchName:
               matchingBatch?.name ||
+              matchingBatch?.courseName ||
+              matchingBatch?.code ||
               "Batch not assigned",
 
             percent,
@@ -1401,7 +1646,7 @@ export const getStudentDashboard = async (
       );
 
     // ============================================================
-    // 10. LIVE CLASS REMINDERS
+    // 12. LIVE CLASS REMINDERS
     // ============================================================
 
     const reminderPrefs =
@@ -1435,7 +1680,7 @@ export const getStudentDashboard = async (
                 (batch: any) =>
                   batch.id ===
                   liveClass.batchId
-              ) || firstBatch,
+              ) || currentBatch,
           })
         ),
         {
@@ -1449,7 +1694,7 @@ export const getStudentDashboard = async (
       );
 
     // ============================================================
-    // 11. GENERAL REMINDERS
+    // 13. GENERAL REMINDERS
     // ============================================================
 
     const reminders: {
@@ -1474,7 +1719,7 @@ export const getStudentDashboard = async (
     );
 
     // ============================================================
-    // 12. ASSIGNMENT REMINDERS
+    // 14. ASSIGNMENT REMINDERS
     // ============================================================
 
     const unsubmittedWithDueDate =
@@ -1507,18 +1752,7 @@ export const getStudentDashboard = async (
       });
 
     // ============================================================
-    // 13. FEE REMINDERS
-    // ============================================================
-    //
-    // Fee/payment model has not been included in the
-    // controller you provided.
-    //
-    // Keep the API contract ready without making assumptions
-    // about your Prisma schema.
-    //
-    // Once the actual fee model is provided, this array can
-    // be populated from the database.
-    //
+    // 15. FEE REMINDERS
     // ============================================================
 
     const feeReminders: {
@@ -1532,14 +1766,10 @@ export const getStudentDashboard = async (
     }[] = [];
 
     // ============================================================
-    // 14. DASHBOARD RESPONSE
+    // 16. DASHBOARD RESPONSE
     // ============================================================
 
     const dashboardData = {
-      // ----------------------------------------------------------
-      // STUDENT
-      // ----------------------------------------------------------
-
       user: {
         id: student.id,
 
@@ -1556,17 +1786,15 @@ export const getStudentDashboard = async (
           student.avatarUrl,
       },
 
-      // ----------------------------------------------------------
+      // ==========================================================
       // CURRENT COURSE
-      // ----------------------------------------------------------
+      // ==========================================================
 
       currentCourse: courseTitle
         ? {
             title:
               courseTitle,
 
-            // NEW:
-            // Relevant batch for the current course
             batchName:
               batchName,
 
@@ -1585,9 +1813,9 @@ export const getStudentDashboard = async (
           }
         : null,
 
-      // ----------------------------------------------------------
+      // ==========================================================
       // TODAY'S LIVE CLASS
-      // ----------------------------------------------------------
+      // ==========================================================
 
       todayLiveClass:
         todayClass
@@ -1600,7 +1828,7 @@ export const getStudentDashboard = async (
 
               instructor:
                 todayClass.teacherName ||
-                firstBatch?.teacherName ||
+                currentBatch?.teacherName ||
                 "Faculty Instructor",
 
               timeStr:
@@ -1626,9 +1854,9 @@ export const getStudentDashboard = async (
             }
           : null,
 
-      // ----------------------------------------------------------
+      // ==========================================================
       // RECENT CLASSES / ATTENDANCE
-      // ----------------------------------------------------------
+      // ==========================================================
 
       recentClasses:
         (student.attendances || []).map(
@@ -1658,9 +1886,9 @@ export const getStudentDashboard = async (
           })
         ),
 
-      // ----------------------------------------------------------
+      // ==========================================================
       // UPCOMING LIVE CLASS
-      // ----------------------------------------------------------
+      // ==========================================================
 
       upcomingLiveClass:
         upcomingClass
@@ -1674,7 +1902,7 @@ export const getStudentDashboard = async (
               subtitle:
                 `With ${
                   upcomingClass.teacherName ||
-                  firstBatch?.teacherName ||
+                  currentBatch?.teacherName ||
                   "your instructor"
                 }`,
 
@@ -1719,16 +1947,16 @@ export const getStudentDashboard = async (
             }
           : null,
 
-      // ----------------------------------------------------------
+      // ==========================================================
       // COURSE PROGRESS
-      // ----------------------------------------------------------
+      // ==========================================================
 
       courseProgress:
         courseProgressList,
 
-      // ----------------------------------------------------------
+      // ==========================================================
       // METRICS
-      // ----------------------------------------------------------
+      // ==========================================================
 
       metrics: {
         completedLessons:
@@ -1743,22 +1971,14 @@ export const getStudentDashboard = async (
           pendingAssignmentsCount,
       },
 
-      // ----------------------------------------------------------
-      // GENERAL REMINDERS
-      // ----------------------------------------------------------
+      // ==========================================================
+      // REMINDERS
+      // ==========================================================
 
       reminders,
 
-      // ----------------------------------------------------------
-      // FEE REMINDERS
-      // ----------------------------------------------------------
-
       feeReminders,
     };
-
-    // ============================================================
-    // 15. RESPONSE
-    // ============================================================
 
     res.json({
       status: "success",
@@ -2174,5 +2394,710 @@ export const getStudentProgress = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("Error fetching progress:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch student progress" });
+  }
+};
+
+export const initiateUpgrade = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+
+    const {
+      targetCourseId,
+      targetType,
+      targetBatchId,
+      months,
+      currency,
+      preferredDate,
+      preferredTime,
+    } = req.body;
+
+    if (!targetCourseId || !targetType) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "targetCourseId and targetType are required.",
+      });
+      return;
+    }
+
+    const normalizedTargetType = String(
+      targetType
+    )
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\_-]+/g, "_");
+
+    if (
+      normalizedTargetType !== "GROUP" &&
+      normalizedTargetType !== "ONE_TO_ONE"
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Invalid target course type.",
+      });
+      return;
+    }
+
+    const normalizedCurrency = String(
+      currency || "INR"
+    )
+      .trim()
+      .toUpperCase();
+
+    if (
+      normalizedCurrency !== "INR" &&
+      normalizedCurrency !== "USD"
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Invalid currency. Please select INR or USD.",
+      });
+      return;
+    }
+
+    const parsedMonths = Number(
+      months ?? 1
+    );
+
+    if (
+      !Number.isInteger(parsedMonths) ||
+      ![1, 6, 12].includes(parsedMonths)
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Please select a valid duration: 1, 6, or 12 months.",
+      });
+      return;
+    }
+
+    const result =
+      await initiateEnrollmentUpgrade(
+        userId,
+        {
+          targetCourseId:
+            String(
+              targetCourseId
+            ).trim(),
+
+          targetType:
+            normalizedTargetType,
+
+          targetBatchId:
+            targetBatchId
+              ? String(
+                  targetBatchId
+                ).trim()
+              : undefined,
+
+          months:
+            parsedMonths,
+
+          currency:
+            normalizedCurrency as
+              | "INR"
+              | "USD",
+
+          preferredDate:
+            preferredDate
+              ? String(
+                  preferredDate
+                ).trim()
+              : undefined,
+
+          preferredTime:
+            preferredTime
+              ? String(
+                  preferredTime
+                ).trim()
+              : undefined,
+        }
+      );
+
+    res.status(200).json({
+      status: "success",
+      data: result,
+    });
+  } catch (error: unknown) {
+    if (
+      error instanceof EnrollmentError
+    ) {
+      res.status(
+        error.statusCode
+      ).json({
+        status: "error",
+        message: error.message,
+      });
+      return;
+    }
+
+    console.error(
+      "Initiate upgrade error:",
+      error
+    );
+
+    res.status(500).json({
+      status: "error",
+      message:
+        "Failed to initiate course upgrade.",
+    });
+  }
+};
+
+export const verifyUpgrade = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const {
+      pendingUpgradeId,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      currency,
+    } = req.body;
+
+    if (
+      !pendingUpgradeId ||
+      !razorpay_order_id ||
+      !razorpay_payment_id ||
+      !razorpay_signature
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Payment verification failed. Missing payment details.",
+      });
+      return;
+    }
+
+    if (!env.razorpayKeySecret) {
+      console.error(
+        "Razorpay secret is not configured."
+      );
+
+      res.status(500).json({
+        status: "error",
+        message:
+          "Payment service is temporarily unavailable.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 1. NORMALIZE CURRENCY
+    // ============================================================
+
+    const normalizedCurrency = String(
+      currency || "INR"
+    )
+      .trim()
+      .toUpperCase();
+
+    if (
+      normalizedCurrency !== "INR" &&
+      normalizedCurrency !== "USD"
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Invalid payment currency.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 2. VERIFY RAZORPAY SIGNATURE
+    // ============================================================
+
+    const generatedSignature =
+      crypto
+        .createHmac(
+          "sha256",
+          env.razorpayKeySecret
+        )
+        .update(
+          `${razorpay_order_id}|${razorpay_payment_id}`
+        )
+        .digest("hex");
+
+    if (
+      generatedSignature !==
+      razorpay_signature
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Invalid payment signature.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 3. LOAD PENDING UPGRADE
+    // ============================================================
+
+    const pendingUpgrade =
+      await prisma.pendingUpgrade.findUnique({
+        where: {
+          id: String(
+            pendingUpgradeId
+          ).trim(),
+        },
+      });
+
+    if (!pendingUpgrade) {
+      res.status(404).json({
+        status: "error",
+        message:
+          "Upgrade request not found.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 4. VERIFY ORDER BELONGS TO UPGRADE
+    // ============================================================
+
+    if (
+      pendingUpgrade.razorpayOrderId !==
+      razorpay_order_id
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Payment order does not match this upgrade request.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 5. IDEMPOTENCY
+    // ============================================================
+
+    if (
+      pendingUpgrade.status ===
+      "COMPLETED"
+    ) {
+      const enrollment =
+        await prisma.enrollment.findFirst({
+          where: {
+            previousEnrollmentId:
+              pendingUpgrade.currentEnrollmentId,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+        });
+
+      res.status(200).json({
+        status: "success",
+        message:
+          "Course upgrade already completed.",
+        data: enrollment,
+      });
+      return;
+    }
+
+    // ============================================================
+    // 6. LOAD TARGET COURSE
+    // ============================================================
+
+    const targetCourse =
+      await prisma.course.findUnique({
+        where: {
+          id:
+            pendingUpgrade.targetCourseId,
+        },
+      });
+
+    if (!targetCourse) {
+      res.status(404).json({
+        status: "error",
+        message:
+          "Target course not found.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 7. VALIDATE DURATION
+    // ============================================================
+
+    const months = Number(
+      pendingUpgrade.months
+    );
+
+    if (
+      !Number.isInteger(months) ||
+      ![1, 6, 12].includes(months)
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Invalid upgrade duration.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 8. FIXED COURSE DURATION
+    // ============================================================
+
+    const courseDurationMonths =
+      Number(
+        targetCourse.courseDurationMonths ??
+          0
+      );
+
+    if (
+      courseDurationMonths > 0 &&
+      months > courseDurationMonths
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          `This course is available for a maximum of ${courseDurationMonths} months.`,
+      });
+      return;
+    }
+
+    // ============================================================
+    // 9. TARGET TYPE
+    // ============================================================
+
+    const targetType = String(
+      pendingUpgrade.targetType
+    )
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\_-]+/g, "_");
+
+    if (
+      targetType !== "ONE_TO_ONE" &&
+      targetType !== "GROUP"
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Invalid target enrollment type.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 10. DETERMINE MONTHLY FEE
+    // ============================================================
+
+    let monthlyFee: number;
+
+    if (
+      normalizedCurrency === "USD"
+    ) {
+      if (
+        targetType ===
+        "ONE_TO_ONE"
+      ) {
+        monthlyFee = Number(
+          targetCourse.oneToOneFeeUSD ??
+            0
+        );
+      } else {
+        monthlyFee = Number(
+          targetCourse.groupFeeUSD ??
+            0
+        );
+      }
+    } else {
+      if (
+        targetType ===
+        "ONE_TO_ONE"
+      ) {
+        monthlyFee = Number(
+          targetCourse.oneToOneFeeINR ??
+            0
+        );
+      } else {
+        monthlyFee = Number(
+          targetCourse.groupFeeINR ??
+            0
+        );
+      }
+    }
+
+    if (
+      !Number.isFinite(
+        monthlyFee
+      ) ||
+      monthlyFee <= 0
+    ) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Pricing is not available for the selected course.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 11. SUBTOTAL
+    // ============================================================
+
+    const subtotal = Math.round(
+      monthlyFee * months
+    );
+
+    // ============================================================
+    // 12. BULK DISCOUNT
+    // ============================================================
+
+    const discountTiers =
+      Array.isArray(
+        targetCourse.bulkDiscountTiers
+      )
+        ? targetCourse.bulkDiscountTiers
+            .map((tier: any) => ({
+              months: Number(
+                tier?.months
+              ),
+              discountPercent:
+                Number(
+                  tier?.discountPercent
+                ),
+            }))
+            .filter(
+              (tier) =>
+                Number.isInteger(
+                  tier.months
+                ) &&
+                tier.months > 0 &&
+                Number.isFinite(
+                  tier.discountPercent
+                ) &&
+                tier.discountPercent >=
+                  0 &&
+                tier.discountPercent <=
+                  100
+            )
+        : [];
+
+    const matchingDiscount =
+      discountTiers
+        .filter(
+          (tier) =>
+            tier.months ===
+            months
+        )
+        .sort(
+          (a, b) =>
+            b.discountPercent -
+            a.discountPercent
+        )[0];
+
+    const discountPercent =
+      matchingDiscount
+        ?.discountPercent ??
+      0;
+
+    const discountAmount =
+      Math.round(
+        (subtotal *
+          discountPercent) /
+          100
+      );
+
+    // ============================================================
+    // 13. FINAL AMOUNT
+    // ============================================================
+    //
+    // IMPORTANT:
+    // Joining fee is NOT charged during upgrade.
+    //
+
+    const finalAmount =
+      Math.max(
+        0,
+        subtotal -
+          discountAmount
+      );
+
+    if (finalAmount <= 0) {
+      res.status(400).json({
+        status: "error",
+        message:
+          "Invalid upgrade amount.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 14. FETCH RAZORPAY ORDER
+    // ============================================================
+
+    const razorpay =
+      getRazorpay();
+
+    if (!razorpay) {
+      res.status(500).json({
+        status: "error",
+        message:
+          "Payment service is temporarily unavailable. Please try again later.",
+      });
+      return;
+    }
+
+    const razorpayOrder =
+      await razorpay.orders.fetch(
+        razorpay_order_id
+      );
+
+    // ============================================================
+    // 15. VERIFY RAZORPAY CURRENCY
+    // ============================================================
+
+    const razorpayCurrency =
+      String(
+        razorpayOrder.currency ||
+          ""
+      ).toUpperCase();
+
+    if (
+      razorpayCurrency !==
+      normalizedCurrency
+    ) {
+      console.error(
+        "Upgrade payment currency mismatch:",
+        {
+          pendingUpgradeId,
+          razorpayOrderId:
+            razorpay_order_id,
+          razorpayCurrency,
+          expectedCurrency:
+            normalizedCurrency,
+        }
+      );
+
+      res.status(400).json({
+        status: "error",
+        message:
+          "Payment currency does not match the selected currency.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 16. VERIFY RAZORPAY AMOUNT
+    // ============================================================
+
+    const expectedAmountPaise =
+      Math.round(
+        finalAmount * 100
+      );
+
+    const razorpayAmountPaise =
+      Number(
+        razorpayOrder.amount
+      );
+
+    if (
+      razorpayAmountPaise !==
+      expectedAmountPaise
+    ) {
+      console.error(
+        "Upgrade payment amount mismatch:",
+        {
+          pendingUpgradeId,
+          razorpayOrderId:
+            razorpay_order_id,
+
+          razorpayAmountPaise,
+
+          expectedAmountPaise,
+
+          currency:
+            normalizedCurrency,
+
+          monthlyFee,
+
+          months,
+
+          subtotal,
+
+          discountPercent,
+
+          discountAmount,
+
+          finalAmount,
+        }
+      );
+
+      res.status(400).json({
+        status: "error",
+        message:
+          "Payment amount does not match the selected course upgrade.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 17. COMPLETE UPGRADE
+    // ============================================================
+
+    const result =
+  await completeEnrollmentUpgrade({
+    pendingUpgradeId:
+      String(pendingUpgradeId).trim(),
+
+    razorpayOrderId:
+      razorpay_order_id,
+
+    razorpayPaymentId:
+      razorpay_payment_id,
+  });
+
+    // ============================================================
+    // 18. RESPONSE
+    // ============================================================
+
+    res.status(200).json({
+      status: "success",
+
+      message:
+        result.alreadyCompleted
+          ? "Course upgrade already completed."
+          : "Course upgraded successfully.",
+
+      data:
+        result.enrollment,
+    });
+  } catch (error: unknown) {
+    if (
+      error instanceof EnrollmentError
+    ) {
+      res.status(
+        error.statusCode
+      ).json({
+        status: "error",
+        message:
+          error.message,
+      });
+      return;
+    }
+
+    console.error(
+      "Verify upgrade error:",
+      error
+    );
+
+    res.status(500).json({
+      status: "error",
+      message:
+        "Upgrade payment was verified, but the course upgrade could not be completed. Please contact support with your payment ID.",
+    });
   }
 };

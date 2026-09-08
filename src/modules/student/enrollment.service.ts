@@ -6,6 +6,8 @@ import { sendEmail } from "../../lib/mailer";
 import { buildInvoiceEmailBlock, buildInvoiceHtml, InvoiceData } from "../../lib/invoice";
 import { enrollmentAmountINR } from "../../lib/fees";
 import { isOneToOneBatch } from "../../lib/batchHelpers";
+import Razorpay from "razorpay";
+import { getRazorpay } from "../payment/payment.controller";
 
 export class EnrollmentError extends Error {
   statusCode: number;
@@ -16,6 +18,60 @@ export class EnrollmentError extends Error {
     this.statusCode = statusCode;
   }
 }
+
+const VALID_UPGRADE_DURATIONS = [1, 6, 12];
+
+const calculateUpgradeFee = (
+  monthlyFee: number,
+  months: number,
+  bulkDiscountTiers: unknown
+): {
+  monthlyFee: number;
+  months: number;
+  subtotal: number;
+  discountPercent: number;
+  discountAmount: number;
+  finalAmount: number;
+} => {
+  const subtotal = monthlyFee * months;
+
+  const tiers = Array.isArray(bulkDiscountTiers)
+    ? bulkDiscountTiers
+        .map((tier: any) => ({
+          months: Number(tier?.months),
+          discountPercent: Number(tier?.discountPercent),
+        }))
+        .filter(
+          (tier) =>
+            Number.isFinite(tier.months) &&
+            tier.months > 0 &&
+            Number.isFinite(tier.discountPercent) &&
+            tier.discountPercent >= 0 &&
+            tier.discountPercent <= 100
+        )
+    : [];
+
+  const matchingTier = tiers
+    .filter((tier) => tier.months === months)
+    .sort((a, b) => b.discountPercent - a.discountPercent)[0];
+
+  const discountPercent = matchingTier?.discountPercent ?? 0;
+
+  const discountAmount = Math.round(
+    (subtotal * discountPercent) / 100
+  );
+
+  const finalAmount = Math.max(0, subtotal - discountAmount);
+
+  return {
+    monthlyFee,
+    months,
+    subtotal,
+    discountPercent,
+    discountAmount,
+    finalAmount,
+  };
+};
 
 export type EnrollmentClassType = "GROUP" | "ONE_TO_ONE";
 
@@ -771,3 +827,960 @@ export const sendEnrollmentWelcomeEmail = async (user: {
     console.error("Failed to send registration welcome email:", emailErr);
   }
 };
+
+export async function initiateEnrollmentUpgrade(
+  userId: string,
+  params: {
+    targetCourseId: string;
+    targetType: string;
+    targetBatchId?: string;
+    months?: number;
+    preferredDate?: string;
+    preferredTime?: string;
+  }
+) {
+  const {
+    targetCourseId,
+    targetType,
+    targetBatchId,
+  } = params;
+
+  const months = Number(params.months ?? 1);
+
+  // ---------------------------------------------------------
+  // Validate duration
+  // ---------------------------------------------------------
+  if (
+    !Number.isInteger(months) ||
+    !VALID_UPGRADE_DURATIONS.includes(months)
+  ) {
+    throw new EnrollmentError(
+      "Please select a valid duration: 1, 6, or 12 months.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Normalize target type
+  // ---------------------------------------------------------
+  const normalizedTargetType = String(targetType)
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\-_]+/g, "_");
+
+  if (
+    normalizedTargetType !== "GROUP" &&
+    normalizedTargetType !== "ONE_TO_ONE"
+  ) {
+    throw new EnrollmentError(
+      "Invalid target course type.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Find current active enrollment
+  // ---------------------------------------------------------
+const currentEnrollment = await prisma.enrollment.findFirst({
+  where: {
+    userId,
+    active: true,
+  },
+  include: {
+    course: true,
+  },
+  orderBy: {
+    createdAt: "desc",
+  },
+});
+
+  if (!currentEnrollment) {
+    throw new EnrollmentError(
+      "No active enrollment found to upgrade.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Find target course
+  // ---------------------------------------------------------
+  const targetCourse = await prisma.course.findUnique({
+    where: {
+      id: targetCourseId,
+    },
+  });
+
+  if (!targetCourse) {
+    throw new EnrollmentError(
+      "Target course not found.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Prevent same course + same type upgrade
+  // ---------------------------------------------------------
+  if (
+    currentEnrollment.courseId === targetCourseId &&
+    currentEnrollment.type === normalizedTargetType
+  ) {
+    throw new EnrollmentError(
+      "You are already enrolled in this course and type.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Validate fixed course duration
+  //
+  // courseDurationMonths = 0 means ongoing/unlimited.
+  // ---------------------------------------------------------
+  const courseDurationMonths = Number(
+    targetCourse.courseDurationMonths ?? 0
+  );
+
+  if (
+    courseDurationMonths > 0 &&
+    months > courseDurationMonths
+  ) {
+    throw new EnrollmentError(
+      `This course has a maximum duration of ${courseDurationMonths} month${
+        courseDurationMonths === 1 ? "" : "s"
+      }. Please select a shorter payment duration.`,
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // 1-to-1 preferred schedule
+  // ---------------------------------------------------------
+  let preferredDate = "";
+  let preferredTime = "";
+
+  if (normalizedTargetType === "ONE_TO_ONE") {
+    if (
+      !params.preferredDate ||
+      !ISO_DATE_REGEX.test(params.preferredDate)
+    ) {
+      throw new EnrollmentError(
+        "Please choose a date for your 1-to-1 class.",
+        400
+      );
+    }
+
+    if (params.preferredDate < todayIsoDate()) {
+      throw new EnrollmentError(
+        "Please choose a date that is today or later.",
+        400
+      );
+    }
+
+    preferredDate = params.preferredDate;
+
+    preferredTime = normalizeClassTime(
+      String(params.preferredTime || "")
+    );
+
+    if (!preferredTime) {
+      throw new EnrollmentError(
+        "Please choose a time for your 1-to-1 class.",
+        400
+      );
+    }
+  }
+
+  // ---------------------------------------------------------
+  // Determine monthly fee
+  // ---------------------------------------------------------
+  let monthlyFeeINR: number;
+
+  if (normalizedTargetType === "ONE_TO_ONE") {
+    monthlyFeeINR = Number(
+      targetCourse.oneToOneFeeINR ?? 0
+    );
+
+    if (
+      !Number.isFinite(monthlyFeeINR) ||
+      monthlyFeeINR <= 0
+    ) {
+      throw new EnrollmentError(
+        "One-to-one is not available for this course.",
+        400
+      );
+    }
+  } else {
+    monthlyFeeINR = Number(
+      targetCourse.groupFeeINR ?? 0
+    );
+
+    if (
+      !Number.isFinite(monthlyFeeINR) ||
+      monthlyFeeINR <= 0
+    ) {
+      throw new EnrollmentError(
+        "Group classes are not available for this course.",
+        400
+      );
+    }
+  }
+
+  // ---------------------------------------------------------
+  // Calculate upgrade price
+  //
+  // IMPORTANT:
+  // No joining fee on upgrade.
+  // ---------------------------------------------------------
+  const pricing = calculateUpgradeFee(
+    monthlyFeeINR,
+    months,
+    targetCourse.bulkDiscountTiers
+  );
+
+  const finalAmountINR = pricing.finalAmount;
+
+  if (
+    !Number.isFinite(finalAmountINR) ||
+    finalAmountINR <= 0
+  ) {
+    throw new EnrollmentError(
+      "Unable to calculate the upgrade amount.",
+      500
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Razorpay
+  // ---------------------------------------------------------
+  const razorpay = getRazorpay();
+
+  if (!razorpay) {
+    throw new EnrollmentError(
+      "Payment is temporarily unavailable. Please try again later.",
+      500
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Create Razorpay order
+  // ---------------------------------------------------------
+  const razorpayOrder = await razorpay.orders.create({
+    amount: Math.round(finalAmountINR * 100),
+    currency: "INR",
+
+    receipt: `upgrade_${currentEnrollment.id.slice(0, 20)}`,
+
+    notes: {
+      userId,
+      currentEnrollmentId: currentEnrollment.id,
+      targetCourseId,
+      targetType: normalizedTargetType,
+      months: String(months),
+
+      monthlyFeeINR: String(pricing.monthlyFee),
+      subtotalINR: String(pricing.subtotal),
+      discountPercent: String(pricing.discountPercent),
+      discountAmountINR: String(pricing.discountAmount),
+      finalAmountINR: String(pricing.finalAmount),
+    },
+  });
+
+  // ---------------------------------------------------------
+  // Create pending upgrade
+  // ---------------------------------------------------------
+  const pendingUpgrade = await prisma.pendingUpgrade.create({
+    data: {
+      userId,
+
+      currentEnrollmentId:
+        currentEnrollment.id,
+
+      targetCourseId,
+
+      targetType:
+        normalizedTargetType,
+
+      targetBatchId:
+        targetBatchId || null,
+
+      months,
+
+      preferredDate:
+        preferredDate || null,
+
+      preferredTime:
+        preferredTime || null,
+
+      razorpayOrderId:
+        razorpayOrder.id,
+    },
+  });
+
+  // ---------------------------------------------------------
+  // Return payment details
+  // ---------------------------------------------------------
+  return {
+    pendingUpgradeId: pendingUpgrade.id,
+
+    razorpayOrderId:
+      razorpayOrder.id,
+
+    amount:
+      finalAmountINR,
+
+    currency: "INR",
+
+    pricing: {
+      monthlyFee: pricing.monthlyFee,
+      months: pricing.months,
+      subtotal: pricing.subtotal,
+      discountPercent: pricing.discountPercent,
+      discountAmount: pricing.discountAmount,
+      finalAmount: pricing.finalAmount,
+    },
+  };
+}
+export async function completeEnrollmentUpgrade(params: {
+  pendingUpgradeId: string;
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  currency?: "INR" | "USD";
+}) {
+  const {
+    pendingUpgradeId,
+    razorpayOrderId,
+    razorpayPaymentId,
+    currency = "INR",
+  } = params;
+
+  const normalizedCurrency = String(currency)
+    .trim()
+    .toUpperCase() as "INR" | "USD";
+
+  if (
+    normalizedCurrency !== "INR" &&
+    normalizedCurrency !== "USD"
+  ) {
+    throw new EnrollmentError(
+      "Invalid payment currency.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Find pending upgrade
+  // ---------------------------------------------------------
+  const pending = await prisma.pendingUpgrade.findUnique({
+    where: {
+      id: pendingUpgradeId,
+    },
+  });
+
+  if (!pending) {
+    throw new EnrollmentError(
+      "Upgrade request not found.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Verify Razorpay order matches pending upgrade
+  // ---------------------------------------------------------
+  if (pending.razorpayOrderId !== razorpayOrderId) {
+    throw new EnrollmentError(
+      "Order mismatch.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Idempotency
+  // ---------------------------------------------------------
+  if (pending.status === "COMPLETED") {
+    const enrollment = await prisma.enrollment.findFirst({
+      where: {
+        previousEnrollmentId:
+          pending.currentEnrollmentId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return {
+      alreadyCompleted: true,
+      enrollment,
+    };
+  }
+
+  // ---------------------------------------------------------
+  // Validate duration
+  // ---------------------------------------------------------
+  const months = Number(
+    pending.months ?? 1
+  );
+
+  if (
+    !Number.isInteger(months) ||
+    !VALID_UPGRADE_DURATIONS.includes(months)
+  ) {
+    throw new EnrollmentError(
+      "Invalid upgrade duration.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Find target course
+  // ---------------------------------------------------------
+  const targetCourse = await prisma.course.findUnique({
+    where: {
+      id: pending.targetCourseId,
+    },
+  });
+
+  if (!targetCourse) {
+    throw new EnrollmentError(
+      "Target course not found.",
+      404
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Normalize target type
+  // ---------------------------------------------------------
+  const targetType = String(
+    pending.targetType
+  )
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_-]+/g, "_");
+
+  if (
+    targetType !== "GROUP" &&
+    targetType !== "ONE_TO_ONE"
+  ) {
+    throw new EnrollmentError(
+      "Invalid target enrollment type.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Validate fixed course duration
+  // ---------------------------------------------------------
+  const courseDurationMonths = Number(
+    targetCourse.courseDurationMonths ?? 0
+  );
+
+  if (
+    courseDurationMonths > 0 &&
+    months > courseDurationMonths
+  ) {
+    throw new EnrollmentError(
+      `The selected duration exceeds this course's maximum duration of ${courseDurationMonths} month${
+        courseDurationMonths === 1 ? "" : "s"
+      }.`,
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Validate 1-to-1 schedule
+  // ---------------------------------------------------------
+  if (targetType === "ONE_TO_ONE") {
+    if (
+      !pending.preferredDate ||
+      !ISO_DATE_REGEX.test(
+        pending.preferredDate
+      )
+    ) {
+      throw new EnrollmentError(
+        "Please choose a date for your 1-to-1 class.",
+        400
+      );
+    }
+
+    if (
+      pending.preferredDate < todayIsoDate()
+    ) {
+      throw new EnrollmentError(
+        "Please choose a date that is today or later.",
+        400
+      );
+    }
+
+    normalizeClassTime(
+      String(
+        pending.preferredTime || ""
+      )
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Determine monthly fee based on currency
+  // ---------------------------------------------------------
+  let monthlyFee: number;
+
+  if (normalizedCurrency === "USD") {
+    monthlyFee =
+      targetType === "ONE_TO_ONE"
+        ? Number(
+            targetCourse.oneToOneFeeUSD ?? 0
+          )
+        : Number(
+            targetCourse.groupFeeUSD ?? 0
+          );
+  } else {
+    monthlyFee =
+      targetType === "ONE_TO_ONE"
+        ? Number(
+            targetCourse.oneToOneFeeINR ?? 0
+          )
+        : Number(
+            targetCourse.groupFeeINR ?? 0
+          );
+  }
+
+  if (
+    !Number.isFinite(monthlyFee) ||
+    monthlyFee <= 0
+  ) {
+    throw new EnrollmentError(
+      normalizedCurrency === "USD"
+        ? targetType === "ONE_TO_ONE"
+          ? "One-to-one USD pricing is not available for this course."
+          : "Group USD pricing is not available for this course."
+        : targetType === "ONE_TO_ONE"
+          ? "One-to-one pricing is not available for this course."
+          : "Group classes are not available for this course.",
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Calculate exact upgrade price
+  //
+  // IMPORTANT:
+  // No joining fee on upgrade.
+  // ---------------------------------------------------------
+  const pricing = calculateUpgradeFee(
+    monthlyFee,
+    months,
+    targetCourse.bulkDiscountTiers
+  );
+
+  const finalAmount = pricing.finalAmount;
+
+  if (
+    !Number.isFinite(finalAmount) ||
+    finalAmount <= 0
+  ) {
+    throw new EnrollmentError(
+      "Unable to calculate the upgrade amount.",
+      500
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Transaction
+  // ---------------------------------------------------------
+  const newEnrollment = await prisma.$transaction(
+    async (tx) => {
+      // -----------------------------------------------------
+      // Verify student
+      // -----------------------------------------------------
+      const upgradingUser =
+        await tx.user.findUnique({
+          where: {
+            id: pending.userId,
+          },
+        });
+
+      if (!upgradingUser) {
+        throw new EnrollmentError(
+          "Student not found.",
+          404
+        );
+      }
+
+      // -----------------------------------------------------
+      // Verify current enrollment
+      // -----------------------------------------------------
+      const currentEnrollment =
+        await tx.enrollment.findUnique({
+          where: {
+            id: pending.currentEnrollmentId,
+          },
+        });
+
+      if (!currentEnrollment) {
+        throw new EnrollmentError(
+          "Current enrollment not found.",
+          400
+        );
+      }
+
+      // -----------------------------------------------------
+      // IMPORTANT:
+      // Collect ALL existing batch memberships BEFORE
+      // deleting them.
+      // -----------------------------------------------------
+      const oldMemberships =
+        await tx.batchStudent.findMany({
+          where: {
+            studentId: pending.userId,
+          },
+          select: {
+            batchId: true,
+          },
+        });
+
+      // -----------------------------------------------------
+      // Remove student from all previous batches
+      // -----------------------------------------------------
+      if (oldMemberships.length > 0) {
+        await tx.batchStudent.deleteMany({
+          where: {
+            studentId: pending.userId,
+          },
+        });
+
+        // ---------------------------------------------------
+        // Decrement totalStudents for every old batch
+        // ---------------------------------------------------
+        for (const membership of oldMemberships) {
+          await tx.batch.update({
+            where: {
+              id: membership.batchId,
+            },
+            data: {
+              totalStudents: {
+                decrement: 1,
+              },
+            },
+          });
+        }
+      }
+
+      // -----------------------------------------------------
+      // Deactivate current enrollment
+      // -----------------------------------------------------
+      await tx.enrollment.update({
+        where: {
+          id: pending.currentEnrollmentId,
+        },
+        data: {
+          active: false,
+          expiresAt: new Date(),
+        },
+      });
+
+      // -----------------------------------------------------
+      // Create new active enrollment
+      //
+      // IMPORTANT:
+      // Both GROUP and ONE_TO_ONE are monthly plans.
+      // -----------------------------------------------------
+      const enrollment =
+        await tx.enrollment.create({
+          data: {
+            userId:
+              pending.userId,
+
+            courseId:
+              pending.targetCourseId,
+
+            mode:
+              ClassMode.ONLINE,
+
+            type:
+              targetType,
+
+            active:
+              true,
+
+            previousEnrollmentId:
+              pending.currentEnrollmentId,
+
+            paymentMode:
+              "MONTHLY",
+
+            monthsPaid:
+              months,
+          },
+        });
+
+      // -----------------------------------------------------
+      // Determine target batch
+      // -----------------------------------------------------
+      let assignedBatchId =
+        pending.targetBatchId || null;
+
+      // -----------------------------------------------------
+      // ONE-TO-ONE
+      //
+      // Always create a dedicated batch.
+      // -----------------------------------------------------
+      if (
+        targetType === "ONE_TO_ONE"
+      ) {
+        if (
+          !pending.preferredDate ||
+          !pending.preferredTime
+        ) {
+          throw new EnrollmentError(
+            "1-to-1 class date and time are required.",
+            400
+          );
+        }
+
+        const teacher =
+          await findDefaultOneToOneTeacher(
+            tx
+          );
+
+        if (!teacher) {
+          throw new EnrollmentError(
+            "No teacher is available to assign this 1-to-1 batch. Please contact the academy.",
+            500
+          );
+        }
+
+        const weekday =
+          weekdayFromIsoDate(
+            pending.preferredDate
+          );
+
+        const studentFirstName =
+          upgradingUser.fullName
+            .trim()
+            .split(/\s+/)[0] ||
+          "Student";
+
+        const batchCode =
+          `OTO-UPG-${Date.now()
+            .toString(36)
+            .toUpperCase()}${Math.random()
+            .toString(36)
+            .slice(2, 5)
+            .toUpperCase()}`;
+
+        const oneToOneBatch =
+          await tx.batch.create({
+            data: {
+              name:
+                `1-to-1 · ${targetCourse.title} · ${studentFirstName}`,
+
+              code:
+                batchCode,
+
+              courseId:
+                targetCourse.id,
+
+              courseName:
+                targetCourse.title,
+
+              teacherId:
+                teacher.id,
+
+              teacherName:
+                teacher.fullName,
+
+              schedule:
+                `${weekday}|${pending.preferredTime}|${pending.preferredDate}|`,
+
+              level:
+                batchLevelFromCourse(
+                  targetCourse.category
+                ),
+
+              status:
+                "Active",
+
+              totalStudents:
+                0,
+            },
+          });
+
+        assignedBatchId =
+          oneToOneBatch.id;
+      }
+
+      // -----------------------------------------------------
+      // GROUP
+      //
+      // Validate selected target batch.
+      // -----------------------------------------------------
+      if (
+        targetType === "GROUP"
+      ) {
+        if (!assignedBatchId) {
+          throw new EnrollmentError(
+            "Please select a target batch.",
+            400
+          );
+        }
+
+        const targetBatch =
+          await tx.batch.findUnique({
+            where: {
+              id: assignedBatchId,
+            },
+          });
+
+        if (!targetBatch) {
+          throw new EnrollmentError(
+            "Target batch not found.",
+            400
+          );
+        }
+
+        if (
+          targetBatch.courseId !==
+          targetCourse.id
+        ) {
+          throw new EnrollmentError(
+            "Target batch does not belong to the selected course.",
+            400
+          );
+        }
+
+        if (
+          isOneToOneBatch(
+            targetBatch.name,
+            targetBatch.code
+          )
+        ) {
+          throw new EnrollmentError(
+            "A 1-to-1 batch cannot be selected for group enrollment.",
+            400
+          );
+        }
+      }
+
+      // -----------------------------------------------------
+      // Assign student to NEW batch
+      // -----------------------------------------------------
+      if (assignedBatchId) {
+        const existingMembership =
+          await tx.batchStudent.findUnique({
+            where: {
+              batchId_studentId: {
+                batchId:
+                  assignedBatchId,
+
+                studentId:
+                  pending.userId,
+              },
+            },
+          });
+
+        if (!existingMembership) {
+          await tx.batchStudent.create({
+            data: {
+              batchId:
+                assignedBatchId,
+
+              studentId:
+                pending.userId,
+            },
+          });
+
+          await tx.batch.update({
+            where: {
+              id: assignedBatchId,
+            },
+            data: {
+              totalStudents: {
+                increment: 1,
+              },
+            },
+          });
+        }
+      }
+
+      // -----------------------------------------------------
+      // Create successful payment
+      //
+      // IMPORTANT:
+      // No joining fee on upgrade.
+      // Store actual selected currency.
+      // -----------------------------------------------------
+      await tx.payment.create({
+        data: {
+          userId:
+            pending.userId,
+
+          enrollmentId:
+            enrollment.id,
+
+          amount:
+            finalAmount,
+
+          currency:
+            normalizedCurrency,
+
+          gateway:
+            "razorpay",
+
+          transactionId:
+            razorpayPaymentId,
+
+          orderId:
+            razorpayOrderId,
+
+          status:
+            PaymentStatus.SUCCESS,
+        },
+      });
+
+      // -----------------------------------------------------
+      // Mark upgrade completed
+      // -----------------------------------------------------
+      await tx.pendingUpgrade.update({
+        where: {
+          id: pending.id,
+        },
+        data: {
+          status:
+            PendingEnrollmentStatus.COMPLETED,
+        },
+      });
+
+      return enrollment;
+    }
+  );
+
+  // ---------------------------------------------------------
+  // Return
+  // ---------------------------------------------------------
+  return {
+    alreadyCompleted: false,
+
+    enrollment:
+      newEnrollment,
+
+    pricing: {
+      currency:
+        normalizedCurrency,
+
+      monthlyFee:
+        pricing.monthlyFee,
+
+      months:
+        pricing.months,
+
+      subtotal:
+        pricing.subtotal,
+
+      discountPercent:
+        pricing.discountPercent,
+
+      discountAmount:
+        pricing.discountAmount,
+
+      finalAmount:
+        pricing.finalAmount,
+    },
+  };
+}

@@ -23,7 +23,9 @@ import {
   getPublicMarketingCourseBySlug,
   getStudentAttendance,
   applyStudentLeave,
-  getStudentProgress
+  getStudentProgress,
+  initiateUpgrade,
+  verifyUpgrade,
 } from "./student.controller";
 import {
   getStudentSettings,
@@ -31,6 +33,7 @@ import {
   updateStudentSettingsNotifications,
   sendStudentForgotPasswordOtp,
   resetStudentForgotPassword,
+  
 } from "./student.settings.controller";
 
 const router = Router();
@@ -51,7 +54,8 @@ const studentOnly = [authenticate, requireRole(Role.STUDENT)];
 
 router.post("/logout", ...studentOnly, logoutUser);
 
-
+router.post("/upgrade/initiate", ...studentOnly, initiateUpgrade);
+router.post("/upgrade/verify", ...studentOnly, verifyUpgrade);
 
 // Dashboard & Analytics
 router.get("/dashboard", ...studentOnly, getStudentDashboard);

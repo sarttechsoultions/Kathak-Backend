@@ -222,10 +222,33 @@ model Enrollment {
   monthsPaid     Int          @default(0)
   nextDueDate    DateTime?
   subscriptionId String?
+    previousEnrollmentId String?      @unique
+  previousEnrollment   Enrollment?  @relation("EnrollmentUpgrade", fields: [previousEnrollmentId], references: [id])
+  upgradedTo           Enrollment?  @relation("EnrollmentUpgrade")
   course         Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   payments       Payment[]
   monthlyDues    MonthlyDue[]
+}
+
+model PendingUpgrade {
+  id                    String   @id @default(uuid())
+  userId                String
+  currentEnrollmentId   String
+  targetCourseId        String
+  targetType            String
+  targetBatchId         String?
+  months                Int      @default(1)      
+  preferredDate         String?                    
+  preferredTime         String?                    
+  razorpayOrderId       String?  @unique
+  status                PendingEnrollmentStatus @default(PENDING)
+  errorMessage          String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
 }
 
 model Payment {

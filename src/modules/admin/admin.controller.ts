@@ -1248,19 +1248,28 @@ export const getCourseById = async (req: Request, res: Response): Promise<void> 
     });
   }
 };
-export const createCourse = async (req: Request, res: Response): Promise<void> => {
+export const createCourse = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
-    const { 
-      title, 
-      description, 
-      category, 
+    const {
+      title,
+      description,
+      category,
       slug: requestedSlug,
-      groupFeeINR, 
-      groupFeeUSD, 
-      oneToOneFeeINR, 
+
+      // ── Monthly Fees ──
+      groupFeeINR,
+      groupFeeUSD,
+      oneToOneFeeINR,
       oneToOneFeeUSD,
-      groupClassesCount,     
+
+      // ── Monthly Class Information ──
+      groupClassesCount,
       oneToOneClassesCount,
+
+      // ── Media / Marketing ──
       thumbnail,
       videoUrl,
       intro,
@@ -1269,6 +1278,7 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
       homepageSortOrder,
       aliases,
       showExam,
+
       // ── Payment Configuration ──
       joiningFeeINR,
       bulkDiscountTiers,
@@ -1276,85 +1286,318 @@ export const createCourse = async (req: Request, res: Response): Promise<void> =
       courseDurationMonths,
     } = req.body;
 
-    // 1. Strict Validation
-    if (!title || !title.trim()) {
-      res.status(400).json({ status: "error", message: "Course title is required." });
+    // ============================================================
+    // 1. BASIC VALIDATION
+    // ============================================================
+
+    if (typeof title !== "string" || !title.trim()) {
+      res.status(400).json({
+        status: "error",
+        message: "Course title is required.",
+      });
       return;
     }
 
-    // 2. Slug Generation — keep a provided slug stable so enroll links keep working
+    // ============================================================
+    // 2. NUMERIC VALIDATION HELPERS
+    // ============================================================
+
+    const parseNonNegativeNumber = (
+      value: unknown,
+      fieldName: string,
+      defaultValue = 0
+    ): number => {
+      if (value === undefined || value === null || value === "") {
+        return defaultValue;
+      }
+
+      const parsed = Number(value);
+
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(
+          `${fieldName} must be a valid non-negative number.`
+        );
+      }
+
+      return parsed;
+    };
+
+    const parseNonNegativeInteger = (
+      value: unknown,
+      fieldName: string,
+      defaultValue = 0
+    ): number => {
+      if (value === undefined || value === null || value === "") {
+        return defaultValue;
+      }
+
+      const parsed = Number(value);
+
+      if (
+        !Number.isFinite(parsed) ||
+        parsed < 0 ||
+        !Number.isInteger(parsed)
+      ) {
+        throw new Error(
+          `${fieldName} must be a valid non-negative integer.`
+        );
+      }
+
+      return parsed;
+    };
+
+    // ============================================================
+    // 3. PARSE FEES
+    // ============================================================
+
+    const parsedGroupFeeINR = parseNonNegativeNumber(
+      groupFeeINR,
+      "Group monthly fee (INR)"
+    );
+
+    const parsedGroupFeeUSD = parseNonNegativeNumber(
+      groupFeeUSD,
+      "Group monthly fee (USD)"
+    );
+
+    const parsedOneToOneFeeINR = parseNonNegativeNumber(
+      oneToOneFeeINR,
+      "1-to-1 monthly fee (INR)"
+    );
+
+    const parsedOneToOneFeeUSD = parseNonNegativeNumber(
+      oneToOneFeeUSD,
+      "1-to-1 monthly fee (USD)"
+    );
+
+    // ============================================================
+    // 4. PAYMENT CONFIGURATION
+    // ============================================================
+
+    const parsedJoiningFeeINR = parseNonNegativeNumber(
+      joiningFeeINR,
+      "Joining fee (INR)",
+      1100
+    );
+
+    const parsedCourseDurationMonths = parseNonNegativeInteger(
+      courseDurationMonths,
+      "Course duration (months)",
+      0
+    );
+
+    // ============================================================
+    // 5. DISCOUNT TIER SANITIZATION
+    // ============================================================
+
+    const sanitizedTiers = sanitizeBulkDiscountTiers(
+      bulkDiscountTiers
+    );
+
+    // ============================================================
+    // 6. SLUG GENERATION
+    // ============================================================
+
     const baseSlug = String(requestedSlug || title)
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)+/g, "");
+
+    if (!baseSlug) {
+      res.status(400).json({
+        status: "error",
+        message: "Unable to generate a valid course slug.",
+      });
+      return;
+    }
+
     const slug = requestedSlug
       ? baseSlug
       : `${baseSlug}-${Date.now().toString(36)}`;
 
-    // Validate and sanitize bulk discount tiers
-    const sanitizedTiers = Array.isArray(bulkDiscountTiers)
-      ? bulkDiscountTiers
-          .filter((t: { months?: unknown; discountPercent?: unknown }) => t && typeof t === "object" && Number(t.months) > 0)
-          .map((t: { months: unknown; discountPercent: unknown }) => ({ months: Number(t.months), discountPercent: Number(t.discountPercent) || 0 }))
-      : [];
+    // ============================================================
+    // 7. DATABASE CREATION
+    // ============================================================
 
-    // 3. Database Creation
     const newCourse = await prisma.course.create({
       data: {
+        // ─────────────────────────────────────────────
+        // Basic Information
+        // ─────────────────────────────────────────────
         title: title.trim(),
+
         slug,
-        description: description || "",
+
+        description:
+          typeof description === "string"
+            ? description.trim()
+            : "",
+
         category: mapCategoryToEnum(category),
-        
-        // Fees: Default to 0 instead of random numbers like 4999
-        groupFeeINR: Number(groupFeeINR) || 0,
-        groupFeeUSD: Number(groupFeeUSD) || 0,
-        oneToOneFeeINR: Number(oneToOneFeeINR) || 0,
-        oneToOneFeeUSD: Number(oneToOneFeeUSD) || 0,
-        
-        // Class Counts: Taking dynamic values from frontend based on client's data
-        groupClassesCount: groupClassesCount || "", 
-        oneToOneClassesCount: oneToOneClassesCount || "",
+
+        // ─────────────────────────────────────────────
+        // Monthly Pricing
+        // ─────────────────────────────────────────────
+        groupFeeINR: parsedGroupFeeINR,
+        groupFeeUSD: parsedGroupFeeUSD,
+
+        // IMPORTANT:
+        // oneToOneFeeINR / USD represent MONTHLY
+        // 1-to-1 tuition, NOT per-class pricing.
+        oneToOneFeeINR: parsedOneToOneFeeINR,
+        oneToOneFeeUSD: parsedOneToOneFeeUSD,
+
+        // ─────────────────────────────────────────────
+        // Monthly Class Information
+        // ─────────────────────────────────────────────
+        groupClassesCount:
+          typeof groupClassesCount === "string"
+            ? groupClassesCount.trim()
+            : "",
+
+        oneToOneClassesCount:
+          typeof oneToOneClassesCount === "string"
+            ? oneToOneClassesCount.trim()
+            : "",
+
+        // ─────────────────────────────────────────────
+        // Media
+        // ─────────────────────────────────────────────
         thumbnail: thumbnail || null,
         videoUrl: videoUrl || null,
         intro: intro || null,
-        marketingCategory: marketingCategory || inferMarketingCategoryFromInput(category, title),
-        showOnHome: typeof showOnHome === "boolean" ? showOnHome : true,
-        homepageSortOrder: Number(homepageSortOrder) || 0,
-        aliases: Array.isArray(aliases) ? aliases : [],
-        showExam: typeof showExam === "boolean" ? showExam : true,
-        
+
+        // ─────────────────────────────────────────────
+        // Marketing
+        // ─────────────────────────────────────────────
+        marketingCategory:
+          marketingCategory ||
+          inferMarketingCategoryFromInput(category, title),
+
+        showOnHome:
+          typeof showOnHome === "boolean"
+            ? showOnHome
+            : true,
+
+        homepageSortOrder: parseNonNegativeInteger(
+          homepageSortOrder,
+          "Homepage sort order",
+          0
+        ),
+
+        aliases: Array.isArray(aliases)
+          ? aliases
+              .filter(
+                (alias): alias is string =>
+                  typeof alias === "string" &&
+                  alias.trim().length > 0
+              )
+              .map((alias) => alias.trim())
+          : [],
+
+        showExam:
+          typeof showExam === "boolean"
+            ? showExam
+            : true,
+
+        // ─────────────────────────────────────────────
         // Payment Configuration
-        joiningFeeINR: joiningFeeINR !== undefined ? Number(joiningFeeINR) : 1100,
+        // ─────────────────────────────────────────────
+        joiningFeeINR: parsedJoiningFeeINR,
+
+        /*
+         * Example:
+         *
+         * [
+         *   { months: 6, discountPercent: 10 },
+         *   { months: 12, discountPercent: 15 }
+         * ]
+         *
+         * Discount applies to tuition/monthly fees.
+         * Joining fee is NOT discounted.
+         */
         bulkDiscountTiers: sanitizedTiers,
-        autoPayEnabled: typeof autoPayEnabled === "boolean" ? autoPayEnabled : true,
-        courseDurationMonths: Number(courseDurationMonths) || 0,
-        
-        published: true
-      }
+
+        autoPayEnabled:
+          typeof autoPayEnabled === "boolean"
+            ? autoPayEnabled
+            : true,
+
+        /*
+         * 0 means no fixed course-duration restriction.
+         */
+        courseDurationMonths:
+          parsedCourseDurationMonths,
+
+        // ─────────────────────────────────────────────
+        // Publishing
+        // ─────────────────────────────────────────────
+        published: true,
+      },
     });
 
-    res.status(201).json({ status: "success", message: "Course created successfully.", data: newCourse });
+    // ============================================================
+    // 8. RESPONSE
+    // ============================================================
+
+    res.status(201).json({
+      status: "success",
+      message: "Course created successfully.",
+      data: newCourse,
+    });
   } catch (error: any) {
     console.error("Create Course Error:", error);
-    res.status(500).json({ status: "error", message: error.message || "Failed to create course." });
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to create course.";
+
+    res.status(400).json({
+      status: "error",
+      message,
+    });
   }
 };
 
-export const updateCourse = async (req: Request, res: Response): Promise<void> => {
+
+/**
+ * ============================================================
+ * UPDATE COURSE
+ * ============================================================
+ */
+export const updateCourse = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { 
-           title, 
-      description, 
-      category, 
-      groupFeeINR, 
-      groupFeeUSD, 
-      oneToOneFeeINR, 
+
+    if (!id || !id.trim()) {
+      res.status(400).json({
+        status: "error",
+        message: "Course ID is required.",
+      });
+      return;
+    }
+
+    const {
+      title,
+      description,
+      category,
+
+      // ── Monthly Fees ──
+      groupFeeINR,
+      groupFeeUSD,
+      oneToOneFeeINR,
       oneToOneFeeUSD,
-      groupClassesCount,     
+
+      // ── Monthly Class Information ──
+      groupClassesCount,
       oneToOneClassesCount,
+
+      // ── Media / Marketing ──
       thumbnail,
       videoUrl,
       intro,
@@ -1364,6 +1607,7 @@ export const updateCourse = async (req: Request, res: Response): Promise<void> =
       aliases,
       showExam,
       published,
+
       // ── Payment Configuration ──
       joiningFeeINR,
       bulkDiscountTiers,
@@ -1371,50 +1615,451 @@ export const updateCourse = async (req: Request, res: Response): Promise<void> =
       courseDurationMonths,
     } = req.body;
 
+    // ============================================================
+    // 1. CHECK COURSE EXISTS
+    // ============================================================
+
+    const existingCourse = await prisma.course.findUnique({
+      where: { id },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existingCourse) {
+      res.status(404).json({
+        status: "error",
+        message: "Course not found.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 2. VALIDATE TITLE IF PROVIDED
+    // ============================================================
+
+    if (
+      title !== undefined &&
+      (typeof title !== "string" || !title.trim())
+    ) {
+      res.status(400).json({
+        status: "error",
+        message: "Course title cannot be empty.",
+      });
+      return;
+    }
+
+    // ============================================================
+    // 3. NUMERIC VALIDATION HELPERS
+    // ============================================================
+
+    const parseOptionalNonNegativeNumber = (
+      value: unknown,
+      fieldName: string
+    ): number | undefined => {
+      if (value === undefined || value === null || value === "") {
+        return undefined;
+      }
+
+      const parsed = Number(value);
+
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(
+          `${fieldName} must be a valid non-negative number.`
+        );
+      }
+
+      return parsed;
+    };
+
+    const parseOptionalNonNegativeInteger = (
+      value: unknown,
+      fieldName: string
+    ): number | undefined => {
+      if (value === undefined || value === null || value === "") {
+        return undefined;
+      }
+
+      const parsed = Number(value);
+
+      if (
+        !Number.isFinite(parsed) ||
+        parsed < 0 ||
+        !Number.isInteger(parsed)
+      ) {
+        throw new Error(
+          `${fieldName} must be a valid non-negative integer.`
+        );
+      }
+
+      return parsed;
+    };
+
+    // ============================================================
+    // 4. PARSE OPTIONAL FEES
+    // ============================================================
+
+    const parsedGroupFeeINR =
+      parseOptionalNonNegativeNumber(
+        groupFeeINR,
+        "Group monthly fee (INR)"
+      );
+
+    const parsedGroupFeeUSD =
+      parseOptionalNonNegativeNumber(
+        groupFeeUSD,
+        "Group monthly fee (USD)"
+      );
+
+    const parsedOneToOneFeeINR =
+      parseOptionalNonNegativeNumber(
+        oneToOneFeeINR,
+        "1-to-1 monthly fee (INR)"
+      );
+
+    const parsedOneToOneFeeUSD =
+      parseOptionalNonNegativeNumber(
+        oneToOneFeeUSD,
+        "1-to-1 monthly fee (USD)"
+      );
+
+    const parsedJoiningFeeINR =
+      parseOptionalNonNegativeNumber(
+        joiningFeeINR,
+        "Joining fee (INR)"
+      );
+
+    const parsedCourseDurationMonths =
+      parseOptionalNonNegativeInteger(
+        courseDurationMonths,
+        "Course duration (months)"
+      );
+
+    const parsedHomepageSortOrder =
+      parseOptionalNonNegativeInteger(
+        homepageSortOrder,
+        "Homepage sort order"
+      );
+
+    // ============================================================
+    // 5. DISCOUNT TIERS
+    //
+    // IMPORTANT:
+    // Only sanitize when the frontend explicitly sends
+    // bulkDiscountTiers.
+    //
+    // If omitted, existing database value remains unchanged.
+    // ============================================================
+
     const sanitizedTiers =
       bulkDiscountTiers !== undefined
-        ? Array.isArray(bulkDiscountTiers)
-          ? bulkDiscountTiers
-              .filter((t: { months?: unknown; discountPercent?: unknown }) => t && typeof t === "object" && Number(t.months) > 0)
-              .map((t: { months: unknown; discountPercent: unknown }) => ({ months: Number(t.months), discountPercent: Number(t.discountPercent) || 0 }))
-          : []
+        ? sanitizeBulkDiscountTiers(bulkDiscountTiers)
         : undefined;
+
+    // ============================================================
+    // 6. BUILD UPDATE DATA
+    // ============================================================
+
+    const updateData: Record<string, unknown> = {
+      // ─────────────────────────────────────────────
+      // Basic Information
+      // ─────────────────────────────────────────────
+      title:
+        title !== undefined
+          ? title.trim()
+          : undefined,
+
+      description:
+        description !== undefined
+          ? typeof description === "string"
+            ? description.trim()
+            : ""
+          : undefined,
+
+      category:
+        category !== undefined &&
+        category !== null &&
+        category !== ""
+          ? mapCategoryToEnum(category)
+          : undefined,
+
+      // ─────────────────────────────────────────────
+      // Monthly Pricing
+      // ─────────────────────────────────────────────
+      groupFeeINR: parsedGroupFeeINR,
+      groupFeeUSD: parsedGroupFeeUSD,
+
+      // IMPORTANT:
+      // These are MONTHLY 1-to-1 fees.
+      oneToOneFeeINR: parsedOneToOneFeeINR,
+      oneToOneFeeUSD: parsedOneToOneFeeUSD,
+
+      // ─────────────────────────────────────────────
+      // Monthly Class Information
+      // ─────────────────────────────────────────────
+      groupClassesCount:
+        groupClassesCount !== undefined
+          ? typeof groupClassesCount === "string"
+            ? groupClassesCount.trim()
+            : ""
+          : undefined,
+
+      oneToOneClassesCount:
+        oneToOneClassesCount !== undefined
+          ? typeof oneToOneClassesCount === "string"
+            ? oneToOneClassesCount.trim()
+            : ""
+          : undefined,
+
+      // ─────────────────────────────────────────────
+      // Media
+      // ─────────────────────────────────────────────
+      thumbnail:
+        thumbnail !== undefined
+          ? thumbnail || null
+          : undefined,
+
+      videoUrl:
+        videoUrl !== undefined
+          ? videoUrl || null
+          : undefined,
+
+      intro:
+        intro !== undefined
+          ? intro || null
+          : undefined,
+
+      // ─────────────────────────────────────────────
+      // Marketing
+      // ─────────────────────────────────────────────
+      marketingCategory:
+        marketingCategory !== undefined
+          ? marketingCategory || null
+          : undefined,
+
+      showOnHome:
+        typeof showOnHome === "boolean"
+          ? showOnHome
+          : undefined,
+
+      homepageSortOrder: parsedHomepageSortOrder,
+
+      aliases:
+        aliases !== undefined
+          ? Array.isArray(aliases)
+            ? aliases
+                .filter(
+                  (alias): alias is string =>
+                    typeof alias === "string" &&
+                    alias.trim().length > 0
+                )
+                .map((alias) => alias.trim())
+            : []
+          : undefined,
+
+      showExam:
+        typeof showExam === "boolean"
+          ? showExam
+          : undefined,
+
+      published:
+        typeof published === "boolean"
+          ? published
+          : undefined,
+
+      // ─────────────────────────────────────────────
+      // Payment Configuration
+      // ─────────────────────────────────────────────
+
+      /*
+       * One-time joining fee.
+       *
+       * IMPORTANT:
+       * This is NOT added to every month.
+       * It should only be charged during the applicable
+       * first enrollment/payment flow.
+       */
+      joiningFeeINR: parsedJoiningFeeINR,
+
+      /*
+       * Discount applies to monthly tuition amount.
+       *
+       * Example:
+       *
+       * Monthly fee = ₹2,400
+       * Duration = 6 months
+       * Gross = ₹14,400
+       * Discount = 10%
+       * Discounted tuition = ₹12,960
+       *
+       * Joining fee is handled separately by the
+       * payment/enrollment calculation.
+       */
+      bulkDiscountTiers: sanitizedTiers,
+
+      autoPayEnabled:
+        typeof autoPayEnabled === "boolean"
+          ? autoPayEnabled
+          : undefined,
+
+      courseDurationMonths:
+        parsedCourseDurationMonths,
+    };
+
+    // ============================================================
+    // 7. DATABASE UPDATE
+    // ============================================================
 
     const updated = await prisma.course.update({
       where: { id },
-      data: {
-        title: title ?? undefined,
-        description: description ?? undefined,
-        category: category ? mapCategoryToEnum(category) : undefined,
-        groupFeeINR: groupFeeINR !== undefined ? Number(groupFeeINR) : undefined,
-        groupFeeUSD: groupFeeUSD !== undefined ? Number(groupFeeUSD) : undefined,
-        oneToOneFeeINR: oneToOneFeeINR !== undefined ? Number(oneToOneFeeINR) : undefined,
-        oneToOneFeeUSD: oneToOneFeeUSD !== undefined ? Number(oneToOneFeeUSD) : undefined,
-        groupClassesCount: groupClassesCount ?? undefined,
-        oneToOneClassesCount: oneToOneClassesCount ?? undefined,
-        thumbnail: thumbnail ?? undefined,
-        videoUrl: videoUrl ?? undefined,
-        intro: intro ?? undefined,
-        marketingCategory: marketingCategory ?? undefined,
-        showOnHome: typeof showOnHome === "boolean" ? showOnHome : undefined,
-        homepageSortOrder:
-          homepageSortOrder !== undefined ? Number(homepageSortOrder) : undefined,
-        aliases: Array.isArray(aliases) ? aliases : undefined,
-        showExam: typeof showExam === "boolean" ? showExam : undefined,
-        published: typeof published === "boolean" ? published : undefined,
-        // Payment Configuration
-        joiningFeeINR: joiningFeeINR !== undefined ? Number(joiningFeeINR) : undefined,
-        bulkDiscountTiers: sanitizedTiers,
-        autoPayEnabled: typeof autoPayEnabled === "boolean" ? autoPayEnabled : undefined,
-        courseDurationMonths: courseDurationMonths !== undefined ? Number(courseDurationMonths) : undefined,
-      }
+      data: updateData,
     });
 
-    res.json({ status: "success", message: "Course updated successfully.", data: updated });
+    // ============================================================
+    // 8. RESPONSE
+    // ============================================================
+
+    res.status(200).json({
+      status: "success",
+      message: "Course updated successfully.",
+      data: updated,
+    });
   } catch (error: any) {
     console.error("Update Course Error:", error);
-    res.status(500).json({ status: "error", message: error.message || "Failed to update course." });
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to update course.";
+
+    res.status(400).json({
+      status: "error",
+      message,
+    });
   }
+};
+
+
+/**
+ * ============================================================
+ * DISCOUNT TIER SANITIZER
+ * ============================================================
+ *
+ * Expected input:
+ *
+ * [
+ *   { months: 6, discountPercent: 10 },
+ *   { months: 12, discountPercent: 15 }
+ * ]
+ *
+ * Rules:
+ * - months must be a positive integer
+ * - discount must be 0–100
+ * - duplicate month durations are removed
+ * - invalid entries are rejected
+ * - tiers are sorted by duration
+ *
+ * NOTE:
+ * The frontend should normally offer only:
+ * 1 month
+ * 6 months
+ * 12 months
+ *
+ * Discounts are normally configured for 6 and 12 months.
+ */
+const sanitizeBulkDiscountTiers = (
+  tiers: unknown
+): Array<{
+  months: number;
+  discountPercent: number;
+}> => {
+  if (tiers === undefined || tiers === null) {
+    return [];
+  }
+
+  if (!Array.isArray(tiers)) {
+    throw new Error(
+      "bulkDiscountTiers must be an array."
+    );
+  }
+
+  const seenMonths = new Set<number>();
+
+  const sanitized = tiers.map((tier, index) => {
+    if (
+      !tier ||
+      typeof tier !== "object"
+    ) {
+      throw new Error(
+        `Invalid discount tier at index ${index}.`
+      );
+    }
+
+    const rawTier = tier as {
+      months?: unknown;
+      discountPercent?: unknown;
+    };
+
+    const months = Number(rawTier.months);
+    const discountPercent = Number(
+      rawTier.discountPercent
+    );
+
+    // ─────────────────────────────────────────────
+    // Validate months
+    // ─────────────────────────────────────────────
+
+    if (
+      !Number.isFinite(months) ||
+      !Number.isInteger(months) ||
+      months <= 0
+    ) {
+      throw new Error(
+        `Discount tier ${index + 1}: months must be a positive integer.`
+      );
+    }
+
+    // ─────────────────────────────────────────────
+    // Validate discount
+    // ─────────────────────────────────────────────
+
+    if (
+      !Number.isFinite(discountPercent) ||
+      discountPercent < 0 ||
+      discountPercent > 100
+    ) {
+      throw new Error(
+        `Discount tier ${index + 1}: discountPercent must be between 0 and 100.`
+      );
+    }
+
+    // ─────────────────────────────────────────────
+    // Prevent duplicate durations
+    // ─────────────────────────────────────────────
+
+    if (seenMonths.has(months)) {
+      throw new Error(
+        `Duplicate discount tier for ${months} months.`
+      );
+    }
+
+    seenMonths.add(months);
+
+    return {
+      months,
+      discountPercent,
+    };
+  });
+
+  // ─────────────────────────────────────────────
+  // Sort by duration
+  // ─────────────────────────────────────────────
+
+  sanitized.sort(
+    (a, b) => a.months - b.months
+  );
+
+  return sanitized;
 };
 
 export const deleteCourse = async (req: Request, res: Response): Promise<void> => {
