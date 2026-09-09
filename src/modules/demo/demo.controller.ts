@@ -685,12 +685,21 @@ export const verifyPublicDemoPayment = async (req: Request, res: Response): Prom
       throw new DemoError("Booking order not found.", 404);
     }
 
-    const confirmed = await markDemoPaid(booking.id, razorpayOrderId, razorpayPaymentId);
-    res.status(200).json({
-      status: "success",
-      message: "Payment received. Your one-to-one demo class is confirmed.",
-      data: { booking: serializeBooking(confirmed) },
-    });
+const confirmed = await markDemoPaid(
+  booking.id,
+  razorpayOrderId,
+  razorpayPaymentId,
+);
+
+const isGroup = confirmed.type === "GROUP";
+
+res.status(200).json({
+  status: "success",
+  message: isGroup
+    ? "Payment received. Your group demo class is confirmed."
+    : "Payment received. Your one-to-one demo class is confirmed.",
+  data: { booking: serializeBooking(confirmed) },
+});
   } catch (error) {
     handleError(res, error, "Failed to verify payment.");
   }
