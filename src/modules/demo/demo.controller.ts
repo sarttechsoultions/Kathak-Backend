@@ -171,6 +171,8 @@ function bookingInclude() {
         startsAt: true,
         durationMins: true,
         classMode: true,
+        isPaid: true,
+        price: true,
       },
     },
   } as const;
@@ -184,6 +186,14 @@ export const getPublicDemo = async (_req: Request, res: Response): Promise<void>
       where: { isPublished: true, startsAt: { gte: now } },
       orderBy: { startsAt: "asc" },
       take: 50,
+      include: {
+        course: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+      },
     });
 
     const counts = await Promise.all(sessions.map((session) => countedGroupBookings(session.id)));
@@ -192,7 +202,15 @@ export const getPublicDemo = async (_req: Request, res: Response): Promise<void>
       status: "success",
       data: {
         settings: serializeSettings(settings),
-        sessions: sessions.map((session, index) => serializeSession(session, counts[index])),
+        sessions: sessions.map((session, index) => ({
+          ...serializeSession(session, counts[index]),
+          course: session.course
+            ? {
+                id: session.course.id,
+                title: session.course.title,
+              }
+            : null,
+        })),
       },
     });
   } catch (error) {
@@ -210,106 +228,299 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
     const email = parseEmail(req.body?.email);
     const phone = parsePhone(req.body?.phone);
     const course = asString(req.body?.course, 220);
-    const classMode = parseClassMode(req.body?.classMode);
     const message = asString(req.body?.message, 4000);
 
     if (!fullName || fullName.length < 2) {
       throw new DemoError("Full name is required.");
     }
-    if (!course) {
-      throw new DemoError("Please select a course.");
-    }
 
     if (type === DemoClassType.GROUP) {
       const sessionId = asString(req.body?.sessionId, 80);
+
       if (!sessionId) {
         throw new DemoError("Please select a group demo class.");
       }
 
-      const session = await prisma.demoGroupSession.findUnique({ where: { id: sessionId } });
+      const session = await prisma.demoGroupSession.findUnique({
+        where: { id: sessionId },
+        include: {
+          course: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+        },
+      });
+
       if (!session || !session.isPublished) {
         throw new DemoError("That demo class is no longer available.", 404);
       }
+
+      if (!session.course) {
+        throw new DemoError(
+          "This demo class is not linked to a course. Please contact the academy.",
+          409,
+        );
+      }
+
       if (session.startsAt.getTime() < Date.now()) {
         throw new DemoError("That demo class has already started.");
       }
 
       const bookedCount = await countedGroupBookings(session.id);
+
       if (bookedCount >= session.capacity) {
-        throw new DemoError("This group demo class is full. Please choose another date.");
+        throw new DemoError(
+          "This group demo class is full. Please choose another date.",
+        );
       }
+
+      // IMPORTANT:
+      // For GROUP demos, Course and Class Mode are controlled by Admin
+      // through the selected DemoGroupSession.
+      //
+      // Never trust req.body.course or req.body.classMode here.
+      const groupCourse = session.course.title;
+      const groupClassMode = session.classMode;
+
+      const amount =
+        session.isPaid && session.price ? Math.max(0, session.price) : 0;
+
+      const isFree = amount <= 0;
 
       const booking = await prisma.demoBooking.create({
         data: {
           type,
-          status: DemoBookingStatus.CONFIRMED,
+          status: isFree
+            ? DemoBookingStatus.CONFIRMED
+            : DemoBookingStatus.PENDING,
           fullName,
           email,
           phone,
-          course,
-          classMode,
+
+          // Admin-controlled course
+          course: groupCourse,
+
+          // Admin-controlled class mode
+          classMode: groupClassMode,
+
           message,
           sessionId: session.id,
-          amount: 0,
-          paymentStatus: PaymentStatus.SUCCESS,
+          amount,
+          paymentStatus: isFree
+            ? PaymentStatus.SUCCESS
+            : PaymentStatus.PENDING,
         },
         include: bookingInclude(),
       });
 
-      void sendBookingEmail({
-        fullName: booking.fullName,
-        email: booking.email,
-        type: booking.type,
-        course: booking.course,
-        classMode: booking.classMode,
-        amount: booking.amount,
-        preferredDate: booking.preferredDate,
-        preferredTime: booking.preferredTime,
-        session: booking.session,
+      if (isFree) {
+        void sendBookingEmail({
+          fullName: booking.fullName,
+          email: booking.email,
+          type: booking.type,
+          course: booking.course,
+          classMode: booking.classMode,
+          amount: booking.amount,
+          preferredDate: booking.preferredDate,
+          preferredTime: booking.preferredTime,
+          session: booking.session,
+        });
+
+        res.status(201).json({
+          status: "success",
+          message:
+            "Your group demo class is booked. We will share class details shortly.",
+          data: {
+            booking: serializeBooking(booking),
+            needsPayment: false,
+          },
+        });
+
+        return;
+      }
+
+      if (!env.razorpayKeyId || !env.razorpayKeySecret) {
+        await prisma.demoBooking.update({
+          where: { id: booking.id },
+          data: {
+            paymentStatus: PaymentStatus.FAILED,
+            status: DemoBookingStatus.CANCELLED,
+          },
+        });
+
+        throw new DemoError(
+          "Payment is temporarily unavailable. Please try again later.",
+          500,
+        );
+      }
+
+      const razorpay = new Razorpay({
+        key_id: env.razorpayKeyId,
+        key_secret: env.razorpayKeySecret,
+      });
+
+      const order = await razorpay.orders.create({
+        amount: Math.round(amount * 100),
+        currency: "INR",
+        receipt: `demo_${booking.id.replace(/-/g, "").slice(0, 20)}`,
+        notes: {
+          demoBookingId: booking.id,
+          type: "GROUP",
+        },
+      });
+
+      await prisma.demoBooking.update({
+        where: { id: booking.id },
+        data: {
+          razorpayOrderId: order.id,
+        },
       });
 
       res.status(201).json({
         status: "success",
-        message: "Your group demo class is booked. We will share class details shortly.",
-        data: { booking: serializeBooking(booking), needsPayment: false },
+        message: "Complete payment to confirm your group demo class.",
+        data: {
+          booking: serializeBooking(booking),
+          needsPayment: true,
+          order: {
+            bookingId: booking.id,
+            orderId: order.id,
+            amount: order.amount,
+            currency: order.currency,
+            keyId: env.razorpayKeyId,
+          },
+        },
       });
+
       return;
     }
 
+    // ---------------------------------------------------------
+    // ONE_TO_ONE
+    // ---------------------------------------------------------
+
     if (!settings.isOneToOneEnabled) {
-      throw new DemoError("One-to-one demo classes are currently unavailable.");
+      throw new DemoError(
+        "One-to-one demo classes are currently unavailable.",
+      );
     }
+
+    if (!course) {
+      throw new DemoError("Please select a course.");
+    }
+
+    const classMode = parseClassMode(req.body?.classMode);
 
     const preferredDateRaw = asString(req.body?.preferredDate, 20);
     const preferredTime = parseTime(req.body?.preferredTime);
-    const preferredDate = istDateTimeToUtc(preferredDateRaw, preferredTime);
+    const preferredDate = istDateTimeToUtc(
+      preferredDateRaw,
+      preferredTime,
+    );
+
     if (!preferredDate) {
-      throw new DemoError("Please choose a date and time for your one-to-one class.");
+      throw new DemoError(
+        "Please choose a date and time for your one-to-one class.",
+      );
     }
+
     if (preferredDate.getTime() < Date.now() - 60_000) {
       throw new DemoError("Please choose a future date and time.");
     }
 
     const amount = Math.max(0, settings.oneToOneFeeINR);
     const isFree = amount <= 0;
+    const durationMins = settings.oneToOneDurationMins;
 
-    const booking = await prisma.demoBooking.create({
-      data: {
-        type,
-        status: isFree ? DemoBookingStatus.CONFIRMED : DemoBookingStatus.PENDING,
-        fullName,
-        email,
-        phone,
-        course,
-        classMode,
-        message,
-        preferredDate,
-        preferredTime,
-        amount,
-        paymentStatus: isFree ? PaymentStatus.SUCCESS : PaymentStatus.PENDING,
-      },
-      include: bookingInclude(),
+    const bookingResult = await prisma.$transaction(async (tx) => {
+      // 1. Lock the DemoSettings row to serialize concurrent ONE_TO_ONE bookings
+      await tx.$queryRaw`
+        SELECT id
+        FROM "DemoSettings"
+        WHERE id = 'default'
+        FOR UPDATE
+      `;
+
+      const requestedStart = preferredDate;
+      const requestedEnd = new Date(
+        requestedStart.getTime() + durationMins * 60_000,
+      );
+
+      // 2. Check Teacher Commitments (LiveClass overlap)
+      const conflictingClass = await tx.liveClass.findFirst({
+        where: {
+          status: { not: "CANCELLED" },
+          OR: [
+            {
+              scheduledStart: { lt: requestedEnd },
+              scheduledEnd: { gt: requestedStart },
+            },
+          ],
+        },
+      });
+
+      if (conflictingClass) {
+        throw new DemoError(
+          "The selected time conflicts with a scheduled class. Please choose another time.",
+        );
+      }
+
+      // 3. Check DemoBookings (Confirmed or Recent Pending overlap)
+      const recentPendingCutoff = new Date(
+        Date.now() - 15 * 60_000,
+      );
+
+      const conflictingDemo = await tx.demoBooking.findFirst({
+        where: {
+          type: DemoClassType.ONE_TO_ONE,
+          OR: [
+            { status: DemoBookingStatus.CONFIRMED },
+            {
+              status: DemoBookingStatus.PENDING,
+              createdAt: { gt: recentPendingCutoff },
+            },
+          ],
+          preferredDate: {
+            lt: requestedEnd,
+            gte: new Date(
+              requestedStart.getTime() - durationMins * 60_000,
+            ),
+          },
+        },
+      });
+
+      if (conflictingDemo) {
+        throw new DemoError(
+          "The selected time is already booked. Please choose another time.",
+        );
+      }
+
+      return tx.demoBooking.create({
+        data: {
+          type,
+          status: isFree
+            ? DemoBookingStatus.CONFIRMED
+            : DemoBookingStatus.PENDING,
+          fullName,
+          email,
+          phone,
+          course,
+          classMode,
+          message,
+          preferredDate,
+          preferredTime,
+          amount,
+          paymentStatus: isFree
+            ? PaymentStatus.SUCCESS
+            : PaymentStatus.PENDING,
+        },
+        include: bookingInclude(),
+      });
     });
+
+    const booking = bookingResult;
 
     if (isFree) {
       void sendBookingEmail({
@@ -326,18 +537,30 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
 
       res.status(201).json({
         status: "success",
-        message: "Your one-to-one demo request is booked. We will confirm shortly.",
-        data: { booking: serializeBooking(booking), needsPayment: false },
+        message:
+          "Your one-to-one demo request is booked. We will confirm shortly.",
+        data: {
+          booking: serializeBooking(booking),
+          needsPayment: false,
+        },
       });
+
       return;
     }
 
     if (!env.razorpayKeyId || !env.razorpayKeySecret) {
       await prisma.demoBooking.update({
         where: { id: booking.id },
-        data: { paymentStatus: PaymentStatus.FAILED, status: DemoBookingStatus.CANCELLED },
+        data: {
+          paymentStatus: PaymentStatus.FAILED,
+          status: DemoBookingStatus.CANCELLED,
+        },
       });
-      throw new DemoError("Payment is temporarily unavailable. Please try again later.", 500);
+
+      throw new DemoError(
+        "Payment is temporarily unavailable. Please try again later.",
+        500,
+      );
     }
 
     const razorpay = new Razorpay({
@@ -357,12 +580,15 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
 
     await prisma.demoBooking.update({
       where: { id: booking.id },
-      data: { razorpayOrderId: order.id },
+      data: {
+        razorpayOrderId: order.id,
+      },
     });
 
     res.status(201).json({
       status: "success",
-      message: "Complete payment to confirm your one-to-one demo class.",
+      message:
+        "Complete payment to confirm your one-to-one demo class.",
       data: {
         booking: serializeBooking(booking),
         needsPayment: true,
@@ -376,7 +602,11 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
       },
     });
   } catch (error) {
-    handleError(res, error, "Failed to book demo class. Please try again.");
+    handleError(
+      res,
+      error,
+      "Failed to book demo class. Please try again.",
+    );
   }
 };
 
@@ -455,12 +685,21 @@ export const verifyPublicDemoPayment = async (req: Request, res: Response): Prom
       throw new DemoError("Booking order not found.", 404);
     }
 
-    const confirmed = await markDemoPaid(booking.id, razorpayOrderId, razorpayPaymentId);
-    res.status(200).json({
-      status: "success",
-      message: "Payment received. Your one-to-one demo class is confirmed.",
-      data: { booking: serializeBooking(confirmed) },
-    });
+const confirmed = await markDemoPaid(
+  booking.id,
+  razorpayOrderId,
+  razorpayPaymentId,
+);
+
+const isGroup = confirmed.type === "GROUP";
+
+res.status(200).json({
+  status: "success",
+  message: isGroup
+    ? "Payment received. Your group demo class is confirmed."
+    : "Payment received. Your one-to-one demo class is confirmed.",
+  data: { booking: serializeBooking(confirmed) },
+});
   } catch (error) {
     handleError(res, error, "Failed to verify payment.");
   }
@@ -527,11 +766,29 @@ export const getAdminDemoSessions = async (_req: Request, res: Response): Promis
   try {
     const sessions = await prisma.demoGroupSession.findMany({
       orderBy: { startsAt: "desc" },
+      include: {
+        course: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+      },
     });
     const counts = await Promise.all(sessions.map((session) => countedGroupBookings(session.id)));
     res.status(200).json({
       status: "success",
-      data: { sessions: sessions.map((session, index) => serializeSession(session, counts[index])) },
+      data: {
+        sessions: sessions.map((session, index) => ({
+          ...serializeSession(session, counts[index]),
+          course: session.course
+            ? {
+                id: session.course.id,
+                title: session.course.title,
+              }
+            : null,
+        })),
+      },
     });
   } catch (error) {
     handleError(res, error, "Failed to load demo sessions.");
@@ -545,9 +802,14 @@ function parseSessionBody(body: Record<string, unknown>, partial = false) {
   const classMode = asString(body.classMode, 40) || "Online";
   const location = body.location !== undefined ? asString(body.location, 300) : undefined;
   const notes = body.notes !== undefined ? asString(body.notes, 2000) : undefined;
+  const courseId = body.courseId !== undefined ? asString(body.courseId, 120) : undefined;
 
   if (!partial && !title) {
     throw new DemoError("Session title is required.");
+  }
+
+  if (!partial && !courseId) {
+    throw new DemoError("Please select a course for the group demo class.");
   }
 
   let startsAt: Date | undefined;
@@ -564,6 +826,7 @@ function parseSessionBody(body: Record<string, unknown>, partial = false) {
 
   return {
     title: title || undefined,
+    courseId: courseId || undefined,
     startsAt,
     durationMins: body.durationMins !== undefined ? asPositiveInt(body.durationMins, 60, 15, 240) : undefined,
     classMode: CLASS_MODES.has(classMode) ? classMode : undefined,
@@ -571,15 +834,28 @@ function parseSessionBody(body: Record<string, unknown>, partial = false) {
     location,
     notes,
     isPublished: body.isPublished !== undefined ? asBoolean(body.isPublished, true) : undefined,
+    isPaid: body.isPaid !== undefined ? asBoolean(body.isPaid, false) : undefined,
+    price: body.price !== undefined ? asPositiveNumber(body.price, 0) : undefined,
   };
 }
 
 export const createAdminDemoSession = async (req: Request, res: Response): Promise<void> => {
   try {
     const parsed = parseSessionBody(req.body || {}, false);
+
+    const course = await prisma.course.findUnique({
+      where: { id: parsed.courseId! },
+      select: { id: true, title: true },
+    });
+
+    if (!course) {
+      throw new DemoError("Selected course was not found.", 404);
+    }
+
     const created = await prisma.demoGroupSession.create({
       data: {
         title: parsed.title!,
+        courseId: course.id,
         startsAt: parsed.startsAt!,
         durationMins: parsed.durationMins ?? 60,
         classMode: parsed.classMode || "Online",
@@ -587,12 +863,30 @@ export const createAdminDemoSession = async (req: Request, res: Response): Promi
         location: parsed.location ?? "",
         notes: parsed.notes ?? "",
         isPublished: parsed.isPublished ?? true,
+        isPaid: parsed.isPaid ?? false,
+        price: parsed.price ?? 0,
+      },
+      include: {
+        course: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
       },
     });
     res.status(201).json({
       status: "success",
       message: "Group demo class created.",
-      data: serializeSession(created, 0),
+      data: {
+        ...serializeSession(created, 0),
+        course: created.course
+          ? {
+              id: created.course.id,
+              title: created.course.title,
+            }
+          : null,
+      },
     });
   } catch (error) {
     handleError(res, error, "Failed to create demo session.");
@@ -607,10 +901,23 @@ export const updateAdminDemoSession = async (req: Request, res: Response): Promi
       throw new DemoError("Demo session not found.", 404);
     }
     const parsed = parseSessionBody(req.body || {}, true);
+
+    if (parsed.courseId) {
+      const course = await prisma.course.findUnique({
+        where: { id: parsed.courseId },
+        select: { id: true },
+      });
+
+      if (!course) {
+        throw new DemoError("Selected course was not found.", 404);
+      }
+    }
+
     const updated = await prisma.demoGroupSession.update({
       where: { id },
       data: {
         title: parsed.title,
+        courseId: parsed.courseId,
         startsAt: parsed.startsAt,
         durationMins: parsed.durationMins,
         classMode: parsed.classMode,
@@ -618,10 +925,32 @@ export const updateAdminDemoSession = async (req: Request, res: Response): Promi
         location: parsed.location,
         notes: parsed.notes,
         isPublished: parsed.isPublished,
+        isPaid: parsed.isPaid,
+        price: parsed.price,
+      },
+      include: {
+        course: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
       },
     });
+
     const bookedCount = await countedGroupBookings(updated.id);
-    res.status(200).json({ status: "success", data: serializeSession(updated, bookedCount) });
+    res.status(200).json({
+      status: "success",
+      data: {
+        ...serializeSession(updated, bookedCount),
+        course: updated.course
+          ? {
+              id: updated.course.id,
+              title: updated.course.title,
+            }
+          : null,
+      },
+    });
   } catch (error) {
     handleError(res, error, "Failed to update demo session.");
   }

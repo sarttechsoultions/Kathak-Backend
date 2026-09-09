@@ -18,6 +18,8 @@ import { teacherOwnsBatch } from "../../lib/teacherBatchAccess";
 import { createNotification } from "../notification/notification.controller";
 import { agoraKeyReady, buildAgoraToken, numericUidFromString } from "./agoraToken";
 
+const attendanceLock = new Set<string>();
+
 const serialise = (liveClass: any, extras?: Record<string, unknown>) => ({
   ...liveClass,
   batchName: liveClass.batch?.name,
@@ -514,20 +516,25 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
     }
   }
 
-  // A class becomes live at its scheduled start, even if the teacher
-  // has not joined yet, so enrolled students can enter on time.
-  if (liveClass.status === "SCHEDULED" && now >= liveClass.scheduledStart) {
-    liveClass = await prisma.liveClass.update({
-      where: { id: liveClass.id },
-      data: { status: "LIVE" },
-      include: { batch: true },
-    });
-    broadcastClass(liveClass);
+  // Students can join 10 minutes early
+  if (liveClass.status === "SCHEDULED" && !isTeacher && !isAdmin) {
+    const earlyAccessTime = new Date(liveClass.scheduledStart.getTime() - 10 * 60 * 1000);
+    if (now < earlyAccessTime) {
+      res.status(403).json({ status: "error", message: "You can enter the waiting room up to 10 minutes before the class starts." });
+      return;
+    }
   }
 
-  if (liveClass.status === "SCHEDULED" && !isTeacher && !isAdmin) {
-    res.status(403).json({ status: "error", message: "The class has not started yet." });
-    return;
+  // A class becomes live at its scheduled start
+  if (liveClass.status === "SCHEDULED" && now >= liveClass.scheduledStart) {
+    const updated = await prisma.liveClass.updateMany({
+      where: { id: liveClass.id, status: "SCHEDULED" },
+      data: { status: "LIVE" },
+    });
+    if (updated.count > 0) {
+      liveClass.status = "LIVE";
+      broadcastClass(liveClass);
+    }
   }
 
   const agoraClientRole: "publisher" | "subscriber" = "publisher";
@@ -546,29 +553,39 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const existingAttendance = await prisma.attendance.findFirst({
-      where: {
-        studentId: user.id,
-        batchId: liveClass.batchId,
-        date: { gte: today },
-        session: liveClass.title,
-      },
-    });
+    const lockKey = `${user.id}-${liveClass.batchId}-${liveClass.title}-${today.getTime()}`;
+    
+    if (!attendanceLock.has(lockKey)) {
+      attendanceLock.add(lockKey);
+      
+      try {
+        const existingAttendance = await prisma.attendance.findFirst({
+          where: {
+            studentId: user.id,
+            batchId: liveClass.batchId,
+            date: { gte: today },
+            session: liveClass.title,
+          },
+        });
 
-    if (!existingAttendance) {
-      const startDiffMinutes = (now.getTime() - liveClass.scheduledStart.getTime()) / (1000 * 60);
-      await prisma.attendance.create({
-        data: {
-          studentId: user.id,
-          studentName: displayName,
-          batchId: liveClass.batchId,
-          batchName: liveClass.batch.name,
-          session: liveClass.title,
-          status: startDiffMinutes > 15 ? "LATE" : "PRESENT",
-          date: new Date(),
-          remarks: `Auto-marked: Joined live class.`,
-        },
-      });
+        if (!existingAttendance) {
+          const startDiffMinutes = (now.getTime() - liveClass.scheduledStart.getTime()) / (1000 * 60);
+          await prisma.attendance.create({
+            data: {
+              studentId: user.id,
+              studentName: displayName,
+              batchId: liveClass.batchId,
+              batchName: liveClass.batch.name,
+              session: liveClass.title,
+              status: startDiffMinutes > 15 ? "LATE" : "PRESENT",
+              date: new Date(),
+              remarks: `Auto-marked: Joined live class.`,
+            },
+          });
+        }
+      } finally {
+        attendanceLock.delete(lockKey);
+      }
     }
   }
 

@@ -30,6 +30,7 @@ import { notificationRoutes } from "./modules/notification/notification.routes";
 import paymentRoutes from "./modules/payment/payment.routes";
 import attendanceRoutes from "./modules/attendance/attendance.routes"; 
 import mediaRoutes from "./modules/media/media.routes";
+import rescheduleRoutes from "./modules/reschedule/reschedule.routes";
 import {
   getCourses,
   createCourse,
@@ -143,6 +144,7 @@ app.use("/api/v1/student/exams", studentExamRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/payment", paymentRoutes);
 app.use("/api/v1/attendance", attendanceRoutes); // Attendance routes
+app.use("/api/v1/reschedule", rescheduleRoutes);
 // Public & Universal Module Route Aliases
 app.get("/api/v1/courses", getCourses);
 app.post("/api/v1/courses", authenticate, createCourse);

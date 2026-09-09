@@ -14,6 +14,8 @@ import {
 } from "../../lib/liveClassAccess";
 import { teacherOwnsBatch } from "../../lib/teacherBatchAccess";
 
+const attendanceLock = new Set<string>();
+
 type ChatMessage = {
   id: string;
   senderName: string;
@@ -122,11 +124,11 @@ async function assertLiveClassRoomAccess(
   }
 
   if (user.role === Role.STUDENT) {
-    if (
-      liveClass.status !== "LIVE" &&
-      new Date() < liveClass.scheduledStart
-    ) {
-      throw new Error("This class has not started yet.");
+    if (liveClass.status !== "LIVE" && new Date() < liveClass.scheduledStart) {
+      const earlyAccessTime = new Date(liveClass.scheduledStart.getTime() - 10 * 60 * 1000);
+      if (new Date() < earlyAccessTime) {
+        throw new Error("This class has not started yet.");
+      }
     }
 
     const membership = await prisma.batchStudent.findFirst({
@@ -491,46 +493,42 @@ export function registerLiveClassSocket(io: Server) {
             try {
               const todayStart = new Date();
               todayStart.setHours(0, 0, 0, 0);
-
               const todayEnd = new Date();
               todayEnd.setHours(23, 59, 59, 999);
 
-              const existingAttendance =
-                await prisma.attendance.findFirst({
-                  where: {
-                    studentId: authUser.id,
-                    batchName: "Teacher/Staff",
-                    batchId: liveClass.batchId,
-                    date: {
-                      gte: todayStart,
-                      lte: todayEnd,
+              const lockKey = `${authUser.id}-${liveClass.batchId}-${liveClass.title}-${todayStart.getTime()}`;
+
+              if (!attendanceLock.has(lockKey)) {
+                attendanceLock.add(lockKey);
+                try {
+                  const existingAttendance = await prisma.attendance.findFirst({
+                    where: {
+                      studentId: authUser.id,
+                      batchName: "Teacher/Staff",
+                      batchId: liveClass.batchId,
+                      date: { gte: todayStart, lte: todayEnd },
+                      session: liveClass.title,
                     },
-                    session: liveClass.title,
-                  },
-                });
+                  });
 
-              if (!existingAttendance) {
-                const startDiffMinutes =
-                  (joinTime.getTime() -
-                    liveClass.scheduledStart.getTime()) /
-                  (1000 * 60);
-
-                await prisma.attendance.create({
-                  data: {
-                    studentId: authUser.id,
-                    studentName: userName,
-                    batchId: liveClass.batchId,
-                    batchName: "Teacher/Staff",
-                    session: liveClass.title,
-                    status:
-                      startDiffMinutes > 15
-                        ? "LATE"
-                        : "PRESENT",
-                    date: joinTime,
-                    remarks:
-                      "Auto-marked: Joined live class.",
-                  },
-                });
+                  if (!existingAttendance) {
+                    const startDiffMinutes = (joinTime.getTime() - liveClass.scheduledStart.getTime()) / (1000 * 60);
+                    await prisma.attendance.create({
+                      data: {
+                        studentId: authUser.id,
+                        studentName: userName,
+                        batchId: liveClass.batchId,
+                        batchName: "Teacher/Staff",
+                        session: liveClass.title,
+                        status: startDiffMinutes > 15 ? "LATE" : "PRESENT",
+                        date: joinTime,
+                        remarks: "Auto-marked: Joined live class.",
+                      },
+                    });
+                  }
+                } finally {
+                  attendanceLock.delete(lockKey);
+                }
               }
             } catch (err) {
               console.error(
@@ -618,51 +616,39 @@ export function registerLiveClassSocket(io: Server) {
           );
 
           /**
-           * If teacher/admin joins a scheduled class,
+           * If teacher/admin joins a scheduled class at or after scheduled start,
            * automatically transition it to LIVE.
            */
           if (
             isHostRole(userRole) &&
-            liveClass.status ===
-              "SCHEDULED"
+            liveClass.status === "SCHEDULED" &&
+            new Date() >= liveClass.scheduledStart
           ) {
-            const updated =
-              await prisma.liveClass.update({
-                where: {
-                  id: liveClass.id,
-                },
-                data: {
-                  status: "LIVE",
-                },
+            const updatedList = await prisma.liveClass.updateMany({
+              where: { id: liveClass.id, status: "SCHEDULED" },
+              data: { status: "LIVE" },
+            });
+
+            if (updatedList.count > 0) {
+              const updated = await prisma.liveClass.findUnique({
+                where: { id: liveClass.id },
                 include: {
                   batch: {
-                    select: {
-                      name: true,
-                      code: true,
-                      courseName: true,
-                      teacherId: true,
-                    },
+                    select: { name: true, code: true, courseName: true, teacherId: true },
                   },
                 },
               });
 
-            io.to(roomName).emit(
-              "liveclass:status-changed",
-              "LIVE"
-            );
-
-            io.emit(
-              "liveclass:class-updated",
-              {
-                ...updated,
-                batchName:
-                  updated.batch.name,
-                batchCode:
-                  updated.batch.code,
-                courseName:
-                  updated.batch.courseName,
+              if (updated) {
+                io.to(roomName).emit("liveclass:status-changed", "LIVE");
+                io.emit("liveclass:class-updated", {
+                  ...updated,
+                  batchName: updated.batch.name,
+                  batchCode: updated.batch.code,
+                  courseName: updated.batch.courseName,
+                });
               }
-            );
+            }
           }
         } catch (error) {
           socket.emit(
@@ -891,18 +877,19 @@ export function registerLiveClassSocket(io: Server) {
                   }
                 );
 
-              await prisma.attendance.update(
-                {
-                  where: {
-                    id:
-                      existingAttendance.id,
-                  },
-                  data: {
-                    remarks:
-                      `Auto-marked: Joined at ${joinTimeString}, Left at ${leaveTimeString} (${durationMinutes} mins attended).`,
-                  },
-                }
-              );
+              const sessionRemark = `Joined at ${joinTimeString}, Left at ${leaveTimeString} (${durationMinutes} mins)`;
+              const existingRemarks = existingAttendance.remarks || "";
+              // Prevent exact duplicates if somehow triggered twice
+              if (!existingRemarks.includes(sessionRemark)) {
+                const newRemarks = existingRemarks && existingRemarks !== "Auto-marked: Joined live class."
+                  ? `${existingRemarks} | ${sessionRemark}`
+                  : `Auto-marked: ${sessionRemark}`;
+
+                await prisma.attendance.update({
+                  where: { id: existingAttendance.id },
+                  data: { remarks: newRemarks },
+                });
+              }
             }
           }
         } catch (err) {
@@ -1523,6 +1510,26 @@ export function registerLiveClassSocket(io: Server) {
           ];
 
           changed = true;
+        }
+      }
+
+      // Check if ANY socket is in participantJoinTimes/messageRateLimit but not in any active room
+      // Wait, those are scoped to socket.id. If they aren't in ANY active liveRoom, they are orphaned.
+      const allActiveSocketIds = new Set<string>();
+      for (const room of io.sockets.adapter.rooms.values()) {
+        for (const sid of room) {
+          allActiveSocketIds.add(sid);
+        }
+      }
+
+      for (const sid of Object.keys(participantJoinTimes)) {
+        if (!allActiveSocketIds.has(sid)) {
+          delete participantJoinTimes[sid];
+        }
+      }
+      for (const sid of Object.keys(messageRateLimit)) {
+        if (!allActiveSocketIds.has(sid)) {
+          delete messageRateLimit[sid];
         }
       }
 

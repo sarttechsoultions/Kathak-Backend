@@ -89,6 +89,8 @@ export function serializeSession(
     location: string;
     notes: string;
     isPublished: boolean;
+    isPaid: boolean;
+    price: number | null;
     createdAt: Date;
     updatedAt: Date;
   },
@@ -110,6 +112,8 @@ export function serializeSession(
     location: session.location,
     notes: session.notes,
     isPublished: session.isPublished,
+    isPaid: session.isPaid,
+    price: session.price,
     createdAt: session.createdAt.toISOString(),
     updatedAt: session.updatedAt.toISOString(),
   };
