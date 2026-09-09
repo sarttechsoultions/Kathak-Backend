@@ -274,50 +274,11 @@ const batchLevelFromCourse = (
 const findDefaultOneToOneTeacher = async (
   tx: Prisma.TransactionClient
 ) => {
-  const harshita = await tx.user.findFirst({
-    where: {
-      role: Role.TEACHER,
-      isActive: true,
-      OR: [
-        {
-          fullName: {
-            contains: "Harshita",
-            mode: "insensitive",
-          },
-        },
-        {
-          fullName: {
-            contains: "Harsita",
-            mode: "insensitive",
-          },
-        },
-        {
-          email: {
-            contains: "harshita",
-            mode: "insensitive",
-          },
-        },
-        {
-          email: {
-            contains: "harsita",
-            mode: "insensitive",
-          },
-        },
-      ],
-    },
-    orderBy: {
-      createdAt: "asc",
-    },
-  });
-
-  if (harshita) {
-    return harshita;
-  }
-
   return tx.user.findFirst({
     where: {
       role: Role.TEACHER,
       isActive: true,
+      email: "kathakbyharshita@gmail.com",
     },
     orderBy: {
       createdAt: "asc",

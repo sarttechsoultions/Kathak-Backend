@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "DemoGroupSession" ADD COLUMN "isPaid" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "DemoGroupSession" ADD COLUMN "price" DOUBLE PRECISION DEFAULT 0;

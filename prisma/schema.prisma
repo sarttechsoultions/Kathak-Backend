@@ -70,6 +70,8 @@ model User {
   recordedClassViews         RecordedClassView[]
   uploadedStudentCornerItems StudentCornerItem[]      @relation("UploadedStudentCornerItems")
   permissions                TeacherPermission[]
+  rescheduleRequestsAsStudent ClassRescheduleRequest[] @relation("RescheduleStudent")
+  rescheduleRequestsAsTeacher ClassRescheduleRequest[] @relation("RescheduleTeacher")
 }
 
 model TeacherPermission {
@@ -105,18 +107,20 @@ model Course {
   intro                String?
   marketingCategory    String          @default("beginners")
   showExam             Boolean         @default(true)
-  showOnHome           Boolean         @default(true)
-  // ── Payment Configuration ──
+  showOnHome            Boolean         @default(true)
+
   joiningFeeINR        Float           @default(1100)
   bulkDiscountTiers    Json            @default(dbgenerated("'[]'::jsonb"))
   autoPayEnabled       Boolean         @default(true)
   courseDurationMonths Int             @default(0)
+
   batches              Batch[]
   enrollments          Enrollment[]
   exams                Exam[]
   lessons              Lesson[]
   monthlyDues          MonthlyDue[]
   recordedClasses      RecordedClass[]
+  demoGroupSessions    DemoGroupSession[]
 }
 
 model Lesson {
@@ -156,6 +160,7 @@ model Batch {
   exams            Exam[]
   liveClasses      LiveClass[]
   recordedClasses  RecordedClass[]
+  rescheduleRequests ClassRescheduleRequest[]
 }
 
 model RecordedClass {
@@ -355,6 +360,7 @@ model LiveClass {
   updatedAt      DateTime               @updatedAt
   batch          Batch                  @relation(fields: [batchId], references: [id], onDelete: Cascade)
   chatMessages   LiveClassChatMessage[]
+  rescheduleRequests ClassRescheduleRequest[]
 
   @@index([batchId, scheduledStart])
 }
@@ -775,12 +781,19 @@ model DemoGroupSession {
   location     String        @default("")
   notes        String        @default("")
   isPublished  Boolean       @default(true)
+  isPaid       Boolean       @default(false)
+  price        Float?        @default(0)
+
+  courseId     String?
+  course       Course?       @relation(fields: [courseId], references: [id])
+
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   bookings     DemoBooking[]
 
   @@index([startsAt])
   @@index([isPublished])
+  @@index([courseId])
 }
 
 model DemoBooking {
@@ -1096,4 +1109,40 @@ enum DemoBookingStatus {
 enum StudentCornerKind {
   MESSAGE
   VIDEO
+}
+
+enum RescheduleStatus {
+  PENDING_TEACHER
+  TEACHER_APPROVED
+  TEACHER_REJECTED
+  RESCHEDULED
+  ADMIN_REJECTED
+  CANCELLED
+}
+
+model ClassRescheduleRequest {
+  id              String           @id @default(uuid())
+  liveClassId     String
+  studentId       String
+  teacherId       String
+  batchId         String
+  originalDate    DateTime
+  requestedDate   DateTime
+  reason          String?
+  status          RescheduleStatus @default(PENDING_TEACHER)
+  monthlyPeriod   String           // Format: "YYYY-MM" (based on original class start date)
+  teacherResponse String?
+  adminNotes      String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  liveClass       LiveClass @relation(fields: [liveClassId], references: [id])
+  student         User      @relation("RescheduleStudent", fields: [studentId], references: [id])
+  teacher         User      @relation("RescheduleTeacher", fields: [teacherId], references: [id])
+  batch           Batch     @relation(fields: [batchId], references: [id])
+
+  @@index([studentId, monthlyPeriod])
+  @@index([liveClassId])
+  @@index([teacherId])
+  @@index([status])
 }
