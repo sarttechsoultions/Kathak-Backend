@@ -9,69 +9,72 @@ datasource db {
 }
 
 model User {
-  id                         String                   @id @default(uuid())
-  fullName                   String
-  email                      String                   @unique
-  phone                      String                   @unique
-  passwordHash               String
-  role                       Role                     @default(STUDENT)
-  avatarUrl                  String?
-  country                    String                   @default("India")
-  countryCode                String?
-  address                    String?
-  dob                        DateTime?
-  gender                     String?
-  city                       String?
-  region                     String?
-  postalCode                 String?
-  skillLevel                 String?
-  joiningDate                DateTime?
-  isUnder18                  Boolean                  @default(false)
-  guardianName               String?
-  relationship               String?
-  emergencyContact           String?
-  paymentMethod              String?
-  maritalStatus              String?
-  nationality                String?                  @default("Indian")
-  languagesKnown             String?
-  bankDetails                String[]                 @default([])
-  bankAccounts               Json[]                   @default([])
-  idProofType                String?
-  idProofUrl                 String?
-  documents                  Json[]                   @default([])
-  notificationPrefs          Json?
-  designation                String?
-  primaryExpertise           String?
-  salaryRate                 String?
-  isActive                   Boolean                  @default(true)
-  createdAt                  DateTime                 @default(now())
-  updatedAt                  DateTime                 @updatedAt
-  assignmentSubmissions      AssignmentSubmission[]
-  attendances                Attendance[]
-  batchesAsTeacher           Batch[]                  @relation("BatchTeacher")
-  batchMemberships           BatchStudent[]
-  competitionParticipations  CompetitionParticipant[] @relation("CompetitionParticipant")
-  uploadedResources          ContentResource[]        @relation("UploadedResources")
-  enrollments                Enrollment[]
-  createdEvents              Event[]                  @relation("EventCreator")
-  eventsAsInstructor         Event[]                  @relation("EventInstructor")
-  eventRegistrations         EventRegistration[]
-  createdExams               Exam[]
-  examResults                ExamResult[]
-  uploadedGalleryItems       GalleryItem[]            @relation("UploadedGalleryItems")
-  updatedHeroBanners         HeroBanner[]             @relation("UpdatedHeroBanners")
-  inquiries                  Inquiry[]
-  updatedLeadPopups          LeadPopup[]              @relation("UpdatedLeadPopups")
-  leaveRequests              LeaveRequest[]
-  createdLetterheads         Letterhead[]             @relation("CreatedLetterheads")
-  notifications              Notification[]
-  payments                   Payment[]
-  monthlyDues                MonthlyDue[]
-  recordedClassViews         RecordedClassView[]
-  uploadedStudentCornerItems StudentCornerItem[]      @relation("UploadedStudentCornerItems")
-  permissions                TeacherPermission[]
+  id                          String                   @id @default(uuid())
+  fullName                    String
+  email                       String                   @unique
+  phone                       String                   @unique
+  passwordHash                String
+  role                        Role                     @default(STUDENT)
+  avatarUrl                   String?
+  country                     String                   @default("India")
+  countryCode                 String?
+  address                     String?
+  dob                         DateTime?
+  gender                      String?
+  city                        String?
+  region                      String?
+  postalCode                  String?
+  skillLevel                  String?
+  joiningDate                 DateTime?
+  isUnder18                   Boolean                  @default(false)
+  guardianName                String?
+  relationship                String?
+  emergencyContact            String?
+  paymentMethod               String?
+  maritalStatus               String?
+  nationality                 String?                  @default("Indian")
+  languagesKnown              String?
+  bankDetails                 String[]                 @default([])
+  bankAccounts                Json[]                   @default([])
+  idProofType                 String?
+  idProofUrl                  String?
+  documents                   Json[]                   @default([])
+  notificationPrefs           Json?
+  designation                 String?
+  primaryExpertise            String?
+  salaryRate                  String?
+  isActive                    Boolean                  @default(true)
+  createdAt                   DateTime                 @default(now())
+  updatedAt                   DateTime                 @updatedAt
+  assignmentSubmissions       AssignmentSubmission[]
+  attendances                 Attendance[]
+  batchesAsTeacher            Batch[]                  @relation("BatchTeacher")
+  batchMemberships            BatchStudent[]
+  competitionParticipations   CompetitionParticipant[] @relation("CompetitionParticipant")
+  uploadedResources           ContentResource[]        @relation("UploadedResources")
+  enrollments                 Enrollment[]
+  createdEvents               Event[]                  @relation("EventCreator")
+  eventsAsInstructor          Event[]                  @relation("EventInstructor")
+  eventRegistrations          EventRegistration[]
+  createdExams                Exam[]
+  examResults                 ExamResult[]
+  uploadedGalleryItems        GalleryItem[]            @relation("UploadedGalleryItems")
+  updatedHeroBanners          HeroBanner[]             @relation("UpdatedHeroBanners")
+  inquiries                   Inquiry[]
+  updatedLeadPopups           LeadPopup[]              @relation("UpdatedLeadPopups")
+  leaveRequests               LeaveRequest[]
+  createdLetterheads          Letterhead[]             @relation("CreatedLetterheads")
+  notifications               Notification[]
+  payments                    Payment[]
+  monthlyDues                 MonthlyDue[]
+  invoices                    Invoice[]
+  recordedClassViews          RecordedClassView[]
+  uploadedStudentCornerItems  StudentCornerItem[]      @relation("UploadedStudentCornerItems")
+  permissions                 TeacherPermission[]
   rescheduleRequestsAsStudent ClassRescheduleRequest[] @relation("RescheduleStudent")
   rescheduleRequestsAsTeacher ClassRescheduleRequest[] @relation("RescheduleTeacher")
+  accessUnlocksReceived       TemporaryAccessUnlock[]  @relation("StudentAccessUnlocks")
+  accessUnlocksGranted        TemporaryAccessUnlock[]  @relation("AdminGrantedUnlocks")
 }
 
 model TeacherPermission {
@@ -84,43 +87,46 @@ model TeacherPermission {
 }
 
 model Course {
-  id                   String          @id @default(uuid())
+  id                   String         @id @default(uuid())
   title                String
-  slug                 String          @unique
+  slug                 String         @unique
   description          String
   thumbnail            String?
   videoUrl             String?
-  category             CourseCategory  @default(BASIC)
+  category             CourseCategory @default(BASIC)
   groupFeeINR          Float
   groupFeeUSD          Float
   groupClassesCount    String
   oneToOneFeeINR       Float
   oneToOneFeeUSD       Float
   oneToOneClassesCount String
-  badgeBgColor         String          @default("#76D7C4")
-  borderColor          String          @default("border-[#76D7C4]")
-  published            Boolean         @default(true)
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
-  aliases              String[]        @default([])
-  homepageSortOrder    Int             @default(0)
+  badgeBgColor         String         @default("#76D7C4")
+  borderColor          String         @default("border-[#76D7C4]")
+  published            Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  aliases              String[]       @default([])
+  homepageSortOrder    Int            @default(0)
   intro                String?
-  marketingCategory    String          @default("beginners")
-  showExam             Boolean         @default(true)
-  showOnHome            Boolean         @default(true)
+  marketingCategory    String         @default("beginners")
+  showExam             Boolean        @default(true)
+  showOnHome           Boolean        @default(true)
 
-  joiningFeeINR        Float           @default(1100)
-  bulkDiscountTiers    Json            @default(dbgenerated("'[]'::jsonb"))
-  autoPayEnabled       Boolean         @default(true)
-  courseDurationMonths Int             @default(0)
+  joiningFeeINR        Float     @default(1100)
+  joiningFeeUSD        Float?
+  usdInrRate           Float?
+  usdCalculatedAt      DateTime?
+  bulkDiscountTiers    Json      @default(dbgenerated("'[]'::jsonb"))
+  autoPayEnabled       Boolean   @default(true)
+  courseDurationMonths Int       @default(0)
 
-  batches              Batch[]
-  enrollments          Enrollment[]
-  exams                Exam[]
-  lessons              Lesson[]
-  monthlyDues          MonthlyDue[]
-  recordedClasses      RecordedClass[]
-  demoGroupSessions    DemoGroupSession[]
+  batches           Batch[]
+  enrollments       Enrollment[]
+  exams             Exam[]
+  lessons           Lesson[]
+  monthlyDues       MonthlyDue[]
+  recordedClasses   RecordedClass[]
+  demoGroupSessions DemoGroupSession[]
 }
 
 model Lesson {
@@ -138,28 +144,28 @@ model Lesson {
 }
 
 model Batch {
-  id               String            @id @default(uuid())
-  name             String
-  code             String            @unique
-  courseId         String?
-  teacherId        String?
-  courseName       String
-  level            String            @default("BEGINNER")
-  teacherName      String            @default("Unassigned")
-  schedule         String?
-  totalStudents    Int               @default(0)
-  status           String            @default("Active")
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  assignments      Assignment[]
-  attendances      Attendance[]
-  course           Course?           @relation(fields: [courseId], references: [id])
-  teacher          User?             @relation("BatchTeacher", fields: [teacherId], references: [id])
-  students         BatchStudent[]
-  contentResources ContentResource[]
-  exams            Exam[]
-  liveClasses      LiveClass[]
-  recordedClasses  RecordedClass[]
+  id                 String                   @id @default(uuid())
+  name               String
+  code               String                   @unique
+  courseId           String?
+  teacherId          String?
+  courseName         String
+  level              String                   @default("BEGINNER")
+  teacherName        String                   @default("Unassigned")
+  schedule           String?
+  totalStudents      Int                      @default(0)
+  status             String                   @default("Active")
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  assignments        Assignment[]
+  attendances        Attendance[]
+  course             Course?                  @relation(fields: [courseId], references: [id])
+  teacher            User?                    @relation("BatchTeacher", fields: [teacherId], references: [id])
+  students           BatchStudent[]
+  contentResources   ContentResource[]
+  exams              Exam[]
+  liveClasses        LiveClass[]
+  recordedClasses    RecordedClass[]
   rescheduleRequests ClassRescheduleRequest[]
 }
 
@@ -214,77 +220,98 @@ model BatchStudent {
 }
 
 model Enrollment {
-  id             String       @id @default(uuid())
-  userId         String
-  courseId       String
-  mode           ClassMode    @default(ONLINE)
-  type           String       @default("GROUP")
-  active         Boolean      @default(true)
-  expiresAt      DateTime?
-  createdAt      DateTime     @default(now())
+  id                   String       @id @default(uuid())
+  userId               String
+  courseId             String
+  mode                 ClassMode    @default(ONLINE)
+  type                 String       @default("GROUP")
+  active               Boolean      @default(true)
+  expiresAt            DateTime?
+  createdAt            DateTime     @default(now())
   // ── Payment Mode ──
-  paymentMode    String       @default("MONTHLY") // MONTHLY | FULL_COURSE
-  monthsPaid     Int          @default(0)
-  nextDueDate    DateTime?
-  subscriptionId String?
-    previousEnrollmentId String?      @unique
+  paymentMode          String       @default("MONTHLY") // MONTHLY | FULL_COURSE
+  monthsPaid           Int          @default(0)
+  nextDueDate          DateTime?
+  subscriptionId       String?
+  previousEnrollmentId String?      @unique
   previousEnrollment   Enrollment?  @relation("EnrollmentUpgrade", fields: [previousEnrollmentId], references: [id])
   upgradedTo           Enrollment?  @relation("EnrollmentUpgrade")
-  course         Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payments       Payment[]
-  monthlyDues    MonthlyDue[]
+  course               Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user                 User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments             Payment[]
+  monthlyDues          MonthlyDue[]
+  invoices             Invoice[]
+}
+
+model Invoice {
+  id            String   @id @default(uuid())
+  invoiceNumber String   @unique
+  paymentId     String   @unique
+  enrollmentId  String
+  userId        String
+  amount        Float
+  currency      Currency @default(INR)
+  status        String   @default("PAID")
+  createdAt     DateTime @default(now())
+
+  payment    Payment    @relation(fields: [paymentId], references: [id])
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id])
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model PendingUpgrade {
-  id                    String   @id @default(uuid())
-  userId                String
-  currentEnrollmentId   String
-  targetCourseId        String
-  targetType            String
-  targetBatchId         String?
-  months                Int      @default(1)      
-  preferredDate         String?                    
-  preferredTime         String?                    
-  razorpayOrderId       String?  @unique
-  status                PendingEnrollmentStatus @default(PENDING)
-  errorMessage          String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                  String                  @id @default(uuid())
+  userId              String
+  currentEnrollmentId String
+  targetCourseId      String
+  targetType          String
+  targetBatchId       String?
+  months              Int                     @default(1)
+  preferredDate       String?
+  preferredTime       String?
+  razorpayOrderId     String?                 @unique
+  status              PendingEnrollmentStatus @default(PENDING)
+  errorMessage        String?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
 
   @@index([userId])
   @@index([status])
 }
 
 model Payment {
-  id            String        @id @default(uuid())
-  userId        String
-  enrollmentId  String?
-  amount        Float
-  currency      Currency      @default(INR)
-  gateway       String
-  transactionId String        @unique
-  orderId       String        @unique
-  status        PaymentStatus @default(PENDING)
-  createdAt     DateTime      @default(now())
-  enrollment    Enrollment?   @relation(fields: [enrollmentId], references: [id])
-  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                String         @id @default(uuid())
+  recordedByAdminId String?
+  userId            String
+  enrollmentId      String?
+  amount            Float
+  currency          Currency       @default(INR)
+  gateway           PaymentGateway @default(RAZORPAY)
+  transactionId     String         @unique
+  orderId           String?        @unique
+  status            PaymentStatus  @default(PENDING)
+  createdAt         DateTime       @default(now())
+  enrollment        Enrollment?    @relation(fields: [enrollmentId], references: [id])
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Invoice           Invoice?
 }
 
 model PendingEnrollment {
-  id              String                  @id @default(uuid())
-  email           String
-  phone           String
-  passwordHash    String
-  payload         Json
-  batchId         String
-  courseId        String
-  razorpayOrderId String?                 @unique
-  status          PendingEnrollmentStatus @default(PENDING)
-  userId          String?
-  errorMessage    String?
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
+  id                String                  @id @default(uuid())
+  idempotencyKey    String?                 @unique
+  recordedByAdminId String?
+  email             String
+  phone             String
+  passwordHash      String
+  payload           Json
+  batchId           String
+  courseId          String
+  razorpayOrderId   String?                 @unique
+  status            PendingEnrollmentStatus @default(PENDING)
+  userId            String?
+  errorMessage      String?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
 
   @@index([email])
   @@index([status])
@@ -295,7 +322,7 @@ model MonthlyDue {
   enrollmentId String
   userId       String
   courseId     String
-  dueMonth     String        // Format: "YYYY-MM" e.g. "2026-09"
+  dueMonth     String // Format: "YYYY-MM" e.g. "2026-09"
   dueDate      DateTime
   amount       Float
   currency     Currency      @default(INR)
@@ -313,6 +340,24 @@ model MonthlyDue {
   @@index([userId])
   @@index([status])
   @@index([dueDate])
+}
+
+model TemporaryAccessUnlock {
+  id                String    @id @default(uuid())
+  studentId         String
+  unlockedByAdminId String
+  unlockedAt        DateTime  @default(now())
+  unlockUntil       DateTime
+  durationLabel     String
+  reason            String
+  revokedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  student         User @relation("StudentAccessUnlocks", fields: [studentId], references: [id], onDelete: Cascade)
+  unlockedByAdmin User @relation("AdminGrantedUnlocks", fields: [unlockedByAdminId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, unlockUntil])
+  @@index([unlockedByAdminId])
 }
 
 model VerificationOtp {
@@ -348,18 +393,18 @@ model Inquiry {
 }
 
 model LiveClass {
-  id             String                 @id @default(uuid())
-  batchId        String
-  title          String
-  teacherName    String
-  scheduledStart DateTime
-  scheduledEnd   DateTime
-  roomName       String                 @unique
-  status         LiveClassStatus        @default(SCHEDULED)
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
-  batch          Batch                  @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  chatMessages   LiveClassChatMessage[]
+  id                 String                   @id @default(uuid())
+  batchId            String
+  title              String
+  teacherName        String
+  scheduledStart     DateTime
+  scheduledEnd       DateTime
+  roomName           String                   @unique
+  status             LiveClassStatus          @default(SCHEDULED)
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  batch              Batch                    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  chatMessages       LiveClassChatMessage[]
   rescheduleRequests ClassRescheduleRequest[]
 
   @@index([batchId, scheduledStart])
@@ -772,24 +817,24 @@ model DemoSettings {
 }
 
 model DemoGroupSession {
-  id           String        @id @default(uuid())
+  id           String   @id @default(uuid())
   title        String
   startsAt     DateTime
-  durationMins Int           @default(60)
-  classMode    String        @default("Online")
-  capacity     Int           @default(20)
-  location     String        @default("")
-  notes        String        @default("")
-  isPublished  Boolean       @default(true)
-  isPaid       Boolean       @default(false)
-  price        Float?        @default(0)
+  durationMins Int      @default(60)
+  classMode    String   @default("Online")
+  capacity     Int      @default(20)
+  location     String   @default("")
+  notes        String   @default("")
+  isPublished  Boolean  @default(true)
+  isPaid       Boolean  @default(false)
+  price        Float?   @default(0)
 
-  courseId     String?
-  course       Course?       @relation(fields: [courseId], references: [id])
+  courseId String?
+  course   Course? @relation(fields: [courseId], references: [id])
 
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  bookings     DemoBooking[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  bookings  DemoBooking[]
 
   @@index([startsAt])
   @@index([isPublished])
@@ -966,6 +1011,11 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum PaymentGateway {
+  RAZORPAY
+  CASH
+}
+
 enum Currency {
   INR
   USD
@@ -997,6 +1047,7 @@ enum EventLevel {
 
 enum PendingEnrollmentStatus {
   PENDING
+  PROCESSING
   COMPLETED
   FAILED
 }
@@ -1130,16 +1181,16 @@ model ClassRescheduleRequest {
   requestedDate   DateTime
   reason          String?
   status          RescheduleStatus @default(PENDING_TEACHER)
-  monthlyPeriod   String           // Format: "YYYY-MM" (based on original class start date)
+  monthlyPeriod   String // Format: "YYYY-MM" (based on original class start date)
   teacherResponse String?
   adminNotes      String?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
-  liveClass       LiveClass @relation(fields: [liveClassId], references: [id])
-  student         User      @relation("RescheduleStudent", fields: [studentId], references: [id])
-  teacher         User      @relation("RescheduleTeacher", fields: [teacherId], references: [id])
-  batch           Batch     @relation(fields: [batchId], references: [id])
+  liveClass LiveClass @relation(fields: [liveClassId], references: [id])
+  student   User      @relation("RescheduleStudent", fields: [studentId], references: [id])
+  teacher   User      @relation("RescheduleTeacher", fields: [teacherId], references: [id])
+  batch     Batch     @relation(fields: [batchId], references: [id])
 
   @@index([studentId, monthlyPeriod])
   @@index([liveClassId])

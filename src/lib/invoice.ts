@@ -12,7 +12,7 @@ export type InvoiceData = {
   gateway: string;
   paymentMethod?: string | null;
   transactionId: string;
-  orderId: string;
+  orderId: string | null;
   status: string;
 };
 

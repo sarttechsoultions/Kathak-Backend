@@ -59,7 +59,17 @@ import {
   updateAdminProfile,
   changeAdminPassword,
   updateStudentPassword,
-  replyToInquiry
+  replyToInquiry,
+  getExchangeRate,
+  enrollCashStudent,
+  enrollStudentOnline,
+  grantTemporaryAccessUnlock,
+  revokeTemporaryAccessUnlock,
+  getStudentAccessDetails,
+  renewStudentCash,
+  renewStudentOnline,
+  getStudentFinance,
+  previewRenewalPricing
 } from "./admin.controller";
 import { getReportsOverview } from "./admin.reports.controller";
 import { forwardToDeveloper } from "../support/support.controller";
@@ -92,6 +102,9 @@ router.post("/students/:id/reset-password", requirePermission(Permission.MANAGE_
 router.delete("/students/:id", requirePermission(Permission.MANAGE_STUDENTS), deleteStudent);
 router.post("/students/:id/batches", requirePermission(Permission.MANAGE_STUDENTS), assignStudentBatch);
 router.delete("/students/:id/batches/:batchId", requirePermission(Permission.MANAGE_STUDENTS), removeStudentBatch);
+router.post("/students/:id/access-unlock", requirePermission(Permission.MANAGE_STUDENTS), grantTemporaryAccessUnlock);
+router.delete("/students/:id/access-unlock", requirePermission(Permission.MANAGE_STUDENTS), revokeTemporaryAccessUnlock);
+router.get("/students/:id/access-status", requirePermission(Permission.MANAGE_STUDENTS), getStudentAccessDetails);
 
 // 3. Teacher Management
 router.get("/teachers", requirePermission(Permission.MANAGE_TEACHERS), getTeachers);
@@ -101,6 +114,7 @@ router.put("/teachers/:id", requirePermission(Permission.MANAGE_TEACHERS), updat
 router.delete("/teachers/:id", requirePermission(Permission.MANAGE_TEACHERS), deleteTeacher);
 
 // 4. Course & Lesson Management
+router.get("/exchange-rate", requirePermission(Permission.MANAGE_COURSES), getExchangeRate);
 router.get("/courses", requirePermission(Permission.MANAGE_COURSES), getCourses);
 router.get("/courses/:id", requirePermission(Permission.MANAGE_COURSES), getCourseById);
 router.post("/courses", requirePermission(Permission.MANAGE_COURSES), createCourse);
@@ -108,6 +122,10 @@ router.put("/courses/:id", requirePermission(Permission.MANAGE_COURSES), updateC
 router.delete("/courses/:id", requirePermission(Permission.MANAGE_COURSES), deleteCourse);
 router.post("/courses/:id/lessons", requirePermission(Permission.MANAGE_COURSES), addLesson);
 router.delete("/courses/:id/lessons/:lessonId", requirePermission(Permission.MANAGE_COURSES), deleteLesson);
+
+// 4.5 Admin Cash & Online Enrollment
+router.post("/students/enroll-cash", requirePermission(Permission.MANAGE_STUDENTS), enrollCashStudent);
+router.post("/students/enroll-online", requirePermission(Permission.MANAGE_STUDENTS), enrollStudentOnline);
 
 // 5. Batch Management
 router.get("/batches", requirePermission(Permission.MANAGE_BATCHES), getBatches);
@@ -140,6 +158,10 @@ router.post("/attendance", requirePermission(Permission.MANAGE_ATTENDANCE), save
 router.get("/payments", requirePermission(Permission.VIEW_PAYMENTS), getPayments);
 router.get("/finance", requirePermission(Permission.VIEW_PAYMENTS), getPayments);
 router.get("/finance/export.csv", requirePermission(Permission.VIEW_PAYMENTS), exportFinanceCsv);
+router.get("/finance/student/:id", requirePermission(Permission.VIEW_PAYMENTS), getStudentFinance);
+router.post("/finance/preview-renewal", requirePermission(Permission.VIEW_PAYMENTS), previewRenewalPricing);
+router.post("/finance/renew-cash", requirePermission(Permission.VIEW_PAYMENTS), renewStudentCash);
+router.post("/finance/renew-online", requirePermission(Permission.VIEW_PAYMENTS), renewStudentOnline);
 router.get("/payments/:id/invoice", requirePermission(Permission.VIEW_PAYMENTS), getPaymentInvoice);
 router.post("/payments", requirePermission(Permission.VIEW_PAYMENTS), recordFeePayment);
 router.post("/payments/:id/refund", requirePermission(Permission.VIEW_PAYMENTS), refundPayment);

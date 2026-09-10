@@ -11,7 +11,7 @@ export type PlatformPaymentRow = {
   phone: string;
   itemTitle: string;
   transactionId: string;
-  orderId: string;
+  orderId: string | null;
   gateway: string;
   status: string;
   amount: number;
