@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { Role } from "@prisma/client";
 import { authenticate, requireRole } from "../../middleware/auth.middleware";
+import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 import {
   getAllContentAdmin,
   getStudentContent,
@@ -16,6 +17,6 @@ router.post("/", authenticate, requireRole(Role.ADMIN), createContentResource);
 router.delete("/:id", authenticate, requireRole(Role.ADMIN), deleteContentResource);
 
 // Student routes
-router.get("/student", authenticate, requireRole(Role.STUDENT), getStudentContent);
+router.get("/student", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, getStudentContent);
 
 export default router;

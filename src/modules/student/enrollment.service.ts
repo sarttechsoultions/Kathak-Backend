@@ -14,7 +14,18 @@ import {
   buildInvoiceHtml,
   InvoiceData,
 } from "../../lib/invoice";
-import { enrollmentAmountINR } from "../../lib/fees";
+import {
+  enrollmentAmountINR,
+  calculateEnrollmentAmount,
+  calculateRenewalAmount,
+  generateCoverageMonths,
+  nextCoverageDueDate,
+  nextMonthDueDate,
+  parseTiers,
+  validateEnrollmentMonths,
+} from "../../lib/fees";
+
+import { resolveCurrency } from "../../lib/currency";
 import { isOneToOneBatch } from "../../lib/batchHelpers";
 import { getRazorpay } from "../payment/payment.controller";
 
@@ -140,6 +151,7 @@ type CompletedEnrollment = {
     type: string;
     active: boolean;
     createdAt: Date;
+    nextDueDate?: Date | null;
   };
   alreadyCompleted: boolean;
 };
@@ -411,11 +423,17 @@ export const isAgeUnder18 = (
 };
 
 const isPrismaUniqueError = (
-  error: unknown
-): boolean =>
-  error instanceof
-    Prisma.PrismaClientKnownRequestError &&
-  error.code === "P2002";
+  error: any,
+  targetField?: string
+): boolean => {
+  if (error && error.code === "P2002") {
+    if (!targetField) return true;
+    const target = error.meta?.target;
+    if (Array.isArray(target) && target.includes(targetField)) return true;
+    if (typeof target === "string" && target.includes(targetField)) return true;
+  }
+  return false;
+};
 
 const asPayload = (
   value: Prisma.JsonValue
@@ -466,86 +484,78 @@ export const validateEnrollmentInput = async (
   body: Record<string, unknown>,
   options: {
     requirePassword: boolean;
+    allowExistingUser?: boolean;
   }
 ): Promise<ValidatedEnrollment> => {
-  const fullName =
-    String(body.fullName || "").trim();
+  const fullName = String(body.fullName || "").trim();
 
-  const email =
-    String(body.email || "")
-      .trim()
-      .toLowerCase();
+  const email = String(body.email || "")
+    .trim()
+    .toLowerCase();
 
-  const country =
-    String(body.country || "").trim();
+  const country = String(body.country || "").trim();
 
-  const countryCodeRaw =
-    String(body.countryCode || "+91").trim();
+  const countryCodeRaw = String(
+    body.countryCode || "+91"
+  ).trim();
 
-  const countryCode =
-    countryCodeRaw.startsWith("+")
-      ? countryCodeRaw
-      : `+${countryCodeRaw}`;
+  const countryCode = countryCodeRaw.startsWith("+")
+    ? countryCodeRaw
+    : `+${countryCodeRaw}`;
 
-  const address =
-    String(body.address || "").trim();
+  const address = String(body.address || "").trim();
 
-  const password =
-    String(body.password || "");
+  const password = String(body.password || "");
 
-  const courseId =
-    String(body.courseId || "").trim();
+  const courseId = String(body.courseId || "").trim();
 
-  const enrollmentType =
-    parseEnrollmentType(
-      body.enrollmentType ||
-        body.type ||
-        body.mode
-    );
+  const enrollmentType = parseEnrollmentType(
+    body.enrollmentType ||
+      body.type ||
+      body.mode
+  );
 
-  let batchId =
-    String(body.batchId || "").trim();
+  let batchId = String(body.batchId || "").trim();
 
-  const preferredDate =
-    body.preferredDate
-      ? String(body.preferredDate).trim()
-      : "";
+  const preferredDate = body.preferredDate
+    ? String(body.preferredDate).trim()
+    : "";
 
-  const preferredTime =
-    body.preferredTime
-      ? String(body.preferredTime).trim()
-      : "";
+  const preferredTime = body.preferredTime
+    ? String(body.preferredTime).trim()
+    : "";
 
-  const dob =
-    body.dob
-      ? String(body.dob).trim()
-      : "";
+  const dob = body.dob
+    ? String(body.dob).trim()
+    : "";
 
-  const gender =
-    String(body.gender || "").trim();
+  const gender = String(body.gender || "").trim();
 
-  const city =
-    String(body.city || "").trim();
+  const city = String(body.city || "").trim();
 
-  const region =
-    String(body.region || "").trim();
+  const region = String(body.region || "").trim();
 
-  const postalCode =
-    String(body.postalCode || "").trim();
+  const postalCode = String(
+    body.postalCode || ""
+  ).trim();
 
-  const guardianName =
-    String(body.guardianName || "").trim();
+  const guardianName = String(
+    body.guardianName || ""
+  ).trim();
 
-  const relationship =
-    String(body.relationship || "").trim();
+  const relationship = String(
+    body.relationship || ""
+  ).trim();
 
-  const emergencyContact =
-    String(body.emergencyContact || "").trim();
+  const emergencyContact = String(
+    body.emergencyContact || ""
+  ).trim();
 
-  const methodRaw =
-    String(body.paymentMethod || "RAZORPAY")
-      .trim()
-      .toUpperCase();
+  const methodRaw = String(
+    body.paymentMethod || "RAZORPAY"
+  )
+    .trim()
+    .toUpperCase();
 
   const paymentMethod =
     methodRaw === "CARD" ||
@@ -557,6 +567,12 @@ export const validateEnrollmentInput = async (
   const isUnder18 =
     Boolean(body.isUnder18) ||
     isAgeUnder18(dob);
+
+  /*
+   * ---------------------------------------------------------
+   * BASIC VALIDATION
+   * ---------------------------------------------------------
+   */
 
   if (!fullName) {
     throw new EnrollmentError(
@@ -588,8 +604,10 @@ export const validateEnrollmentInput = async (
     );
   }
 
-  const e164Phone =
-    toE164(body.phone, countryCode);
+  const e164Phone = toE164(
+    body.phone,
+    countryCode
+  );
 
   const digitsOnly =
     e164Phone.replace(/\D/g, "");
@@ -645,6 +663,12 @@ export const validateEnrollmentInput = async (
     );
   }
 
+  /*
+   * ---------------------------------------------------------
+   * COURSE VALIDATION
+   * ---------------------------------------------------------
+   */
+
   const courseRecord =
     await prisma.course.findUnique({
       where: {
@@ -658,9 +682,13 @@ export const validateEnrollmentInput = async (
     );
   }
 
-  if (
-    enrollmentType === "ONE_TO_ONE"
-  ) {
+  /*
+   * ---------------------------------------------------------
+   * 1-TO-1 / GROUP VALIDATION
+   * ---------------------------------------------------------
+   */
+
+  if (enrollmentType === "ONE_TO_ONE") {
     if (
       !preferredDate ||
       !ISO_DATE_REGEX.test(preferredDate)
@@ -680,12 +708,34 @@ export const validateEnrollmentInput = async (
 
     normalizeClassTime(preferredTime);
 
+    /*
+     * Currency-aware pricing validation.
+     *
+     * India => INR
+     * Other countries => USD
+     */
+    const currency =
+      resolveCurrency(
+        countryCode || country
+      );
+
+    const oneToOneFee =
+      currency === "USD"
+        ? Number(
+            courseRecord.oneToOneFeeUSD || 0
+          )
+        : Number(
+            courseRecord.oneToOneFeeINR || 0
+          );
+
     if (
-      !courseRecord.oneToOneFeeINR ||
-      courseRecord.oneToOneFeeINR <= 0
+      !Number.isFinite(oneToOneFee) ||
+      oneToOneFee <= 0
     ) {
       throw new EnrollmentError(
-        "One-to-one enrollment is not available for this course."
+        currency === "USD"
+          ? "One-to-one USD pricing is not available for this course."
+          : "One-to-one enrollment is not available for this course."
       );
     }
 
@@ -729,16 +779,57 @@ export const validateEnrollmentInput = async (
         "This is a personal 1-to-1 batch and cannot be selected. Please choose a group batch or enroll in 1-to-1 personal classes."
       );
     }
+
+    /*
+     * Validate that the selected currency has
+     * a configured group fee.
+     */
+    const currency =
+      resolveCurrency(
+        countryCode || country
+      );
+
+    const groupFee =
+      currency === "USD"
+        ? Number(
+            courseRecord.groupFeeUSD || 0
+          )
+        : Number(
+            courseRecord.groupFeeINR || 0
+          );
+
+    if (
+      !Number.isFinite(groupFee) ||
+      groupFee <= 0
+    ) {
+      throw new EnrollmentError(
+        currency === "USD"
+          ? "Group USD pricing is not available for this course."
+          : "Group classes are not available for this course."
+      );
+    }
   }
 
+  /*
+   * ---------------------------------------------------------
+   * PASSWORD
+   * ---------------------------------------------------------
+   */
+
   if (
-    options.requirePassword &&
+    (options.requirePassword || password.length > 0) &&
     password.length < 6
   ) {
     throw new EnrollmentError(
       "Password must be at least 6 characters."
     );
   }
+
+  /*
+   * ---------------------------------------------------------
+   * UNDER 18
+   * ---------------------------------------------------------
+   */
 
   if (isUnder18) {
     if (!guardianName) {
@@ -754,6 +845,20 @@ export const validateEnrollmentInput = async (
     }
   }
 
+  /*
+   * ---------------------------------------------------------
+   * EXISTING USER
+   *
+   * Public enrollment:
+   *   allowExistingUser = false
+   *   => reject existing account
+   *
+   * Admin renewal:
+   *   allowExistingUser = true
+   *   => existing account allowed
+   * ---------------------------------------------------------
+   */
+
   const existingUser =
     await prisma.user.findFirst({
       where: {
@@ -768,12 +873,21 @@ export const validateEnrollmentInput = async (
       },
     });
 
-  if (existingUser) {
+  if (
+    existingUser &&
+    !options.allowExistingUser
+  ) {
     throw new EnrollmentError(
       "An account with this email or phone already exists. Please login.",
       409
     );
   }
+
+  /*
+   * ---------------------------------------------------------
+   * BUILD PAYLOAD
+   * ---------------------------------------------------------
+   */
 
   const payload: EnrollmentPayload = {
     fullName,
@@ -806,7 +920,9 @@ export const validateEnrollmentInput = async (
     joiningDate:
       body.joiningDate
         ? String(body.joiningDate).trim()
-        : new Date().toISOString().slice(0, 10),
+        : new Date()
+            .toISOString()
+            .slice(0, 10),
 
     isUnder18,
 
@@ -834,13 +950,24 @@ export const validateEnrollmentInput = async (
 
     preferredTime:
       enrollmentType === "ONE_TO_ONE"
-        ? normalizeClassTime(preferredTime)
+        ? normalizeClassTime(
+            preferredTime
+          )
         : null,
   };
 
+  /*
+   * ---------------------------------------------------------
+   * PASSWORD HASH
+   * ---------------------------------------------------------
+   */
+
   const passwordHash =
-    options.requirePassword
-      ? await bcrypt.hash(password, 10)
+    password.length >= 6
+      ? await bcrypt.hash(
+          password,
+          10
+        )
       : "";
 
   return {
@@ -852,53 +979,72 @@ export const validateEnrollmentInput = async (
 };
 
 const loadCompletedByPayment = async (
-  razorpayOrderId: string,
+  razorpayOrderId: string | null,
   razorpayPaymentId: string
 ): Promise<CompletedEnrollment | null> => {
-  const payment =
-    await prisma.payment.findFirst({
-      where: {
-        OR: [
-          {
-            orderId: razorpayOrderId,
-          },
-          {
-            transactionId: razorpayPaymentId,
-          },
-        ],
-      },
-      include: {
-        user: true,
-        enrollment: true,
-      },
-    });
+  if (!razorpayPaymentId) {
+    return null;
+  }
+
+  /*
+   * Payment transactionId is the primary exact identifier.
+   * OrderId is only an additional consistency check.
+   *
+   * Never recover an enrollment by:
+   *   userId + latest enrollment
+   *
+   * because a student can have multiple enrollments/payments.
+   */
+  const payment = await prisma.payment.findUnique({
+    where: {
+      transactionId: razorpayPaymentId,
+    },
+    include: {
+      user: true,
+      enrollment: true,
+    },
+  });
 
   if (!payment?.user) {
     return null;
   }
 
-  const enrollment =
-    payment.enrollment ||
-    (await prisma.enrollment.findFirst({
-      where: {
-        userId: payment.userId,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    }));
+  /*
+   * If an order ID was supplied, it must match the payment's
+   * stored order ID.
+   *
+   * This prevents a valid payment from being returned for
+   * a different Razorpay order.
+   */
+  if (
+    razorpayOrderId &&
+    payment.orderId &&
+    payment.orderId !== razorpayOrderId
+  ) {
+    return null;
+  }
 
-  if (!enrollment) {
+  /*
+   * A completed payment must point to its exact enrollment.
+   * Do NOT guess an enrollment from the user's latest record.
+   */
+  if (!payment.enrollment) {
+    return null;
+  }
+
+  /*
+   * Only a successful payment represents a completed enrollment.
+   */
+  if (payment.status !== PaymentStatus.SUCCESS) {
     return null;
   }
 
   return {
     user: publicUser(payment.user),
-    enrollment,
+    enrollment: payment.enrollment,
     alreadyCompleted: true,
   };
 };
-
 const fulfillEnrollment = async (
   tx: Prisma.TransactionClient,
   pending: {
@@ -906,7 +1052,7 @@ const fulfillEnrollment = async (
     passwordHash: string;
     payload: EnrollmentPayload;
   },
-  razorpayOrderId: string,
+  razorpayOrderId: string | null,
   razorpayPaymentId: string
 ): Promise<CompletedEnrollment> => {
   const payload = pending.payload;
@@ -962,6 +1108,11 @@ const fulfillEnrollment = async (
         isActive: true,
       },
     });
+  } else if (pending.passwordHash) {
+    user = await tx.user.update({
+      where: { id: user.id },
+      data: { passwordHash: pending.passwordHash },
+    });
   }
 
   let enrollment =
@@ -988,47 +1139,87 @@ const fulfillEnrollment = async (
       ? "FULL_COURSE"
       : "MONTHLY";
 
-  const monthsPaid =
-    Math.max(
-      1,
-      parseInt(
-        String(
-          (payload as Record<string, unknown>)
-            .months || "1"
-        ),
-        10
-      )
-    );
+const anyPayload =
+  payload as Record<string, unknown>;
 
-  if (!enrollment) {
-    enrollment =
-      await tx.enrollment.create({
-        data: {
-          userId: user.id,
-          courseId: payload.courseId,
-          mode: ClassMode.ONLINE,
-          type: enrollmentType,
-          active: true,
-          paymentMode,
-          monthsPaid,
-        },
-      });
-  } else if (
-    enrollment.type !== enrollmentType
-  ) {
-    enrollment =
-      await tx.enrollment.update({
-        where: {
-          id: enrollment.id,
-        },
-        data: {
-          type: enrollmentType,
-          active: true,
-          paymentMode,
-          monthsPaid,
-        },
-      });
+const requestedMonths = Number(
+  anyPayload.months ?? 1
+);
+
+let monthsPaid: 1 | 3 | 6 | 12;
+
+try {
+  monthsPaid =
+    validateEnrollmentMonths(
+      requestedMonths
+    );
+} catch {
+  throw new EnrollmentError(
+    "Invalid payment plan. Allowed plans are 1, 3, 6, or 12 months.",
+    400
+  );
+}
+
+const operationTypeRaw = String(
+  anyPayload.operationType ?? "NEW"
+)
+  .trim()
+  .toUpperCase();
+
+const operationType =
+  operationTypeRaw === "RENEWAL"
+    ? "RENEWAL"
+    : "NEW";
+
+let existingNextDueDate: Date | null =
+  null;
+
+if (!enrollment) {
+  if (operationType === "RENEWAL") {
+    throw new EnrollmentError(
+      "No existing enrollment was found for this renewal.",
+      409
+    );
   }
+
+  enrollment =
+    await tx.enrollment.create({
+      data: {
+        userId: user.id,
+        courseId: payload.courseId,
+        mode: ClassMode.ONLINE,
+        type: enrollmentType,
+        active: true,
+        paymentMode,
+        monthsPaid,
+      },
+    });
+} else {
+  if (operationType === "NEW") {
+    throw new EnrollmentError(
+      "Student is already enrolled in this course. Please use renewal.",
+      409
+    );
+  }
+
+  existingNextDueDate =
+    enrollment.nextDueDate;
+
+  enrollment =
+    await tx.enrollment.update({
+      where: {
+        id: enrollment.id,
+      },
+      data: {
+        type: enrollmentType,
+        active: true,
+        paymentMode,
+        monthsPaid:
+          enrollment.monthsPaid +
+          monthsPaid,
+      },
+    });
+}
 
   const course =
     await tx.course.findUnique({
@@ -1043,28 +1234,41 @@ const fulfillEnrollment = async (
       404
     );
   }
+  
+  // const anyPayload = payload as Record<string, unknown>;
 
-  const monthlyFee =
-    enrollmentType === "ONE_TO_ONE"
-      ? course.oneToOneFeeINR || 0
-      : course.groupFeeINR || 0;
+  // Use explicitly calculated amount and currency from backend payload
+  // Fallback to legacy INR logic if missing (for older pending enrollments)
+  let feePaid = Number(anyPayload.expectedAmount);
+  let paymentCurrency = anyPayload.expectedCurrency as "INR" | "USD" | "GBP" | "EUR";
+  
+  const isLegacy = !feePaid || Number.isNaN(feePaid) || !paymentCurrency;
+  
+  if (isLegacy) {
+    const monthlyFee =
+      enrollmentType === "ONE_TO_ONE"
+        ? course.oneToOneFeeINR || 0
+        : course.groupFeeINR || 0;
 
-  const joiningFee =
-    course.joiningFeeINR ?? 1100;
+    const joiningFee =
+      course.joiningFeeINR ?? 1100;
 
-  const feePaid =
-    enrollmentAmountINR(
-      monthlyFee,
-      joiningFee
-    );
+    feePaid =
+      enrollmentAmountINR(
+        monthlyFee,
+        joiningFee
+      );
+    paymentCurrency = "INR";
+  }
+  
+  // Determine gateway based on payload or fallback to RAZORPAY
+  const gateway = (anyPayload.gateway === "CASH" ? "CASH" : "RAZORPAY") as "CASH" | "RAZORPAY";
 
   const existingPayment =
     await tx.payment.findFirst({
       where: {
         OR: [
-          {
-            orderId: razorpayOrderId,
-          },
+          razorpayOrderId ? { orderId: razorpayOrderId } : { transactionId: razorpayPaymentId },
           {
             transactionId:
               razorpayPaymentId,
@@ -1082,11 +1286,11 @@ const fulfillEnrollment = async (
         userId: user.id,
         enrollmentId: enrollment.id,
         amount: feePaid,
-        currency: "INR",
-        gateway: "RAZORPAY",
+        currency: paymentCurrency,
+        gateway: gateway,
         transactionId:
           razorpayPaymentId,
-        orderId: razorpayOrderId,
+        orderId: razorpayOrderId || null,
         status: PaymentStatus.SUCCESS,
       },
     });
@@ -1164,6 +1368,184 @@ const fulfillEnrollment = async (
     },
   });
 
+  // Setup MonthlyDues inside the transaction
+  const paymentDate = new Date(); // authoritative timestamp
+  let coverageStartDate = paymentDate;
+  if (existingNextDueDate && existingNextDueDate > paymentDate) {
+    coverageStartDate = existingNextDueDate;
+  }
+  
+  const isBulk = monthsPaid > 1;
+  const monthlyBaseAmount = anyPayload.monthlyBaseAmount 
+    ? Number(anyPayload.monthlyBaseAmount)
+    : paymentCurrency === "USD" 
+        ? (enrollmentType === "ONE_TO_ONE" ? (course.oneToOneFeeUSD || 0) : (course.groupFeeUSD || 0))
+        : (enrollmentType === "ONE_TO_ONE" ? (course.oneToOneFeeINR || 0) : (course.groupFeeINR || 0));
+  const currencyForDues = paymentCurrency;
+
+  let nextDue: Date;
+
+  if (isBulk) {
+    const generatedMonths = generateCoverageMonths(
+  coverageStartDate,
+  monthsPaid
+);
+    
+    // Create paid dues for the bulk period
+    for (const dueMonth of generatedMonths) {
+      const [yyyy, mm] = dueMonth.split("-").map(Number);
+      const dueDate = new Date(yyyy, mm - 1, 1);
+      
+      const existingDue = await tx.monthlyDue.findUnique({
+        where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth } }
+      });
+      
+      if (existingDue) {
+        await tx.monthlyDue.update({
+          where: { id: existingDue.id },
+          data: { status: "SUCCESS", paidAt: paymentDate, amount: monthlyBaseAmount, currency: currencyForDues }
+        });
+      } else {
+        await tx.monthlyDue.create({
+          data: {
+            enrollmentId: enrollment.id,
+            userId: user.id,
+            courseId: course.id,
+            dueMonth,
+            dueDate,
+            amount: monthlyBaseAmount,
+            currency: currencyForDues,
+            status: "SUCCESS",
+            paidAt: paymentDate,
+          }
+        });
+      }
+    }
+    
+    // Create pending due for the next month after bulk
+    nextDue = nextCoverageDueDate(coverageStartDate, monthsPaid);
+    const mm = String(nextDue.getMonth() + 1).padStart(2, "0");
+    const nextDueMonth = `${nextDue.getFullYear()}-${mm}`;
+    
+    const existingNext = await tx.monthlyDue.findUnique({
+      where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: nextDueMonth } }
+    });
+    
+    if (existingNext) {
+      await tx.monthlyDue.update({
+        where: { id: existingNext.id },
+        data: { amount: monthlyBaseAmount, currency: currencyForDues }
+      });
+    } else {
+      await tx.monthlyDue.create({
+        data: {
+          enrollmentId: enrollment.id,
+          userId: user.id,
+          courseId: course.id,
+          dueMonth: nextDueMonth,
+          dueDate: nextDue,
+          amount: monthlyBaseAmount,
+          currency: currencyForDues,
+          status: "PENDING",
+        }
+      });
+    }
+  } else {
+    // Single month
+    const generatedMonths = generateCoverageMonths(
+      coverageStartDate,
+      1
+    );
+    const currentMonth = generatedMonths[0];
+    const [yyyy, mm] = currentMonth.split("-").map(Number);
+    const currentDueDate = new Date(yyyy, mm - 1, 1);
+
+    const existingCurrent = await tx.monthlyDue.findUnique({
+      where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: currentMonth } }
+    });
+    
+    if (existingCurrent) {
+      await tx.monthlyDue.update({
+        where: { id: existingCurrent.id },
+        data: { status: "SUCCESS", paidAt: paymentDate, amount: monthlyBaseAmount, currency: currencyForDues }
+      });
+    } else {
+      await tx.monthlyDue.create({
+        data: {
+          enrollmentId: enrollment.id,
+          userId: user.id,
+          courseId: course.id,
+          dueMonth: currentMonth,
+          dueDate: currentDueDate,
+          amount: monthlyBaseAmount,
+          currency: currencyForDues,
+          status: "SUCCESS",
+          paidAt: paymentDate,
+        }
+      });
+    }
+    
+    nextDue = nextCoverageDueDate(coverageStartDate, 1);
+    const nextMm = String(nextDue.getMonth() + 1).padStart(2, "0");
+    const nextDueMonth = `${nextDue.getFullYear()}-${nextMm}`;
+    
+    const existingNext = await tx.monthlyDue.findUnique({
+      where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: nextDueMonth } }
+    });
+    
+    if (existingNext) {
+      await tx.monthlyDue.update({
+        where: { id: existingNext.id },
+        data: { amount: monthlyBaseAmount, currency: currencyForDues }
+      });
+    } else {
+      await tx.monthlyDue.create({
+        data: {
+          enrollmentId: enrollment.id,
+          userId: user.id,
+          courseId: course.id,
+          dueMonth: nextDueMonth,
+          dueDate: nextDue,
+          amount: monthlyBaseAmount,
+          currency: currencyForDues,
+          status: "PENDING",
+        }
+      });
+    }
+  }
+
+  // Update enrollment nextDueDate
+  enrollment = await tx.enrollment.update({
+    where: { id: enrollment.id },
+    data: { nextDueDate: nextDue }
+  });
+
+  const paymentRecord = await tx.payment.findFirst({
+    where: {
+      OR: [
+        razorpayOrderId ? { orderId: razorpayOrderId } : { transactionId: razorpayPaymentId },
+        { transactionId: razorpayPaymentId }
+      ]
+    }
+  });
+
+  if (paymentRecord) {
+    const invNumber = `INV-${(paymentRecord.transactionId).slice(-10).toUpperCase()}`;
+    await tx.invoice.upsert({
+      where: { paymentId: paymentRecord.id },
+      update: {},
+      create: {
+        invoiceNumber: invNumber,
+        paymentId: paymentRecord.id,
+        enrollmentId: enrollment.id,
+        userId: user.id,
+        amount: feePaid,
+        currency: paymentCurrency,
+        status: "PAID",
+      }
+    });
+  }
+
   return {
     user: publicUser(user),
     enrollment,
@@ -1174,7 +1556,7 @@ const fulfillEnrollment = async (
 export const completePendingEnrollment = async (
   params: {
     pendingId?: string;
-    razorpayOrderId: string;
+    razorpayOrderId: string | null;
     razorpayPaymentId: string;
   }
 ): Promise<CompletedEnrollment> => {
@@ -1184,12 +1566,15 @@ export const completePendingEnrollment = async (
     razorpayPaymentId,
   } = params;
 
-  if (
-    !razorpayOrderId ||
-    !razorpayPaymentId
-  ) {
+  if (!razorpayPaymentId) {
     throw new EnrollmentError(
       "Payment verification failed. Missing payment details."
+    );
+  }
+
+  if (!pendingId && !razorpayOrderId) {
+    throw new EnrollmentError(
+      "Payment verification failed. Missing pendingId and orderId."
     );
   }
 
@@ -1201,16 +1586,15 @@ export const completePendingEnrollment = async (
       })
     : await prisma.pendingEnrollment.findUnique({
         where: {
-          razorpayOrderId,
+          razorpayOrderId: razorpayOrderId as string,
         },
       });
 
   if (!pending) {
-    const alreadyPaid =
-      await loadCompletedByPayment(
-        razorpayOrderId,
-        razorpayPaymentId
-      );
+    const alreadyPaid = await loadCompletedByPayment(
+      razorpayOrderId,
+      razorpayPaymentId
+    );
 
     if (alreadyPaid) {
       return alreadyPaid;
@@ -1222,131 +1606,139 @@ export const completePendingEnrollment = async (
     );
   }
 
+  /*
+   * The Razorpay order, when present, must belong to this
+   * pending enrollment.
+   */
   if (
     pending.razorpayOrderId &&
-    pending.razorpayOrderId !==
-      razorpayOrderId
+    pending.razorpayOrderId !== razorpayOrderId
   ) {
     throw new EnrollmentError(
       "Payment order does not match this enrollment."
     );
   }
 
-  if (
-    pending.status ===
-      PendingEnrollmentStatus.COMPLETED &&
-    pending.userId
-  ) {
-    const alreadyPaid =
-      await loadCompletedByPayment(
-        razorpayOrderId,
-        razorpayPaymentId
-      );
+  /*
+   * If this pending enrollment has already been completed,
+   * recover ONLY the payment belonging to this exact payment ID.
+   *
+   * Do not fall back to the user's latest enrollment because
+   * that can return the wrong enrollment.
+   */
+  if (pending.status === PendingEnrollmentStatus.COMPLETED) {
+    const alreadyPaid = await loadCompletedByPayment(
+      razorpayOrderId,
+      razorpayPaymentId
+    );
 
     if (alreadyPaid) {
       return alreadyPaid;
     }
 
-    const user =
-      await prisma.user.findUnique({
-        where: {
-          id: pending.userId,
-        },
-      });
+    throw new EnrollmentError(
+      "This enrollment was already completed, but the matching payment record could not be recovered.",
+      409
+    );
+  }
 
-    const enrollment =
-      await prisma.enrollment.findFirst({
-        where: {
-          userId: pending.userId,
+  /*
+   * A previous attempt may have left the record in PROCESSING
+   * or FAILED. The same payment/idempotency attempt is allowed
+   * to resume; Payment.transactionId remains the database-level
+   * duplicate protection.
+   */
+  if (
+    pending.status === PendingEnrollmentStatus.PENDING ||
+    pending.status === PendingEnrollmentStatus.FAILED
+  ) {
+    await prisma.pendingEnrollment.updateMany({
+      where: {
+        id: pending.id,
+        status: {
+          in: [
+            PendingEnrollmentStatus.PENDING,
+            PendingEnrollmentStatus.FAILED,
+          ],
         },
-        orderBy: {
-          createdAt: "desc",
-        },
-      });
-
-    if (user && enrollment) {
-      return {
-        user: publicUser(user),
-        enrollment,
-        alreadyCompleted: true,
-      };
-    }
+      },
+      data: {
+        status: PendingEnrollmentStatus.PROCESSING,
+        errorMessage: null,
+      },
+    });
   }
 
   try {
-    return await prisma.$transaction(
+    const result = await prisma.$transaction(
       (tx) =>
         fulfillEnrollment(
           tx,
           {
             id: pending.id,
-            passwordHash:
-              pending.passwordHash,
-            payload: asPayload(
-              pending.payload
-            ),
+            passwordHash: pending.passwordHash,
+            payload: asPayload(pending.payload),
           },
           razorpayOrderId,
           razorpayPaymentId
-        )
+        ),
+      {
+        isolationLevel: "Serializable",
+      }
     );
+
+    return result;
   } catch (error) {
-    if (isPrismaUniqueError(error)) {
-      const recovered =
-        await loadCompletedByPayment(
-          razorpayOrderId,
-          razorpayPaymentId
-        );
+    /*
+     * If another concurrent request completed the same payment,
+     * recover using the exact Razorpay payment/order identifiers.
+     *
+     * Do NOT recover by "latest enrollment".
+     */
+    if (
+      isPrismaUniqueError(error, "transactionId") ||
+      isPrismaUniqueError(error, "orderId")
+    ) {
+      const recovered = await loadCompletedByPayment(
+        razorpayOrderId,
+        razorpayPaymentId
+      );
 
       if (recovered) {
         return recovered;
       }
-
-      const pendingUser =
-        await prisma.user.findFirst({
-          where: {
-            OR: [
-              {
-                email:
-                  asPayload(
-                    pending.payload
-                  ).email,
-              },
-              {
-                phone:
-                  asPayload(
-                    pending.payload
-                  ).phone,
-              },
-            ],
-          },
-          include: {
-            enrollments: {
-              orderBy: {
-                createdAt: "desc",
-              },
-            },
-          },
-        });
-
-      if (
-        pendingUser &&
-        pendingUser.enrollments[0]
-      ) {
-        return {
-          user: publicUser(
-            pendingUser
-          ),
-          enrollment:
-            pendingUser.enrollments[0],
-          alreadyCompleted: true,
-        };
-      }
     }
 
-    if (
-      error instanceof EnrollmentError
-    ) {
+    /*
+     * If fulfillEnrollment failed, mark this pending attempt
+     * as FAILED so the same idempotent request can be retried.
+     *
+     * Never overwrite COMPLETED if another concurrent request
+     * managed to finish it between the transaction failure and
+     * this update.
+     */
+    try {
+      await prisma.pendingEnrollment.updateMany({
+        where: {
+          id: pending.id,
+          status: PendingEnrollmentStatus.PROCESSING,
+        },
+        data: {
+          status: PendingEnrollmentStatus.FAILED,
+          errorMessage:
+            error instanceof EnrollmentError
+              ? error.message
+              : "Enrollment finalization failed.",
+        },
+      });
+    } catch {
+      /*
+       * Failure to update the diagnostic state must not hide
+       * the original enrollment error.
+       */
+    }
+
+    if (error instanceof EnrollmentError) {
       throw error;
     }
 
@@ -1358,13 +1750,16 @@ export const completePendingEnrollment = async (
 };
 
 export const sendEnrollmentWelcomeEmail =
-  async (user: {
-    id: string;
-    fullName: string;
-    email: string;
-    phone?: string | null;
-    address?: string | null;
-  }): Promise<void> => {
+  async (
+    user: {
+      id: string;
+      fullName: string;
+      email: string;
+      phone?: string | null;
+      address?: string | null;
+    },
+    plaintextPassword?: string
+  ): Promise<boolean> => {
     try {
       const payment =
         await prisma.payment.findFirst({
@@ -1455,7 +1850,7 @@ export const sendEnrollmentWelcomeEmail =
             }
           : null;
 
-      await sendEmail({
+      return await sendEmail({
         to: user.email,
 
         subject: invoice
@@ -1492,9 +1887,11 @@ export const sendEnrollmentWelcomeEmail =
                 ${user.email}
               </p>
 
-              <p>
-                Use the portal password you created during enrollment to sign in.
-              </p>
+              ${
+                plaintextPassword
+                  ? `<p><strong>Password:</strong> ${plaintextPassword}</p>`
+                  : `<p>Use the portal password you created during enrollment to sign in.</p>`
+              }
             </div>
 
             ${
@@ -1541,6 +1938,7 @@ export const sendEnrollmentWelcomeEmail =
         "Failed to send registration welcome email:",
         emailErr
       );
+      return false;
     }
   };
 
@@ -2638,7 +3036,7 @@ export async function completeEnrollmentUpgrade(
               normalizedCurrency,
 
             gateway:
-              "razorpay",
+              "RAZORPAY",
 
             transactionId:
               razorpayPaymentId,

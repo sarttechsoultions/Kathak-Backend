@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { Role } from "@prisma/client";
 import { authenticate, requireRole } from "../../middleware/auth.middleware";
+import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 import { logoutUser } from "../auth/auth.controller";
 import {
   enrollStudent,
@@ -62,8 +63,8 @@ router.get("/dashboard", ...studentOnly, getStudentDashboard);
 
 // Attendance, Progress & Leave
 router.get("/attendance", ...studentOnly, getStudentAttendance);
-router.post("/leave", ...studentOnly, applyStudentLeave);
-router.get("/progress", ...studentOnly, getStudentProgress);
+router.post("/leave", ...studentOnly, requireActiveStudentAccess, applyStudentLeave);
+router.get("/progress", ...studentOnly, requireActiveStudentAccess, getStudentProgress);
 
 router.get("/profile", ...studentOnly, getStudentProfile);
 router.put("/profile", ...studentOnly, updateStudentProfile);
@@ -73,7 +74,7 @@ router.put("/settings/profile", ...studentOnly, updateStudentSettingsProfile);
 router.put("/settings/notifications", ...studentOnly, updateStudentSettingsNotifications);
 router.get("/finance", ...studentOnly, getStudentFinance);
 router.get("/assignments", ...studentOnly, getStudentAssignments);
-router.post("/assignments/submit", ...studentOnly, submitStudentAssignment);
+router.post("/assignments/submit", ...studentOnly, requireActiveStudentAccess, submitStudentAssignment);
 
 // Legacy exam routes removed to prevent shadowing studentExamRoutes in app.ts
 

@@ -24,6 +24,7 @@ import {
   completeEnrollmentUpgrade
 } from "./enrollment.service";
 import { OtpError, sendEnrollmentOtp, verifyEnrollmentOtp, assertContactVerified } from "../../lib/otp";
+import { getStudentAccessState } from "./access.service";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -879,8 +880,15 @@ export const getStudentFinance = async (
 
         pendingAmount,
 
-        nextDueDate:
-          pendingAmount > 0
+        nextDueDate: enrollment?.nextDueDate
+          ? new Date(enrollment.nextDueDate) < new Date()
+            ? "Pay Immediately"
+            : new Date(enrollment.nextDueDate).toLocaleDateString("en-IN", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              })
+          : pendingAmount > 0
             ? "Pay Immediately"
             : "Cleared",
 
@@ -1769,7 +1777,11 @@ export const getStudentDashboard = async (
     // 16. DASHBOARD RESPONSE
     // ============================================================
 
+    const accessStateInfo = await getStudentAccessState(userId);
+
     const dashboardData = {
+      access: accessStateInfo,
+
       user: {
         id: student.id,
 
