@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Payment Receipt KATHAK-2026-000125</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin:0; padding:24px; background:#f2f4f7; color:#182230; font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:1.5; }
+    .sheet { width:100%; max-width:794px; min-height:1080px; margin:0 auto; background:#fff; border:1px solid #dde3ea; position: relative; display: flex; flex-direction: column; }
+    .top-line { height:6px; background:#990d2e; }
+    .header { padding:40px 40px 30px; text-align: center; border-bottom: 1px solid #e8ecf1; }
+    .trade-name { margin:0 0 8px; color:#990d2e; font-size:28px; line-height:1.2; font-weight:800; text-transform: uppercase; letter-spacing: 1px; }
+    .legal-details { font-size: 12px; color: #475467; margin-bottom: 12px; }
+    .legal-details span { margin: 0 8px; color: #d0d5dd; }
+    .address { font-size: 12px; color: #475467; max-width: 70%; margin: 0 auto; }
+    .doc-title { text-align: center; padding: 16px 0; background: #fdfafb; border-bottom: 1px solid #e8ecf1; font-size: 18px; font-weight: 800; letter-spacing: 2px; color: #101828; }
+    .content { padding: 40px; flex-grow: 1; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 40px; }
+    .section-title { font-size: 11px; font-weight: 700; color: #667085; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e8ecf1; }
+    .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+    .info-label { color: #475467; }
+    .info-val { font-weight: 600; color: #101828; text-align: right; }
+    .student-name { font-size: 18px; font-weight: 700; color: #101828; margin-bottom: 4px; }
+    .student-contact { color: #475467; line-height: 1.6; }
+    .total-box { background: #FDF2F4; border: 2px solid #F9D0D6; border-radius: 12px; padding: 32px; text-align: center; margin-bottom: 32px; }
+    .total-label { font-size: 14px; font-weight: 700; color: #990d2e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .total-amount { font-size: 42px; font-weight: 800; color: #990d2e; line-height: 1; margin-bottom: 16px; }
+    .amount-words { font-size: 15px; font-weight: 600; color: #475467; background: #fff; padding: 12px 24px; border-radius: 8px; display: inline-block; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .course-details { background: #f9fafb; border: 1px solid #e8ecf1; border-radius: 12px; padding: 24px; }
+    .course-title { font-size: 16px; font-weight: 700; color: #101828; margin-bottom: 16px; text-align: center; }
+    .course-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; text-align: center; }
+    .course-stat-label { font-size: 11px; color: #667085; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .course-stat-val { font-size: 15px; font-weight: 700; color: #101828; }
+    .footer { padding: 32px 40px; border-top: 1px solid #e8ecf1; background: #fff; text-align: center; color: #667085; font-size: 12px; line-height: 1.6; }
+    .thank-you { font-size: 15px; font-weight: 700; color: #101828; margin-bottom: 8px; }
+    @media print { body { padding:0; background:#fff; } .sheet { border:none; max-width:none; min-height:100vh; } }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="top-line"></div>
+    <div class="header">
+      <h1 class="trade-name">KATHAK BY HARSHITA ACADEMY</h1>
+      <div class="legal-details">
+        <strong>GSTIN:</strong> 08IKFPS1574G1ZQ <span>|</span>
+        <strong>Udyam Reg. No.:</strong> UDYAM-RJ-17-0681091
+      </div>
+      <div class="address">PLOT NO 60, GULAB BADI, Road Number 17, Vishwakarma Industrial Area, Jaipur, Rajasthan - 302013</div>
+    </div>
+    
+    <div class="doc-title">PAYMENT RECEIPT</div>
+    
+    <div class="content">
+      <div class="grid-2">
+        <div>
+          <div class="section-title">Received From</div>
+          <div class="student-name">Priya Sharma</div>
+          <div class="student-contact">
+            
+            
+            +919876543211<br/>
+            priya@example.com
+          </div>
+        </div>
+        <div>
+          <div class="section-title">Payment Details</div>
+          <div class="info-row">
+            <span class="info-label">Receipt No:</span>
+            <span class="info-val">KATHAK-2026-000125</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Date:</span>
+            <span class="info-val">11 Sept 2026, 06:41 pm</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Status:</span>
+            <span class="info-val" style="color: #027A48;">PAID</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Payment Mode:</span>
+            <span class="info-val">RAZORPAY</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Transaction ID:</span>
+            <span class="info-val">pay_mock_987654321</span>
+          </div>
+          
+          <div class="info-row">
+            <span class="info-label">Enrollment ID:</span>
+            <span class="info-val">enr_mock_124</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="total-box">
+        <div class="total-label">Total Amount Paid</div>
+        <div class="total-amount">₹3,300.00</div>
+        <div class="amount-words">Rupees Three Thousand Three Hundred Only</div>
+      </div>
+
+      <div class="course-details">
+        <div class="course-title">Enrollment Summary</div>
+        <div class="course-grid">
+          <div>
+            <div class="course-stat-label">Course</div>
+            <div class="course-stat-val">Kathak Basics - Beginners</div>
+          </div>
+          <div>
+            <div class="course-stat-label">Batch</div>
+            <div class="course-stat-val">Weekend Morning Batch</div>
+          </div>
+          <div>
+            <div class="course-stat-label">Period</div>
+            <div class="course-stat-val">1 Month(s)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="thank-you">Thank you for your payment!</div>
+      This is a computer-generated payment receipt. No physical signature is required.<br/>
+      For detailed tax invoice, please refer to the academy administration.
+    </div>
+  </div>
+</body>
+</html>

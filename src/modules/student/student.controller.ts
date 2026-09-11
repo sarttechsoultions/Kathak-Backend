@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { Role } from "@prisma/client";
+import { PaymentStatus, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt, { SignOptions } from "jsonwebtoken";
@@ -101,8 +101,14 @@ export const enrollStudent = async (req: Request, res: Response): Promise<void> 
       razorpayPaymentId: String(razorpay_payment_id),
     });
 
+    let emailSent = true;
     if (!result.alreadyCompleted) {
-      await sendEnrollmentWelcomeEmail(result.user);
+      try {
+        emailSent = await sendEnrollmentWelcomeEmail(result.user);
+      } catch (emailErr) {
+        console.error(`Welcome email failed to send for user ${result.user.email}:`, emailErr);
+        emailSent = false;
+      }
     }
 
     const { token, expiresInMs } = signUserToken({
@@ -115,9 +121,16 @@ export const enrollStudent = async (req: Request, res: Response): Promise<void> 
 
     setPortalAuthCookie(res, "student", token, expiresInMs);
 
+    const message = result.alreadyCompleted
+      ? "Student enrolled successfully."
+      : emailSent
+      ? "Student enrolled successfully."
+      : "Enrollment successful, but the welcome email could not be sent.";
+
     res.status(result.alreadyCompleted ? 200 : 201).json({
       status: "success",
-      message: "Student enrolled successfully.",
+      message,
+      emailSent,
       data: {
         token,
         user: result.user,
@@ -1778,6 +1791,32 @@ export const getStudentDashboard = async (
     // ============================================================
 
     const accessStateInfo = await getStudentAccessState(userId);
+    const reminderCutoff = new Date();
+    reminderCutoff.setDate(reminderCutoff.getDate() + 30);
+    const pendingDues = await prisma.monthlyDue.findMany({
+      where: {
+        userId,
+        status: PaymentStatus.PENDING,
+        dueDate: { lte: reminderCutoff },
+      },
+      include: { course: { select: { title: true } } },
+      orderBy: { dueDate: "asc" },
+      take: 3,
+    });
+
+    pendingDues.forEach((due) => {
+      const dueDate = new Date(due.dueDate);
+      const overdue = dueDate.getTime() < Date.now();
+      feeReminders.push({
+        id: due.id,
+        title: overdue ? "Fee payment overdue" : "Upcoming fee payment",
+        subtitle: `${due.course.title} · Due ${dueDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`,
+        amount: due.amount,
+        dueDate: dueDate.toISOString(),
+        status: overdue ? "OVERDUE" : "PENDING",
+        href: "/student/finance",
+      });
+    });
 
     const dashboardData = {
       access: accessStateInfo,

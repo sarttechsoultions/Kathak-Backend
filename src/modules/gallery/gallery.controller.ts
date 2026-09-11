@@ -144,8 +144,8 @@ export const getJourneyCarouselSettings = async (_req: Request, res: Response): 
 
 export const getJourneyCarouselItems = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const items = await prisma.$queryRaw<Array<{ id: string; title: string; altText: string | null; url: string; sortOrder: number; createdAt: Date; updatedAt: Date }>>`
-      SELECT "id", "title", "altText", "url", "sortOrder", "createdAt", "updatedAt"
+    const items = await prisma.$queryRaw<Array<{ id: string; title: string; altText: string | null; url: string; clickUrl: string | null; sortOrder: number; createdAt: Date; updatedAt: Date }>>`
+      SELECT "id", "title", "altText", "url", "clickUrl", "sortOrder", "createdAt", "updatedAt"
       FROM "JourneyCarouselItem" ORDER BY "sortOrder" ASC, "createdAt" DESC
     `;
     res.status(200).json({ status: "success", data: items });
@@ -160,15 +160,40 @@ export const createJourneyCarouselItem = async (req: Request, res: Response): Pr
     const title = asString(req.body?.title);
     const url = asString(req.body?.url);
     if (!title || !url) { res.status(400).json({ status: "error", message: "Title and image URL are required." }); return; }
-    const items = await prisma.$queryRaw<Array<{ id: string; title: string; altText: string | null; url: string; sortOrder: number; createdAt: Date; updatedAt: Date }>>`
-      INSERT INTO "JourneyCarouselItem" ("id", "title", "altText", "url", "sortOrder", "createdAt", "updatedAt")
-      VALUES (gen_random_uuid()::text, ${title}, ${asString(req.body?.altText) || title}, ${url}, 0, NOW(), NOW())
-      RETURNING "id", "title", "altText", "url", "sortOrder", "createdAt", "updatedAt"
+    const clickUrl = asString(req.body?.clickUrl);
+    if (clickUrl && !/^\/(?!\/)|^https?:\/\//i.test(clickUrl)) {
+      res.status(400).json({ status: "error", message: "Destination must start with /, http://, or https://." }); return;
+    }
+    const items = await prisma.$queryRaw<Array<{ id: string; title: string; altText: string | null; url: string; clickUrl: string | null; sortOrder: number; createdAt: Date; updatedAt: Date }>>`
+      INSERT INTO "JourneyCarouselItem" ("id", "title", "altText", "url", "clickUrl", "sortOrder", "createdAt", "updatedAt")
+      VALUES (gen_random_uuid()::text, ${title}, ${asString(req.body?.altText) || title}, ${url}, ${clickUrl || null}, 0, NOW(), NOW())
+      RETURNING "id", "title", "altText", "url", "clickUrl", "sortOrder", "createdAt", "updatedAt"
     `;
     res.status(201).json({ status: "success", data: items[0] });
   } catch (error) {
     console.error("Error creating journey carousel item:", error);
     res.status(500).json({ status: "error", message: "Failed to save carousel image." });
+  }
+};
+
+export const updateJourneyCarouselItem = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const clickUrl = asString(req.body?.clickUrl);
+    if (clickUrl && !/^\/(?!\/)|^https?:\/\//i.test(clickUrl)) {
+      res.status(400).json({ status: "error", message: "Destination must start with /, http://, or https://." }); return;
+    }
+    const items = await prisma.$queryRaw<Array<{ id: string; title: string; altText: string | null; url: string; clickUrl: string | null; sortOrder: number }>>`
+      UPDATE "JourneyCarouselItem"
+      SET "clickUrl" = ${clickUrl || null}, "updatedAt" = NOW()
+      WHERE "id" = ${id}
+      RETURNING "id", "title", "altText", "url", "clickUrl", "sortOrder"
+    `;
+    if (!items[0]) { res.status(404).json({ status: "error", message: "Carousel image not found." }); return; }
+    res.status(200).json({ status: "success", data: items[0] });
+  } catch (error) {
+    console.error("Error updating carousel image:", error);
+    res.status(500).json({ status: "error", message: "Failed to update carousel image." });
   }
 };
 

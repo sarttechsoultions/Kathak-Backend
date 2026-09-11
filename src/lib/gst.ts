@@ -9,12 +9,28 @@ export interface GstCalculationResult {
   totalAmount: number;
 }
 
+/**
+ * SAC 999291 is the CBIC classification for cultural education services.
+ * It is configurable because the academy's CA is the final authority on its
+ * GST classification for a particular supply.
+ */
+export function getInvoiceSacCode(): string {
+  return (process.env.GST_SAC_CODE || "999291").trim();
+}
+
+export function getInvoiceSacDescription(): string {
+  return (
+    process.env.GST_SAC_DESCRIPTION?.trim() || "Cultural education services"
+  );
+}
+
 export function calculateGstFromInclusiveTotal(
   inclusiveTotal: number,
   studentState: string | null | undefined
 ): GstCalculationResult {
   const gstRate = Number(process.env.GST_RATE);
-  const academyState = (process.env.ACADEMY_STATE || "").trim().toLowerCase();
+  const { BUSINESS_DETAILS } = require("./businessConfig");
+  const academyState = (BUSINESS_DETAILS.state || process.env.ACADEMY_STATE || "").trim().toLowerCase();
 
   if (!Number.isFinite(gstRate) || gstRate < 0 || gstRate > 100) {
     throw new Error("GST_RATE must be configured as a percentage between 0 and 100.");

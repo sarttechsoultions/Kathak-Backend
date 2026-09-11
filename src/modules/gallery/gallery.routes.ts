@@ -6,6 +6,7 @@ import {
   getJourneyCarouselSettings,
   getJourneyCarouselItems,
   createJourneyCarouselItem,
+  updateJourneyCarouselItem,
   deleteJourneyCarouselItem,
   getAdminGallery,
   createGalleryItem,
@@ -26,6 +27,7 @@ adminGalleryRouter.get("/journey-settings", getJourneyCarouselSettings);
 adminGalleryRouter.put("/journey-settings", updateJourneyCarouselSettings);
 adminGalleryRouter.get("/journey-items", getJourneyCarouselItems);
 adminGalleryRouter.post("/journey-items", createJourneyCarouselItem);
+adminGalleryRouter.put("/journey-items/:id", updateJourneyCarouselItem);
 adminGalleryRouter.delete("/journey-items/:id", deleteJourneyCarouselItem);
 adminGalleryRouter.post("/", createGalleryItem);
 adminGalleryRouter.put("/:id", updateGalleryItem);
