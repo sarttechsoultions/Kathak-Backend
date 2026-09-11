@@ -13,8 +13,10 @@ import {
   TEACHER_EARLY_JOIN_MINUTES,
 } from "../../lib/liveClassAccess";
 import { teacherOwnsBatch } from "../../lib/teacherBatchAccess";
-
-const attendanceLock = new Set<string>();
+import {
+  broadcastLiveClassEvent,
+  subscribeToLiveClassUpdates,
+} from "./liveclass.events";
 
 type ChatMessage = {
   id: string;
@@ -74,6 +76,70 @@ function roleLabel(user: AuthUser): string {
   if (user.role === Role.ADMIN) return "Admin";
   if (user.role === Role.TEACHER) return "Teacher";
   return "Student";
+}
+
+async function recordLiveClassAttendance(
+  liveClass: any,
+  user: AuthUser,
+  userName: string
+) {
+  const now = new Date();
+  if (now < liveClass.scheduledStart) return;
+
+  const isTeacher = user.role === Role.TEACHER;
+  const isStudent = user.role === Role.STUDENT;
+  if (!isTeacher && !isStudent) return;
+
+  const minutesAfterStart =
+    (now.getTime() - liveClass.scheduledStart.getTime()) / (60 * 1000);
+
+  await prisma.attendance.upsert({
+    where: {
+      liveClassId_studentId: {
+        liveClassId: liveClass.id,
+        studentId: user.id,
+      },
+    },
+    update: {},
+    create: {
+      liveClassId: liveClass.id,
+      studentId: user.id,
+      studentName: userName,
+      batchId: liveClass.batchId,
+      batchName: isTeacher ? "Teacher/Staff" : liveClass.batch.name,
+      session: liveClass.title,
+      status: minutesAfterStart > 15 ? "LATE" : "PRESENT",
+      date: now,
+      remarks: "Auto-marked: Joined live class room.",
+    },
+  });
+}
+
+function scheduleLiveClassAttendance(
+  socket: Socket,
+  liveClass: any,
+  user: AuthUser,
+  userName: string
+) {
+  const existingTimer = socket.data.liveClassAttendanceTimer as
+    | ReturnType<typeof setTimeout>
+    | undefined;
+  if (existingTimer) clearTimeout(existingTimer);
+
+  const delay = Math.max(0, liveClass.scheduledStart.getTime() - Date.now());
+  const record = () => {
+    if (socket.connected && socket.data.liveClassId === liveClass.id) {
+      void recordLiveClassAttendance(liveClass, user, userName).catch((error) =>
+        console.error("Live class attendance error:", error)
+      );
+    }
+  };
+
+  if (delay === 0) {
+    record();
+  } else {
+    socket.data.liveClassAttendanceTimer = setTimeout(record, delay);
+  }
 }
 
 async function loadChatHistory(
@@ -300,6 +366,12 @@ export function registerLiveClassSocket(io: Server) {
       return;
     }
 
+    // Schedule events are visible only to an administrator, the assigned
+    // teacher, or students enrolled in the affected batch.
+    void subscribeToLiveClassUpdates(socket, authUser, prisma).catch((error) =>
+      console.error("Unable to subscribe socket to live-class updates:", error)
+    );
+
     /**
      * -------------------------------------------------------
      * JOIN ROOM
@@ -481,64 +553,6 @@ export function registerLiveClassSocket(io: Server) {
           ] = joinTime;
 
           /**
-           * Automatically create the teacher's attendance record
-           * when they join a live class. Teacher attendance uses
-           * the dedicated Teacher/Staff batch marker so it appears
-           * in the teacher attendance page.
-           */
-          if (
-            isHostRole(userRole) &&
-            authUser.role === Role.TEACHER
-          ) {
-            try {
-              const todayStart = new Date();
-              todayStart.setHours(0, 0, 0, 0);
-              const todayEnd = new Date();
-              todayEnd.setHours(23, 59, 59, 999);
-
-              const lockKey = `${authUser.id}-${liveClass.batchId}-${liveClass.title}-${todayStart.getTime()}`;
-
-              if (!attendanceLock.has(lockKey)) {
-                attendanceLock.add(lockKey);
-                try {
-                  const existingAttendance = await prisma.attendance.findFirst({
-                    where: {
-                      studentId: authUser.id,
-                      batchName: "Teacher/Staff",
-                      batchId: liveClass.batchId,
-                      date: { gte: todayStart, lte: todayEnd },
-                      session: liveClass.title,
-                    },
-                  });
-
-                  if (!existingAttendance) {
-                    const startDiffMinutes = (joinTime.getTime() - liveClass.scheduledStart.getTime()) / (1000 * 60);
-                    await prisma.attendance.create({
-                      data: {
-                        studentId: authUser.id,
-                        studentName: userName,
-                        batchId: liveClass.batchId,
-                        batchName: "Teacher/Staff",
-                        session: liveClass.title,
-                        status: startDiffMinutes > 15 ? "LATE" : "PRESENT",
-                        date: joinTime,
-                        remarks: "Auto-marked: Joined live class.",
-                      },
-                    });
-                  }
-                } finally {
-                  attendanceLock.delete(lockKey);
-                }
-              }
-            } catch (err) {
-              console.error(
-                "Auto-Attendance Teacher Join Error:",
-                err
-              );
-            }
-          }
-
-          /**
            * Store trusted socket state.
            */
           socket.data.roomName =
@@ -599,6 +613,11 @@ export function registerLiveClassSocket(io: Server) {
             participant
           );
 
+          // A student/teacher may enter the room during the 10-minute
+          // waiting window; attendance is persisted only at class start or
+          // later, after Socket.IO room access has succeeded.
+          scheduleLiveClassAttendance(socket, liveClass, authUser, userName);
+
           /**
            * Everyone gets the complete participant list.
            */
@@ -641,7 +660,7 @@ export function registerLiveClassSocket(io: Server) {
 
               if (updated) {
                 io.to(roomName).emit("liveclass:status-changed", "LIVE");
-                io.emit("liveclass:class-updated", {
+                broadcastLiveClassEvent(io, "liveclass:class-updated", {
                   ...updated,
                   batchName: updated.batch.name,
                   batchCode: updated.batch.code,

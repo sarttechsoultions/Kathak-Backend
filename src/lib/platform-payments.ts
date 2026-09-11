@@ -17,7 +17,31 @@ export type PlatformPaymentRow = {
   amount: number;
   currency: string;
   invoicePaymentId: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: Date | null;
+  billingState: string;
+  gstRate: number | null;
+  taxableValue: number | null;
+  cgst: number | null;
+  sgst: number | null;
+  igst: number | null;
+  totalGst: number | null;
 };
+
+type InvoiceSnapshot = {
+  studentState?: unknown;
+  gstDetails?: {
+    gstRate?: unknown;
+    taxableBase?: unknown;
+    cgst?: unknown;
+    sgst?: unknown;
+    igst?: unknown;
+    totalGst?: unknown;
+  };
+};
+
+const asNumberOrNull = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
 
 export const isSuccessfulStatus = (status: string) =>
   status === PaymentStatus.SUCCESS || status === "SUCCESS";
@@ -43,6 +67,7 @@ export const loadPlatformPayments = async (): Promise<PlatformPaymentRow[]> => {
           },
         },
         enrollment: { include: { course: true } },
+        Invoice: { select: { invoiceNumber: true, createdAt: true, snapshot: true } },
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -60,23 +85,36 @@ export const loadPlatformPayments = async (): Promise<PlatformPaymentRow[]> => {
     }),
   ]);
 
-  const rows: PlatformPaymentRow[] = payments.map((payment) => ({
-    id: payment.id,
-    source: "COURSE",
-    sourceLabel: "Course Enrollment",
-    createdAt: payment.createdAt,
-    studentName: payment.user?.fullName || "Student",
-    email: payment.user?.email || "",
-    phone: payment.user?.phone || "",
-    itemTitle: payment.enrollment?.course?.title || "Course Enrollment",
-    transactionId: payment.transactionId,
-    orderId: payment.orderId,
-    gateway: payment.gateway || payment.user?.paymentMethod || "RAZORPAY",
-    status: payment.status,
-    amount: payment.amount,
-    currency: String(payment.currency || "INR"),
-    invoicePaymentId: payment.id,
-  }));
+  const rows: PlatformPaymentRow[] = payments.map((payment) => {
+    const snapshot = (payment.Invoice?.snapshot || {}) as InvoiceSnapshot;
+    const gst = snapshot.gstDetails;
+    return {
+      id: payment.id,
+      source: "COURSE",
+      sourceLabel: "Course Enrollment",
+      createdAt: payment.createdAt,
+      studentName: payment.user?.fullName || "Student",
+      email: payment.user?.email || "",
+      phone: payment.user?.phone || "",
+      itemTitle: payment.enrollment?.course?.title || "Course Enrollment",
+      transactionId: payment.transactionId,
+      orderId: payment.orderId,
+      gateway: payment.gateway || payment.user?.paymentMethod || "RAZORPAY",
+      status: payment.status,
+      amount: payment.amount,
+      currency: String(payment.currency || "INR"),
+      invoicePaymentId: payment.id,
+      invoiceNumber: payment.Invoice?.invoiceNumber || null,
+      invoiceDate: payment.Invoice?.createdAt || null,
+      billingState: typeof snapshot.studentState === "string" ? snapshot.studentState : payment.user?.region || "",
+      gstRate: asNumberOrNull(gst?.gstRate),
+      taxableValue: asNumberOrNull(gst?.taxableBase),
+      cgst: asNumberOrNull(gst?.cgst),
+      sgst: asNumberOrNull(gst?.sgst),
+      igst: asNumberOrNull(gst?.igst),
+      totalGst: asNumberOrNull(gst?.totalGst),
+    };
+  });
 
   for (const ticket of tickets) {
     rows.push({
@@ -95,6 +133,15 @@ export const loadPlatformPayments = async (): Promise<PlatformPaymentRow[]> => {
       amount: ticket.amount,
       currency: "INR",
       invoicePaymentId: null,
+      invoiceNumber: null,
+      invoiceDate: null,
+      billingState: "",
+      gstRate: null,
+      taxableValue: null,
+      cgst: null,
+      sgst: null,
+      igst: null,
+      totalGst: null,
     });
   }
 
@@ -117,6 +164,15 @@ export const loadPlatformPayments = async (): Promise<PlatformPaymentRow[]> => {
       amount,
       currency: "INR",
       invoicePaymentId: registration.paymentId,
+      invoiceNumber: null,
+      invoiceDate: null,
+      billingState: "",
+      gstRate: null,
+      taxableValue: null,
+      cgst: null,
+      sgst: null,
+      igst: null,
+      totalGst: null,
     });
   }
 

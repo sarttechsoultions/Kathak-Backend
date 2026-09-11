@@ -243,6 +243,11 @@ model Enrollment {
   invoices             Invoice[]
 }
 
+model InvoiceCounter {
+  year    Int @id
+  current Int @default(0)
+}
+
 model Invoice {
   id            String   @id @default(uuid())
   invoiceNumber String   @unique
@@ -252,6 +257,7 @@ model Invoice {
   amount        Float
   currency      Currency @default(INR)
   status        String   @default("PAID")
+  snapshot      Json?
   createdAt     DateTime @default(now())
 
   payment    Payment    @relation(fields: [paymentId], references: [id])
@@ -404,6 +410,7 @@ model LiveClass {
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
   batch              Batch                    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  attendance         Attendance[]
   chatMessages       LiveClassChatMessage[]
   rescheduleRequests ClassRescheduleRequest[]
 
@@ -427,6 +434,7 @@ model Attendance {
   studentId   String
   studentName String
   batchId     String?
+  liveClassId String?
   batchName   String
   session     String           @default("General")
   date        DateTime         @default(now())
@@ -435,8 +443,10 @@ model Attendance {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   batch       Batch?           @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  liveClass   LiveClass?       @relation(fields: [liveClassId], references: [id], onDelete: SetNull)
   student     User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
+  @@unique([liveClassId, studentId])
   @@index([batchId, date, session])
 }
 
