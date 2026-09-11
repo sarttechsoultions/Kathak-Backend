@@ -1,4 +1,5 @@
 import { GstCalculationResult } from "./gst";
+import { BUSINESS_DETAILS } from "./businessConfig";
 import fs from "fs";
 
 export type InvoiceData = {
@@ -17,6 +18,7 @@ export type InvoiceData = {
   transactionId: string;
   orderId: string | null;
   status: string;
+  enrollmentId?: string;
   snapshot?: any;
 };
 
@@ -54,7 +56,11 @@ export const buildCaTaxInvoiceHtml = (invoice: InvoiceData): string => {
   const academyAddress = invoice.snapshot?.academyAddress || process.env.ACADEMY_ADDRESS || "";
   const academyState = invoice.snapshot?.academyState || process.env.ACADEMY_STATE || "";
   const academyGstin = invoice.snapshot?.academyGstin || process.env.ACADEMY_GSTIN || "";
+  const academyUdyamRegistration =
+    invoice.snapshot?.udyamRegistration || BUSINESS_DETAILS.udyamRegistration || "";
   const studentState = invoice.snapshot?.studentState || "";
+  const sacCode = invoice.snapshot?.sacCode || process.env.GST_SAC_CODE || "999291";
+  const sacDescription = invoice.snapshot?.sacDescription || process.env.GST_SAC_DESCRIPTION || "Cultural education services";
 
   const gstDetails: GstCalculationResult | null = invoice.snapshot?.gstDetails || null;
   const isGstEnabled = gstDetails && gstDetails.totalGst > 0;
@@ -121,6 +127,7 @@ export const buildCaTaxInvoiceHtml = (invoice: InvoiceData): string => {
         ${academyAddress ? `<p>${escapeHtml(academyAddress)}</p>` : ''}
         ${academyState ? `<p>${escapeHtml(academyState)}</p>` : ''}
         ${academyGstin ? `<p><strong>GSTIN:</strong> ${escapeHtml(academyGstin)}</p>` : ''}
+        ${academyUdyamRegistration ? `<p><strong>Udyam Reg. No.:</strong> ${escapeHtml(academyUdyamRegistration)}</p>` : ''}
         ${academyEmail || academyPhone ? `<p>${escapeHtml(academyEmail)}${academyEmail && academyPhone ? ' · ' : ''}${escapeHtml(academyPhone)}</p>` : ''}
       </div>
       <div class="invoice-meta">
@@ -147,14 +154,16 @@ export const buildCaTaxInvoiceHtml = (invoice: InvoiceData): string => {
       <table class="items">
         <thead>
           <tr>
-            <th style="width:52%">Description</th>
-            <th style="width:22%">Batch</th>
-            <th style="width:26%; text-align:right">Taxable Value</th>
+            <th style="width:42%">Description</th>
+            <th style="width:17%">SAC</th>
+            <th style="width:17%">Batch</th>
+            <th style="width:24%; text-align:right">Taxable Value</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td><div class="service-name">${escapeHtml(invoice.courseTitle || "Course Enrollment")}</div><div class="service-note">Course enrollment fee · Payment method: ${escapeHtml(method)}</div></td>
+            <td><strong>${escapeHtml(sacCode)}</strong><div class="service-note">${escapeHtml(sacDescription)}</div></td>
             <td>${escapeHtml(invoice.batchName || "—")}</td>
             <td class="money">${escapeHtml(formatINR(baseAmount, invoice.currency))}</td>
           </tr>
@@ -172,20 +181,148 @@ export const buildCaTaxInvoiceHtml = (invoice: InvoiceData): string => {
 </html>`;
 };
 
-/** Student-facing receipt. GST calculations remain in the stored invoice only. */
+/** Professional Student-facing Tax Invoice / Payment Receipt. */
 export const buildStudentPaymentReceiptHtml = (invoice: InvoiceData): string => {
-  const academyName = invoice.snapshot?.academyName || process.env.ACADEMY_NAME || "";
-  const academyEmail = invoice.snapshot?.academyEmail || process.env.ACADEMY_CONTACT_EMAIL || "";
-  const academyPhone = invoice.snapshot?.academyPhone || process.env.ACADEMY_CONTACT_PHONE || "";
-  const academyAddress = invoice.snapshot?.academyAddress || process.env.ACADEMY_ADDRESS || "";
-  const method = invoice.paymentMethod || invoice.gateway || "Online";
-  const showGstIncluded = invoice.snapshot?.showGstIncluded === true;
+  const { amountToWords } = require("./currencyToWords");
+  const s = invoice.snapshot || {};
+
+  const tradeName = s.academyName || "KATHAK BY HARSHITA ACADEMY";
+  const legalName = s.legalName || "HARSHITA SHARMA";
+  const academyGstin = s.academyGstin || "08IKFPS1574G1ZQ";
+  const udyam = s.udyamRegistration || "UDYAM-RJ-17-0681091";
+  const academyAddress = s.academyAddress || "PLOT NO 60, GULAB BADI, Road Number 17, Vishwakarma Industrial Area, Jaipur, Rajasthan - 302013";
+  
+  const method = s.paymentMode || invoice.paymentMethod || invoice.gateway || "Online";
+  const months = s.months || 1;
+  const amountWords = amountToWords(invoice.amount);
 
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8" /><title>Payment Receipt ${escapeHtml(invoice.invoiceNumber)}</title>
-<style>
-body { font-family:Arial,Helvetica,sans-serif; color:#1B1B24; background:#f6f3ee; margin:0; padding:24px; } .sheet { max-width:720px; margin:0 auto; background:#fff; border:1px solid #eadfd0; border-radius:16px; overflow:hidden; } .header { background:#900C27; color:#fff; padding:28px 32px; display:flex; justify-content:space-between; gap:16px; } h1 { margin:0; font-size:22px; } .header p { margin:6px 0 0; font-size:12px; opacity:.9; } .badge { background:#fff; color:#900C27; font-weight:700; font-size:11px; letter-spacing:.08em; padding:6px 10px; border-radius:999px; height:fit-content; } .body { padding:28px 32px; } .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-bottom:24px; } .label { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:#7a7168; margin-bottom:4px; } .value { font-size:14px; font-weight:700; } .meta { font-size:12px; color:#5d564e; line-height:1.6; } .item { border-top:1px solid #eadfd0; border-bottom:1px solid #eadfd0; padding:16px 0; display:flex; justify-content:space-between; gap:16px; } .total { background:#FDF2F4; border-radius:12px; padding:16px 18px; display:flex; justify-content:space-between; font-size:18px; font-weight:800; color:#900C27; margin-top:20px; } .note { margin-top:14px; padding:10px 12px; background:#f7f4ef; border-radius:8px; font-size:12px; color:#5d564e; } .footer { padding:0 32px 28px; font-size:11px; color:#8a8178; } @media print { body { background:#fff; padding:0; } .sheet { border:none; } }
-</style></head><body><div class="sheet"><div class="header"><div><h1>${escapeHtml(academyName)}</h1><p>${escapeHtml(academyAddress)}</p>${academyEmail ? `<p>${escapeHtml(academyEmail)}${academyPhone ? ` · ${escapeHtml(academyPhone)}` : ""}</p>` : ""}</div><div class="badge">PAYMENT RECEIVED</div></div><div class="body"><div class="grid"><div><div class="label">Received From</div><div class="value">${escapeHtml(invoice.studentName)}</div><div class="meta">${escapeHtml(invoice.studentEmail)}<br/>${escapeHtml(invoice.studentPhone)}</div></div><div><div class="label">Receipt Number</div><div class="value">${escapeHtml(invoice.invoiceNumber)}</div><div class="meta">Issued: ${escapeHtml(formatDate(invoice.issuedAt))}<br/>Transaction: ${escapeHtml(invoice.transactionId)}</div></div></div><div class="item"><div><div class="value">${escapeHtml(invoice.courseTitle || "Course Enrollment")}</div><div class="meta">${escapeHtml(invoice.batchName || "Enrollment")} · ${escapeHtml(method)}</div></div><div class="value">${escapeHtml(formatINR(invoice.amount, invoice.currency))}</div></div><div class="total"><span>Total Amount Received</span><span>${escapeHtml(formatINR(invoice.amount, invoice.currency))}</span></div>${showGstIncluded ? '<div class="note">GST is included in the amount received.</div>' : ""}</div><div class="footer">This is a computer-generated payment receipt. No signature is required.</div></div></body></html>`;
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Payment Receipt ${escapeHtml(invoice.invoiceNumber)}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin:0; padding:24px; background:#f2f4f7; color:#182230; font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:1.5; }
+    .sheet { width:100%; max-width:794px; min-height:1080px; margin:0 auto; background:#fff; border:1px solid #dde3ea; position: relative; display: flex; flex-direction: column; }
+    .top-line { height:6px; background:#990d2e; }
+    .header { padding:40px 40px 30px; text-align: center; border-bottom: 1px solid #e8ecf1; }
+    .trade-name { margin:0 0 8px; color:#990d2e; font-size:28px; line-height:1.2; font-weight:800; text-transform: uppercase; letter-spacing: 1px; }
+    .legal-details { font-size: 12px; color: #475467; margin-bottom: 12px; }
+    .legal-details span { margin: 0 8px; color: #d0d5dd; }
+    .address { font-size: 12px; color: #475467; max-width: 70%; margin: 0 auto; }
+    .doc-title { text-align: center; padding: 16px 0; background: #fdfafb; border-bottom: 1px solid #e8ecf1; font-size: 18px; font-weight: 800; letter-spacing: 2px; color: #101828; }
+    .content { padding: 40px; flex-grow: 1; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 40px; }
+    .section-title { font-size: 11px; font-weight: 700; color: #667085; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e8ecf1; }
+    .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+    .info-label { color: #475467; }
+    .info-val { font-weight: 600; color: #101828; text-align: right; }
+    .student-name { font-size: 18px; font-weight: 700; color: #101828; margin-bottom: 4px; }
+    .student-contact { color: #475467; line-height: 1.6; }
+    .total-box { background: #FDF2F4; border: 2px solid #F9D0D6; border-radius: 12px; padding: 32px; text-align: center; margin-bottom: 32px; }
+    .total-label { font-size: 14px; font-weight: 700; color: #990d2e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .total-amount { font-size: 42px; font-weight: 800; color: #990d2e; line-height: 1; margin-bottom: 16px; }
+    .amount-words { font-size: 15px; font-weight: 600; color: #475467; background: #fff; padding: 12px 24px; border-radius: 8px; display: inline-block; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .course-details { background: #f9fafb; border: 1px solid #e8ecf1; border-radius: 12px; padding: 24px; }
+    .course-title { font-size: 16px; font-weight: 700; color: #101828; margin-bottom: 16px; text-align: center; }
+    .course-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; text-align: center; }
+    .course-stat-label { font-size: 11px; color: #667085; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .course-stat-val { font-size: 15px; font-weight: 700; color: #101828; }
+    .footer { padding: 32px 40px; border-top: 1px solid #e8ecf1; background: #fff; text-align: center; color: #667085; font-size: 12px; line-height: 1.6; }
+    .thank-you { font-size: 15px; font-weight: 700; color: #101828; margin-bottom: 8px; }
+    @media print { body { padding:0; background:#fff; } .sheet { border:none; max-width:none; min-height:100vh; } }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="top-line"></div>
+    <div class="header">
+      <h1 class="trade-name">${escapeHtml(tradeName)}</h1>
+      <div class="legal-details">
+        <strong>GSTIN:</strong> ${escapeHtml(academyGstin)} <span>|</span>
+        <strong>Udyam Reg. No.:</strong> ${escapeHtml(udyam)}
+      </div>
+      <div class="address">${escapeHtml(academyAddress)}</div>
+    </div>
+    
+    <div class="doc-title">PAYMENT RECEIPT</div>
+    
+    <div class="content">
+      <div class="grid-2">
+        <div>
+          <div class="section-title">Received From</div>
+          <div class="student-name">${escapeHtml(invoice.studentName)}</div>
+          <div class="student-contact">
+            ${invoice.studentAddress ? escapeHtml(invoice.studentAddress) + '<br/>' : ''}
+            ${s.studentState ? escapeHtml(s.studentState) + '<br/>' : ''}
+            ${escapeHtml(invoice.studentPhone)}<br/>
+            ${escapeHtml(invoice.studentEmail)}
+          </div>
+        </div>
+        <div>
+          <div class="section-title">Payment Details</div>
+          <div class="info-row">
+            <span class="info-label">Receipt No:</span>
+            <span class="info-val">${escapeHtml(invoice.invoiceNumber)}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Date:</span>
+            <span class="info-val">${escapeHtml(formatDate(invoice.issuedAt))}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Status:</span>
+            <span class="info-val" style="color: #027A48;">PAID</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Payment Mode:</span>
+            <span class="info-val">${escapeHtml(method)}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Transaction ID:</span>
+            <span class="info-val">${escapeHtml(invoice.transactionId)}</span>
+          </div>
+          ${invoice.enrollmentId ? `
+          <div class="info-row">
+            <span class="info-label">Enrollment ID:</span>
+            <span class="info-val">${escapeHtml(invoice.enrollmentId)}</span>
+          </div>` : ''}
+        </div>
+      </div>
+
+      <div class="total-box">
+        <div class="total-label">Total Amount Paid</div>
+        <div class="total-amount">${escapeHtml(formatINR(invoice.amount, invoice.currency))}</div>
+        <div class="amount-words">${escapeHtml(amountWords)}</div>
+      </div>
+
+      <div class="course-details">
+        <div class="course-title">Enrollment Summary</div>
+        <div class="course-grid">
+          <div>
+            <div class="course-stat-label">Course</div>
+            <div class="course-stat-val">${escapeHtml(invoice.courseTitle || "Course Enrollment")}</div>
+          </div>
+          <div>
+            <div class="course-stat-label">Batch</div>
+            <div class="course-stat-val">${escapeHtml(invoice.batchName || "—")}</div>
+          </div>
+          <div>
+            <div class="course-stat-label">Period</div>
+            <div class="course-stat-val">${months} Month(s)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="thank-you">Thank you for your payment!</div>
+      This is a computer-generated payment receipt. No physical signature is required.<br/>
+      For detailed tax invoice, please refer to the academy administration.
+    </div>
+  </div>
+</body>
+</html>`;
 };
 
 /** Backwards-compatible internal/admin invoice renderer. */

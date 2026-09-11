@@ -1550,7 +1550,7 @@ if (!enrollment) {
   });
 
   if (paymentRecord) {
-    const { calculateGstFromInclusiveTotal } = require("../../lib/gst");
+    const { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } = require("../../lib/gst");
     const anyPayload = payload as any;
     const gstDetails = calculateGstFromInclusiveTotal(feePaid, anyPayload.region);
 
@@ -1567,13 +1567,20 @@ if (!enrollment) {
     const batch = assignedBatchId ? await tx.batch.findUnique({ where: { id: assignedBatchId } }) : null;
     const batchName = batch ? batch.name : "1-to-1 Session";
 
+    const { BUSINESS_DETAILS } = require("../../lib/businessConfig");
+    
     const snapshot = {
-      academyName: process.env.ACADEMY_NAME || "",
+      academyName: BUSINESS_DETAILS.tradeName || process.env.ACADEMY_NAME || "",
+      legalName: BUSINESS_DETAILS.legalName || "",
       academyEmail: process.env.ACADEMY_CONTACT_EMAIL || "",
       academyPhone: process.env.ACADEMY_CONTACT_PHONE || "",
-      academyAddress: process.env.ACADEMY_ADDRESS || "",
-      academyState: process.env.ACADEMY_STATE || "",
-      academyGstin: process.env.ACADEMY_GSTIN || "",
+      academyAddress: BUSINESS_DETAILS.address || process.env.ACADEMY_ADDRESS || "",
+      academyState: BUSINESS_DETAILS.state || process.env.ACADEMY_STATE || "",
+      academyGstin: BUSINESS_DETAILS.gstin || process.env.ACADEMY_GSTIN || "",
+      udyamRegistration: BUSINESS_DETAILS.udyamRegistration || "",
+      authorizedSignatory: BUSINESS_DETAILS.authorizedSignatory || "",
+      sacCode: getInvoiceSacCode(),
+      sacDescription: getInvoiceSacDescription(),
       gstDetails,
       studentName: user.fullName,
       studentEmail: user.email,
@@ -1583,7 +1590,12 @@ if (!enrollment) {
       billingLegalName: anyPayload.billingLegalName || "",
       billingGstin: anyPayload.billingGstin || "",
       courseTitle: course.title,
-      batchName: batchName
+      batchName: batchName,
+      months: anyPayload.months || 1,
+      monthlyBaseAmount: anyPayload.monthlyBaseAmount || 0,
+      joiningFeeApplied: anyPayload.joiningFeeApplied || 0,
+      discountAmount: anyPayload.discountAmount || 0,
+      paymentMode: anyPayload.paymentMode || paymentRecord.gateway || "ONLINE"
     };
 
     await tx.invoice.upsert({
@@ -1881,7 +1893,7 @@ export const sendEnrollmentWelcomeEmail =
         } catch (pdfError) {
           // A receipt PDF must never prevent a successful enrollment from
           // notifying the student. The committed invoice remains available.
-          console.error("Failed to generate enrollment receipt PDF:", pdfError);
+          console.error(`[PDF_GENERATION_FAILURE] Failed to generate receipt PDF for invoice ${invoice.invoiceNumber} (User: ${user.email}):`, pdfError);
         }
       }
 
@@ -1957,7 +1969,7 @@ export const sendEnrollmentWelcomeEmail =
       });
     } catch (emailErr) {
       console.error(
-        "Failed to send registration welcome email:",
+        `[WELCOME_EMAIL_FAILURE] Failed to send registration welcome email to ${user.email}:`,
         emailErr
       );
       return false;

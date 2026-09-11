@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Tax Invoice / Payment Receipt KATHAK-2026-000124</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin:0; padding:24px; background:#f2f4f7; color:#182230; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:1.45; }
+    .sheet { width:100%; max-width:794px; min-height:1080px; margin:0 auto; background:#fff; border:1px solid #dde3ea; position: relative; }
+    .top-line { height:6px; background:#990d2e; }
+    .header { padding:30px 36px 20px; border-bottom:1px solid #dde3ea; text-align: center; }
+    .trade-name { margin:0 0 4px; color:#990d2e; font-size:26px; line-height:1.2; font-weight:800; text-transform: uppercase; letter-spacing: 1px; }
+    .legal-details { font-size: 11px; color: #475467; margin-bottom: 8px; }
+    .legal-details span { margin: 0 6px; }
+    .address { font-size: 11px; color: #475467; max-width: 80%; margin: 0 auto; }
+    .doc-title { text-align: center; padding: 12px 0; background: #f9fafb; border-bottom: 1px solid #dde3ea; font-size: 16px; font-weight: 800; letter-spacing: 2px; color: #101828; }
+    .content { padding:26px 36px 32px; }
+    .columns { display:table; width:100%; margin-bottom:27px; } 
+    .column { display:table-cell; width:50%; vertical-align:top; } 
+    .column.right { text-align: right; }
+    .section-label { margin-bottom:7px; color:#667085; font-size:10px; letter-spacing:.1em; font-weight:700; text-transform:uppercase; }
+    .info-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; }
+    .info-label { color: #667085; font-weight: 600; }
+    .info-val { color: #101828; font-weight: 700; }
+    table { width:100%; border-collapse:collapse; margin-top: 10px; border: 1px solid #dfe5ec; } 
+    th { padding:10px 11px; background:#f9fafb; color:#475467; border-bottom:1px solid #dfe5ec; font-size:10px; letter-spacing:.06em; text-align:left; text-transform:uppercase; }
+    td { padding:14px 11px; border-bottom:1px solid #e8ecf1; vertical-align:top; } 
+    .money { text-align:right; white-space:nowrap; font-weight:700; } 
+    .center { text-align:center; }
+    .totals-area { display:table; width:100%; margin-top:20px; }
+    .words-area { display:table-cell; width:60%; padding-right:30px; vertical-align:top; }
+    .summary-area { display:table-cell; width:40%; vertical-align:top; }
+    .summary-table { width: 100%; border: none; margin-top: 0; }
+    .summary-table td { padding: 8px 11px; border: none; }
+    .summary-table .border-top td { border-top: 1px solid #dfe5ec; }
+    .summary-table .grand td { font-size: 14px; font-weight: 800; color: #990d2e; background: #FDF2F4; }
+    .words-box { background: #f9fafb; padding: 12px; border: 1px solid #e8ecf1; border-radius: 4px; margin-top: 8px; }
+    .footer { position: absolute; bottom: 0; left: 0; right: 0; padding:20px 36px; border-top:1px solid #e5e9ef; color:#667085; font-size:10px; display:flex; justify-content:space-between; align-items: flex-end; background: #fff; }
+    .signatory { text-align: right; }
+    .sign-name { font-weight: 700; color: #101828; font-size: 12px; margin-top: 30px; }
+    @media print { body { padding:0; background:#fff; } .sheet { border:none; max-width:none; min-height:100vh; position: relative; } }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="top-line"></div>
+    <div class="header">
+      <h1 class="trade-name">KATHAK BY HARSHITA ACADEMY</h1>
+      <div class="legal-details">
+        <strong>Legal Name:</strong> HARSHITA SHARMA <span>|</span>
+        <strong>GSTIN:</strong> 08IKFPS1574G1ZQ <span>|</span>
+        <strong>Udyam Reg. No.:</strong> UDYAM-RJ-17-0681091
+      </div>
+      <div class="address">PLOT NO 60, GULAB BADI, Road Number 17, Vishwakarma Industrial Area, Jaipur, Rajasthan - 302013</div>
+    </div>
+    
+    <div class="doc-title">TAX INVOICE / PAYMENT RECEIPT</div>
+    
+    <div class="content">
+      <div class="columns">
+        <div class="column">
+          <div class="section-label">Billed To</div>
+          <div style="font-size: 14px; font-weight: 700; color: #101828; margin-bottom: 4px;">Aarav Kumar</div>
+          <div style="color: #475467; line-height: 1.5;">
+            
+            
+            +919876543210<br/>
+            aarav@example.com
+          </div>
+        </div>
+        <div class="column right">
+          <div class="info-grid" style="display: inline-grid; text-align: left;">
+            <span class="info-label">Invoice No:</span> <span class="info-val">KATHAK-2026-000124</span>
+            <span class="info-label">Invoice Date:</span> <span class="info-val">11 Sept 2026, 06:23 pm</span>
+            <span class="info-label">Payment Status:</span> <span class="info-val" style="color: #027A48;">PAID</span>
+            <span class="info-label">Payment Mode:</span> <span class="info-val">CASH</span>
+            <span class="info-label">Transaction ID:</span> <span class="info-val">txn_mock_123456789</span>
+            <span class="info-label">Enrollment ID:</span> <span class="info-val">enr_mock_123</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 20px; background: #f9fafb; border: 1px solid #e8ecf1; padding: 12px 16px; border-radius: 4px;">
+        <div class="info-grid">
+          <span class="info-label">Course:</span> <span class="info-val">Kathak Basics - Beginners</span>
+          <span class="info-label">Batch:</span> <span class="info-val">Weekend Morning Batch</span>
+          <span class="info-label">Period:</span> <span class="info-val">1 Month(s)</span>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width:10%" class="center">Sr. No.</th>
+            <th style="width:45%">Description</th>
+            <th style="width:20%" class="center">SAC</th>
+            <th style="width:25%" class="money">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="center">1</td>
+            <td><strong>Course Fee — 1 Month(s)</strong><br/><span style="color:#667085; font-size:10px;">Cultural education services</span></td>
+            <td class="center">999291</td>
+            <td class="money">₹2,000.00</td>
+          </tr>
+          
+          <tr>
+            <td class="center">2</td>
+            <td><strong>Joining / Admission Fee</strong></td>
+            <td class="center">999291</td>
+            <td class="money">₹1,100.00</td>
+          </tr>
+          
+        </tbody>
+      </table>
+
+      <div class="totals-area">
+        <div class="words-area">
+          <div class="section-label">Amount in Words</div>
+          <div class="words-box"><strong>Rupees Three Thousand One Hundred Only</strong></div>
+          <div style="margin-top: 12px; font-size: 10px; color: #667085;">* Prices are inclusive of GST. Taxable value and tax components are reverse-calculated.</div>
+        </div>
+        <div class="summary-area">
+          <table class="summary-table">
+            <tbody>
+              <tr>
+                <td style="color:#475467">Subtotal (Inclusive)</td>
+                <td class="money">₹3,100.00</td>
+              </tr>
+              <tr class="border-top">
+                <td style="color:#475467">Taxable Value</td>
+                <td class="money">₹2,627.12</td>
+              </tr>
+              
+        <tr class="item-row">
+          <td></td>
+          <td><strong>CGST (9%)</strong></td>
+          <td></td>
+          <td class="money">₹236.44</td>
+        </tr>
+        <tr class="item-row">
+          <td></td>
+          <td><strong>SGST (9%)</strong></td>
+          <td></td>
+          <td class="money">₹236.44</td>
+        </tr>
+      
+              <tr class="border-top grand">
+                <td>Grand Total</td>
+                <td class="money">₹3,100.00</td>
+              </tr>
+              <tr>
+                <td style="color:#027A48; font-weight: 600;">Amount Paid</td>
+                <td class="money" style="color:#027A48;">₹3,100.00</td>
+              </tr>
+              <tr>
+                <td style="color:#475467">Balance Due</td>
+                <td class="money">₹0.00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div>
+        <strong style="color: #101828;">Thank you for your payment.</strong><br/>
+        This is a computer-generated tax invoice/receipt. No physical signature is required.
+      </div>
+      <div class="signatory">
+        <div>For <strong>KATHAK BY HARSHITA ACADEMY</strong></div>
+        <div class="sign-name">Authorized Signatory</div>
+        <div style="margin-top: 2px;">HARSHITA SHARMA, Proprietor</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

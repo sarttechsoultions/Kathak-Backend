@@ -12,7 +12,8 @@
   import { sendEmail } from "../../lib/mailer";
   import { env } from "../../config/env";
   import { buildInvoiceHtml, generatePdfBuffer, InvoiceData } from "../../lib/invoice";
-  import { calculateGstFromInclusiveTotal } from "../../lib/gst";
+  import { BUSINESS_DETAILS } from "../../lib/businessConfig";
+  import { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } from "../../lib/gst";
   import { calculateMonthlyEnrollmentAmount } from "../../lib/fees";
   import { resolveCurrency } from "../../lib/currency";
   import { loadPlatformPayments, summarizePlatformPayments, isSuccessfulStatus } from "../../lib/platform-payments";
@@ -3193,10 +3194,23 @@
     try {
       const statusFilter = req.query.status as string | undefined;
       const monthFilter = req.query.month as string | undefined; // YYYY-MM
+      const now = new Date();
+
+      // A future monthly instalment is scheduled, not a payment due. Keeping
+      // it separate prevents a just-paid cash enrollment from appearing as
+      // an unpaid item on the Finance screen.
+      const dueStatusWhere =
+        statusFilter === "UPCOMING"
+          ? { status: PaymentStatus.PENDING, dueDate: { gt: now } }
+          : statusFilter === "PENDING"
+            ? { status: PaymentStatus.PENDING, dueDate: { lte: now } }
+            : statusFilter && statusFilter !== "ALL"
+              ? { status: statusFilter as PaymentStatus }
+              : {};
 
       const dues = await prisma.monthlyDue.findMany({
         where: {
-          ...(statusFilter && statusFilter !== "ALL" ? { status: statusFilter as any } : {}),
+          ...dueStatusWhere,
           ...(monthFilter ? { dueMonth: monthFilter } : {}),
         },
         include: {
@@ -3216,10 +3230,10 @@
       const pendingAmount = dues.filter((d) => d.status === "PENDING").reduce((s, d) => s + d.amount, 0);
 
       // Mark overdue
-      const now = new Date();
       const dueMapped = dues.map((d) => ({
         ...d,
         isOverdue: d.status === "PENDING" && d.dueDate < now,
+        isUpcoming: d.status === "PENDING" && d.dueDate > now,
       }));
 
       res.json({
@@ -3339,6 +3353,9 @@
           academyAddress: process.env.ACADEMY_ADDRESS || "",
           academyState: process.env.ACADEMY_STATE || "",
           academyGstin: process.env.ACADEMY_GSTIN || "",
+          udyamRegistration: BUSINESS_DETAILS.udyamRegistration || "",
+          sacCode: getInvoiceSacCode(),
+          sacDescription: getInvoiceSacDescription(),
           gstDetails,
           studentName: student.fullName,
           studentEmail: student.email,
@@ -3471,6 +3488,12 @@
   };
 
   const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const csvInvoiceDownloadLink = (paymentId: string | null, invoiceNumber: string | null) => {
+    if (!paymentId || !invoiceNumber) return "";
+    // Open the authenticated frontend page instead of the API directly. Excel
+    // cannot send the admin Bearer token required by the protected API endpoint.
+    return `${env.frontendUrl.replace(/\/$/, "")}/admin/finance/invoice/${encodeURIComponent(paymentId)}`;
+  };
 
   const paymentToInvoice = (payment: {
     id: string;
@@ -3583,6 +3606,7 @@
         "Gateway",
         "Status",
         "Billing State",
+        "SAC / HSN Code",
         "GST Rate (%)",
         "Taxable Value",
         "CGST",
@@ -3591,6 +3615,7 @@
         "Total GST",
         "Total Amount",
         "Currency",
+        "CA Invoice Download",
       ];
 
       const rows = statementPayments.map((payment) =>
@@ -3608,6 +3633,7 @@
           payment.gateway,
           payment.status,
           payment.billingState,
+          payment.sacCode || "",
           payment.gstRate ?? "",
           payment.taxableValue ?? "",
           payment.cgst ?? "",
@@ -3616,6 +3642,7 @@
           payment.totalGst ?? "",
           payment.amount,
           payment.currency,
+          csvInvoiceDownloadLink(payment.invoicePaymentId, payment.invoiceNumber),
         ]
           .map(csvCell)
           .join(",")

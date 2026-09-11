@@ -20,6 +20,7 @@ export type PlatformPaymentRow = {
   invoiceNumber: string | null;
   invoiceDate: Date | null;
   billingState: string;
+  sacCode: string | null;
   gstRate: number | null;
   taxableValue: number | null;
   cgst: number | null;
@@ -30,6 +31,7 @@ export type PlatformPaymentRow = {
 
 type InvoiceSnapshot = {
   studentState?: unknown;
+  sacCode?: unknown;
   gstDetails?: {
     gstRate?: unknown;
     taxableBase?: unknown;
@@ -107,6 +109,13 @@ export const loadPlatformPayments = async (): Promise<PlatformPaymentRow[]> => {
       invoiceNumber: payment.Invoice?.invoiceNumber || null,
       invoiceDate: payment.Invoice?.createdAt || null,
       billingState: typeof snapshot.studentState === "string" ? snapshot.studentState : payment.user?.region || "",
+      // Older invoices predate the immutable SAC snapshot. Keep their CA export
+      // useful while new invoices always retain the code that was issued.
+      sacCode: payment.Invoice
+        ? typeof snapshot.sacCode === "string"
+          ? snapshot.sacCode
+          : (process.env.GST_SAC_CODE || "999291").trim()
+        : null,
       gstRate: asNumberOrNull(gst?.gstRate),
       taxableValue: asNumberOrNull(gst?.taxableBase),
       cgst: asNumberOrNull(gst?.cgst),
@@ -136,6 +145,7 @@ export const loadPlatformPayments = async (): Promise<PlatformPaymentRow[]> => {
       invoiceNumber: null,
       invoiceDate: null,
       billingState: "",
+      sacCode: null,
       gstRate: null,
       taxableValue: null,
       cgst: null,
@@ -167,6 +177,7 @@ export const loadPlatformPayments = async (): Promise<PlatformPaymentRow[]> => {
       invoiceNumber: null,
       invoiceDate: null,
       billingState: "",
+      sacCode: null,
       gstRate: null,
       taxableValue: null,
       cgst: null,

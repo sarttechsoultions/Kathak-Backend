@@ -64,7 +64,7 @@ export const sendEmail = async ({ to, subject, html, attachments }: EmailOptions
     console.log(`Email sent via SMTP to ${to}: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error("Error sending email:", error);
+    console.error(`[SMTP_FAILURE] Failed to send email to ${to} (Subject: "${subject}"):`, error);
     return false;
   }
 };
