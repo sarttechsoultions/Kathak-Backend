@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import { prisma } from "../../lib/prisma";
 import { getIO } from "../../lib/socket";
+import { broadcastLiveClassEvent } from "../liveclass/liveclass.events";
 
 const serialise = (liveClass: any) => ({
   ...liveClass,
@@ -70,7 +71,8 @@ export function startClassExpiryJob() {
       const io = getIO();
 
       for (const cls of expiring) {
-        io.emit(
+        broadcastLiveClassEvent(
+          io,
           "liveclass:class-updated",
           serialise({
             ...cls,

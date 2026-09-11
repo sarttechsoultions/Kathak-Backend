@@ -11,7 +11,8 @@
   import { sanitizeUser } from "../../lib/authHelpers";
   import { sendEmail } from "../../lib/mailer";
   import { env } from "../../config/env";
-  import { buildInvoiceHtml, InvoiceData } from "../../lib/invoice";
+  import { buildInvoiceHtml, generatePdfBuffer, InvoiceData } from "../../lib/invoice";
+  import { calculateGstFromInclusiveTotal } from "../../lib/gst";
   import { calculateMonthlyEnrollmentAmount } from "../../lib/fees";
   import { resolveCurrency } from "../../lib/currency";
   import { loadPlatformPayments, summarizePlatformPayments, isSuccessfulStatus } from "../../lib/platform-payments";
@@ -3265,15 +3266,22 @@
           },
         });
 
-        // Mark due as paid
-        const updatedDue = await tx.monthlyDue.update({
-          where: { id: String(dueId) },
+        // Claim the due exactly once. A simultaneous second admin click will
+        // roll its payment creation back instead of recording a duplicate.
+        const claim = await tx.monthlyDue.updateMany({
+          where: { id: String(dueId), status: PaymentStatus.PENDING },
           data: {
-            status: "SUCCESS",
+            status: PaymentStatus.SUCCESS,
             paymentId: payment.id,
             paidAt: new Date(),
             notes: notes || null,
           },
+        });
+        if (claim.count !== 1) {
+          throw new Error("This monthly due has already been settled.");
+        }
+        const updatedDue = await tx.monthlyDue.findUniqueOrThrow({
+          where: { id: String(dueId) },
         });
 
         // Create next month's due
@@ -3298,8 +3306,48 @@
           },
         });
 
-        // Create invoice record
-        const invNumber = `INV-${payment.transactionId.slice(-10).toUpperCase()}`;
+        // Every successful fee collection gets the same year-aware invoice
+        // numbering and immutable GST snapshot as a first-time enrollment.
+        const [student, course, membership] = await Promise.all([
+          tx.user.findUnique({ where: { id: due.userId } }),
+          tx.course.findUnique({ where: { id: due.courseId } }),
+          tx.batchStudent.findFirst({
+            where: { studentId: due.userId },
+            include: { batch: true },
+          }),
+        ]);
+
+        if (!student || !course) {
+          throw new Error("Cannot issue an invoice without its student and course records.");
+        }
+
+        const gstDetails = calculateGstFromInclusiveTotal(due.amount, student.region);
+        const currentYear = new Date().getFullYear();
+        const counter = await tx.invoiceCounter.upsert({
+          where: { year: currentYear },
+          update: { current: { increment: 1 } },
+          create: { year: currentYear, current: 1 },
+        });
+        const prefix = (process.env.INVOICE_PREFIX || "KATHAK")
+          .trim()
+          .replace(/-+$/, "");
+        const invNumber = `${prefix}-${currentYear}-${String(counter.current).padStart(6, "0")}`;
+        const snapshot = {
+          academyName: process.env.ACADEMY_NAME || "",
+          academyEmail: process.env.ACADEMY_CONTACT_EMAIL || "",
+          academyPhone: process.env.ACADEMY_CONTACT_PHONE || "",
+          academyAddress: process.env.ACADEMY_ADDRESS || "",
+          academyState: process.env.ACADEMY_STATE || "",
+          academyGstin: process.env.ACADEMY_GSTIN || "",
+          gstDetails,
+          studentName: student.fullName,
+          studentEmail: student.email,
+          studentPhone: student.phone,
+          studentState: student.region || "",
+          showGstIncluded: false,
+          courseTitle: course.title,
+          batchName: membership?.batch?.name || membership?.batch?.code || "Enrollment",
+        };
         await tx.invoice.upsert({
           where: { paymentId: payment.id },
           update: {},
@@ -3311,6 +3359,7 @@
             amount: due.amount,
             currency: due.currency,
             status: "PAID",
+            snapshot: snapshot as any,
           },
         });
 
@@ -3326,6 +3375,10 @@
       res.json({ status: "success", message: "Monthly due payment recorded.", data: updated });
     } catch (error) {
       console.error("recordMonthlyDuePayment error:", error);
+      if (error instanceof Error && error.message === "This monthly due has already been settled.") {
+        res.status(409).json({ status: "error", message: error.message });
+        return;
+      }
       res.status(500).json({ status: "error", message: "Failed to record monthly due payment." });
     }
   };
@@ -3427,6 +3480,7 @@
     transactionId: string;
     orderId: string | null;
     status: string;
+    Invoice?: { invoiceNumber: string; snapshot: unknown } | null;
     createdAt: Date;
     user?: {
       fullName: string;
@@ -3438,7 +3492,7 @@
     } | null;
     enrollment?: { course?: { title?: string | null } | null } | null;
   }): InvoiceData => ({
-    invoiceNumber: `INV-${(payment.transactionId || payment.id).slice(-10).toUpperCase()}`,
+    invoiceNumber: payment.Invoice?.invoiceNumber || `UNAVAILABLE-${payment.id.slice(-8).toUpperCase()}`,
     issuedAt: payment.createdAt,
     studentName: payment.user?.fullName || "Student",
     studentEmail: payment.user?.email || "",
@@ -3453,6 +3507,7 @@
     transactionId: payment.transactionId,
     orderId: payment.orderId,
     status: payment.status,
+    snapshot: payment.Invoice?.snapshot,
   });
 
   export const getPaymentInvoice = async (req: Request, res: Response): Promise<void> => {
@@ -3465,6 +3520,7 @@
             include: { batchMemberships: { include: { batch: true } } },
           },
           enrollment: { include: { course: true } },
+          Invoice: true,
         },
       });
 
@@ -3473,10 +3529,13 @@
         return;
       }
 
-      const html = buildInvoiceHtml(paymentToInvoice(payment));
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Content-Disposition", `inline; filename="${`INV-${(payment.transactionId || payment.id).slice(-10)}.html`}"`);
-      res.send(html);
+      const invoiceNumber = payment.Invoice?.invoiceNumber || payment.id;
+      const pdf = await generatePdfBuffer(buildInvoiceHtml(paymentToInvoice(payment)));
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${invoiceNumber}-tax-invoice.pdf"`);
+      res.setHeader("Content-Length", pdf.length);
+      res.send(pdf);
     } catch (error) {
       console.error("Get payment invoice error:", error);
       res.status(500).json({ status: "error", message: "Failed to generate invoice." });
@@ -3486,9 +3545,34 @@
   export const exportFinanceCsv = async (req: Request, res: Response): Promise<void> => {
     try {
       const platformPayments = await loadPlatformPayments();
+      const fromRaw = typeof req.query.from === "string" ? req.query.from : "";
+      const toRaw = typeof req.query.to === "string" ? req.query.to : "";
+      const from = fromRaw ? new Date(`${fromRaw}T00:00:00.000`) : null;
+      const to = toRaw ? new Date(`${toRaw}T23:59:59.999`) : null;
+
+      if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) {
+        res.status(400).json({ status: "error", message: "Use valid statement dates." });
+        return;
+      }
+      if (from && to && from > to) {
+        res.status(400).json({ status: "error", message: "Statement start date cannot be after end date." });
+        return;
+      }
+
+      const statementPayments = platformPayments.filter((payment) => {
+        const createdAt = new Date(payment.createdAt);
+        return (!from || createdAt >= from) && (!to || createdAt <= to);
+      });
+      const successfulPayments = statementPayments.filter((payment) => isSuccessfulStatus(payment.status));
+      const successfulTotal = successfulPayments.reduce((sum, payment) => sum + payment.amount, 0);
+      const refundedTotal = statementPayments
+        .filter((payment) => String(payment.status).toUpperCase() === "REFUNDED")
+        .reduce((sum, payment) => sum + payment.amount, 0);
 
       const headers = [
         "Type",
+        "Invoice Number",
+        "Invoice Date",
         "Payment Date",
         "Student / Payer",
         "Email",
@@ -3498,13 +3582,22 @@
         "Order ID",
         "Gateway",
         "Status",
-        "Amount",
+        "Billing State",
+        "GST Rate (%)",
+        "Taxable Value",
+        "CGST",
+        "SGST",
+        "IGST",
+        "Total GST",
+        "Total Amount",
         "Currency",
       ];
 
-      const rows = platformPayments.map((payment) =>
+      const rows = statementPayments.map((payment) =>
         [
           payment.sourceLabel,
+          payment.invoiceNumber || "",
+          payment.invoiceDate ? new Date(payment.invoiceDate).toLocaleString("en-IN") : "",
           new Date(payment.createdAt).toLocaleString("en-IN"),
           payment.studentName,
           payment.email,
@@ -3514,6 +3607,13 @@
           payment.orderId,
           payment.gateway,
           payment.status,
+          payment.billingState,
+          payment.gstRate ?? "",
+          payment.taxableValue ?? "",
+          payment.cgst ?? "",
+          payment.sgst ?? "",
+          payment.igst ?? "",
+          payment.totalGst ?? "",
           payment.amount,
           payment.currency,
         ]
@@ -3521,9 +3621,20 @@
           .join(",")
       );
 
-      const csv = `\uFEFF${headers.join(",")}\n${rows.join("\n")}`;
+      const statementLabel = `${fromRaw || "All time"} to ${toRaw || "Today"}`;
+      const summaryRows = [
+        ["Kathak Academy Finance Statement", statementLabel],
+        ["Generated at", new Date().toLocaleString("en-IN")],
+        ["Total transactions", statementPayments.length],
+        ["Successful collections", successfulPayments.length],
+        ["Successful collection total", successfulTotal.toFixed(2)],
+        ["Refunded total", refundedTotal.toFixed(2)],
+        [],
+      ].map((row) => row.map(csvCell).join(","));
+      const filenamePeriod = fromRaw && toRaw ? `${fromRaw}_to_${toRaw}` : fromRaw || toRaw || "all_time";
+      const csv = `\uFEFF${summaryRows.join("\n")}\n${headers.join(",")}\n${rows.join("\n")}`;
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="Kathak_Platform_Payments_${new Date().toISOString().slice(0, 10)}.csv"`);
+      res.setHeader("Content-Disposition", `attachment; filename="Kathak_CA_Finance_Statement_${filenamePeriod}.csv"`);
       res.send(csv);
     } catch (error) {
       console.error("Export finance CSV error:", error);

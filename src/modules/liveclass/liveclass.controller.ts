@@ -17,8 +17,7 @@ import { getIO } from "../../lib/socket";
 import { teacherOwnsBatch } from "../../lib/teacherBatchAccess";
 import { createNotification } from "../notification/notification.controller";
 import { agoraKeyReady, buildAgoraToken, numericUidFromString } from "./agoraToken";
-
-const attendanceLock = new Set<string>();
+import { broadcastLiveClassEvent } from "./liveclass.events";
 
 const serialise = (liveClass: any, extras?: Record<string, unknown>) => ({
   ...liveClass,
@@ -44,7 +43,7 @@ const serialiseForTeacher = (liveClass: any) => {
 
 const broadcastClass = (liveClass: any) => {
   try {
-    getIO().emit("liveclass:class-updated", serialise(liveClass));
+    broadcastLiveClassEvent(getIO(), "liveclass:class-updated", serialise(liveClass));
   } catch (err) {
     console.error("liveclass broadcast failed:", err);
   }
@@ -161,7 +160,7 @@ export const createLiveClass = async (req: Request, res: Response) => {
   });
   broadcastClass(liveClass);
   try {
-    getIO().emit("liveclass:class-created", serialise(liveClass));
+    broadcastLiveClassEvent(getIO(), "liveclass:class-created", serialise(liveClass));
   } catch {}
   res.status(201).json({ status: "success", data: serialise(liveClass) });
 };
@@ -547,46 +546,6 @@ export const getLiveClassToken = async (req: Request, res: Response) => {
       message: "Could not generate a secure video token. Verify AGORA_APP_CERTIFICATE on the server.",
     });
     return;
-  }
-
-  if (!isAdmin && !isTeacher) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const lockKey = `${user.id}-${liveClass.batchId}-${liveClass.title}-${today.getTime()}`;
-    
-    if (!attendanceLock.has(lockKey)) {
-      attendanceLock.add(lockKey);
-      
-      try {
-        const existingAttendance = await prisma.attendance.findFirst({
-          where: {
-            studentId: user.id,
-            batchId: liveClass.batchId,
-            date: { gte: today },
-            session: liveClass.title,
-          },
-        });
-
-        if (!existingAttendance) {
-          const startDiffMinutes = (now.getTime() - liveClass.scheduledStart.getTime()) / (1000 * 60);
-          await prisma.attendance.create({
-            data: {
-              studentId: user.id,
-              studentName: displayName,
-              batchId: liveClass.batchId,
-              batchName: liveClass.batch.name,
-              session: liveClass.title,
-              status: startDiffMinutes > 15 ? "LATE" : "PRESENT",
-              date: new Date(),
-              remarks: `Auto-marked: Joined live class.`,
-            },
-          });
-        }
-      } finally {
-        attendanceLock.delete(lockKey);
-      }
-    }
   }
 
   res.json({

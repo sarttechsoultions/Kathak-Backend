@@ -155,8 +155,10 @@ export function mapCourseToPublicMarketingCourse(course: Course): PublicMarketin
     "Contact for pricing";
   const internationalGroupPrice = formatCurrency(course.groupFeeUSD, "USD", " / month");
 
-  const indiaPersonalPrice = formatCurrency(course.oneToOneFeeINR, "INR", " per class");
-  const internationalPersonalPrice = formatCurrency(course.oneToOneFeeUSD, "USD", " per class");
+  // One-to-one fees are stored and charged as monthly enrollment fees.
+  // Keep the public course card consistent with the enrollment checkout.
+  const indiaPersonalPrice = formatCurrency(course.oneToOneFeeINR, "INR", " / month");
+  const internationalPersonalPrice = formatCurrency(course.oneToOneFeeUSD, "USD", " / month");
 
   return {
     id: course.id,

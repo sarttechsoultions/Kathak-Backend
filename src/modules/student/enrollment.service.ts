@@ -11,7 +11,8 @@ import { env } from "../../config/env";
 import { sendEmail } from "../../lib/mailer";
 import {
   buildInvoiceEmailBlock,
-  buildInvoiceHtml,
+  buildStudentPaymentReceiptHtml,
+  generatePdfBuffer,
   InvoiceData,
 } from "../../lib/invoice";
 import {
@@ -115,6 +116,9 @@ export type EnrollmentPayload = {
   relationship?: string | null;
   emergencyContact?: string | null;
   paymentMethod: string;
+  showGstIncluded?: boolean;
+  billingLegalName?: string | null;
+  billingGstin?: string | null;
   courseId: string;
   batchId: string;
   enrollmentType: EnrollmentClassType;
@@ -564,6 +568,16 @@ export const validateEnrollmentInput = async (
       ? methodRaw
       : "RAZORPAY";
 
+  const showGstIncluded =
+    body.showGstIncluded === true || body.showGstIncluded === "true";
+
+  const billingLegalName = showGstIncluded
+    ? String(body.billingLegalName || "").trim()
+    : "";
+  const billingGstin = showGstIncluded
+    ? String(body.billingGstin || "").trim().toUpperCase()
+    : "";
+
   const isUnder18 =
     Boolean(body.isUnder18) ||
     isAgeUnder18(dob);
@@ -936,6 +950,12 @@ export const validateEnrollmentInput = async (
       emergencyContact || null,
 
     paymentMethod,
+
+    showGstIncluded,
+
+    billingLegalName: billingLegalName || null,
+
+    billingGstin: billingGstin || null,
 
     courseId,
 
@@ -1530,7 +1550,42 @@ if (!enrollment) {
   });
 
   if (paymentRecord) {
-    const invNumber = `INV-${(paymentRecord.transactionId).slice(-10).toUpperCase()}`;
+    const { calculateGstFromInclusiveTotal } = require("../../lib/gst");
+    const anyPayload = payload as any;
+    const gstDetails = calculateGstFromInclusiveTotal(feePaid, anyPayload.region);
+
+    const currentYear = new Date().getFullYear();
+    const counter = await tx.invoiceCounter.upsert({
+      where: { year: currentYear },
+      update: { current: { increment: 1 } },
+      create: { year: currentYear, current: 1 }
+    });
+
+    const prefix = (process.env.INVOICE_PREFIX || "KATHAK").trim().replace(/-+$/, "");
+    const invNumber = `${prefix}-${currentYear}-${String(counter.current).padStart(6, "0")}`;
+
+    const batch = assignedBatchId ? await tx.batch.findUnique({ where: { id: assignedBatchId } }) : null;
+    const batchName = batch ? batch.name : "1-to-1 Session";
+
+    const snapshot = {
+      academyName: process.env.ACADEMY_NAME || "",
+      academyEmail: process.env.ACADEMY_CONTACT_EMAIL || "",
+      academyPhone: process.env.ACADEMY_CONTACT_PHONE || "",
+      academyAddress: process.env.ACADEMY_ADDRESS || "",
+      academyState: process.env.ACADEMY_STATE || "",
+      academyGstin: process.env.ACADEMY_GSTIN || "",
+      gstDetails,
+      studentName: user.fullName,
+      studentEmail: user.email,
+      studentPhone: user.phone,
+      studentState: anyPayload.region || "",
+      showGstIncluded: anyPayload.showGstIncluded === true,
+      billingLegalName: anyPayload.billingLegalName || "",
+      billingGstin: anyPayload.billingGstin || "",
+      courseTitle: course.title,
+      batchName: batchName
+    };
+
     await tx.invoice.upsert({
       where: { paymentId: paymentRecord.id },
       update: {},
@@ -1542,6 +1597,7 @@ if (!enrollment) {
         amount: feePaid,
         currency: paymentCurrency,
         status: "PAID",
+        snapshot: snapshot as any
       }
     });
   }
@@ -1770,6 +1826,7 @@ export const sendEnrollmentWelcomeEmail =
             createdAt: "desc",
           },
           include: {
+            Invoice: true,
             enrollment: {
               include: {
                 course: true,
@@ -1789,72 +1846,50 @@ export const sendEnrollmentWelcomeEmail =
         });
 
       const invoice: InvoiceData | null =
-        payment
+        payment && payment.Invoice
           ? {
-              invoiceNumber:
-                `INV-${(
-                  payment.transactionId ||
-                  payment.id
-                )
-                  .slice(-10)
-                  .toUpperCase()}`,
-
-              issuedAt:
-                payment.createdAt,
-
-              studentName:
-                user.fullName,
-
-              studentEmail:
-                user.email,
-
-              studentPhone:
-                user.phone || "",
-
-              studentAddress:
-                user.address,
-
-              courseTitle:
-                payment.enrollment
-                  ?.course?.title ||
-                "Kathak Course Enrollment",
-
-              batchName:
-                membership?.batch?.name ||
-                membership?.batch?.code ||
-                null,
-
-              amount:
-                payment.amount,
-
-              currency:
-                String(
-                  payment.currency ||
-                    "INR"
-                ),
-
-              gateway:
-                payment.gateway,
-
-              paymentMethod:
-                payment.gateway,
-
-              transactionId:
-                payment.transactionId,
-
-              orderId:
-                payment.orderId,
-
-              status:
-                payment.status,
+              invoiceNumber: payment.Invoice.invoiceNumber,
+              issuedAt: payment.createdAt,
+              studentName: user.fullName,
+              studentEmail: user.email,
+              studentPhone: user.phone || "",
+              studentAddress: user.address,
+              courseTitle: payment.enrollment?.course?.title || "Kathak Course Enrollment",
+              batchName: membership?.batch?.name || membership?.batch?.code || null,
+              amount: payment.amount,
+              currency: String(payment.currency || "INR"),
+              gateway: payment.gateway,
+              paymentMethod: payment.gateway,
+              transactionId: payment.transactionId,
+              orderId: payment.orderId,
+              status: payment.status,
+              snapshot: payment.Invoice.snapshot,
             }
           : null;
+
+      let attachments:
+        | { filename: string; content: Buffer; contentType: string }[]
+        | undefined;
+
+      if (invoice) {
+        try {
+          attachments = [{
+            filename: `${invoice.invoiceNumber}.pdf`,
+            content: await generatePdfBuffer(buildStudentPaymentReceiptHtml(invoice)),
+            contentType: "application/pdf",
+          }];
+        } catch (pdfError) {
+          // A receipt PDF must never prevent a successful enrollment from
+          // notifying the student. The committed invoice remains available.
+          console.error("Failed to generate enrollment receipt PDF:", pdfError);
+        }
+      }
 
       return await sendEmail({
         to: user.email,
 
         subject: invoice
-          ? "Welcome to Kathak Academy — Enrollment & Payment Invoice"
+          ? "Welcome to Kathak Academy — Enrollment & Payment Receipt"
           : "Welcome to Kathak Academy!",
 
         html: `
@@ -1905,7 +1940,7 @@ export const sendEnrollmentWelcomeEmail =
             <p>
               You can log in anytime to view your classes,
               assignments, and payments.
-              A copy of this invoice is attached.
+              ${attachments ? "A copy of your payment receipt is attached." : "Your payment receipt is available in your student portal."}
             </p>
 
             <br/>
@@ -1918,20 +1953,7 @@ export const sendEnrollmentWelcomeEmail =
           </div>
         `,
 
-        attachments: invoice
-          ? [
-              {
-                filename:
-                  `${invoice.invoiceNumber}.html`,
-                content:
-                  buildInvoiceHtml(
-                    invoice
-                  ),
-                contentType:
-                  "text/html",
-              },
-            ]
-          : undefined,
+        attachments,
       });
     } catch (emailErr) {
       console.error(
