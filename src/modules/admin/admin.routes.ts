@@ -72,6 +72,7 @@ import {
   previewRenewalPricing
 } from "./admin.controller";
 import { getReportsOverview } from "./admin.reports.controller";
+import { getStudentReports, getStudentReportDetail, downloadStudentReportPdf } from "./studentReports.controller";
 import { forwardToDeveloper } from "../support/support.controller";
 import { authenticate, requireAnyPermission, requirePermission, requireRole } from "../../middleware/auth.middleware";
 
@@ -185,5 +186,10 @@ router.post("/profile/change-password", changeAdminPassword);
 
 // 10. Reports & Analytics
 router.get("/reports/overview", getReportsOverview);
+
+// 11. Student Reports & Progress
+router.get("/student-reports", requirePermission(Permission.VIEW_ANALYTICS), getStudentReports);
+router.get("/student-reports/:id", requirePermission(Permission.VIEW_ANALYTICS), getStudentReportDetail);
+router.get("/student-reports/:id/pdf", requirePermission(Permission.VIEW_ANALYTICS), downloadStudentReportPdf);
 
 export default router;

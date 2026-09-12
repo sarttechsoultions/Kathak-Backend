@@ -105,26 +105,87 @@
       }
 
       // ==========================================
-      // 3. ATTENDANCE SUMMARY (For Today)
+      // 3. ATTENDANCE SUMMARY (For today)
+      //
+      // The dashboard must be measured against enrolled students, not merely
+      // against rows that happened to be marked. Otherwise one marked student
+      // could incorrectly appear as 100% attendance.
       // ==========================================
-      const todayAttendances = await prisma.attendance.groupBy({
-        by: ['status'],
-        _count: true,
-        where: { date: { gte: startOfDay, lte: endOfDay } }
-      });
+      const [todayClasses, todayAttendanceRows] = await Promise.all([
+        prisma.liveClass.findMany({
+          where: {
+            scheduledStart: { gte: startOfDay, lte: endOfDay },
+            status: { not: "CANCELLED" },
+          },
+          select: { batchId: true },
+        }),
+        prisma.attendance.findMany({
+          where: {
+            date: { gte: startOfDay, lte: endOfDay },
+            batchId: { not: null },
+            student: { role: Role.STUDENT },
+          },
+          select: { batchId: true, studentId: true, status: true },
+        }),
+      ]);
 
-      let present = 0, absent = 0, leave = 0, totalAtt = 0;
-      todayAttendances.forEach(a => {
-        totalAtt += a._count;
-        if (a.status === "PRESENT" || a.status === "LATE") present += a._count;
-        if (a.status === "ABSENT") absent += a._count;
-        if (a.status === "LEAVE") leave += a._count;
-      });
+      const relevantBatchIds = [...new Set([
+        ...todayClasses.map((liveClass) => liveClass.batchId),
+        ...todayAttendanceRows.flatMap((record) => record.batchId ? [record.batchId] : []),
+      ])];
+
+      const enrolledStudents = relevantBatchIds.length === 0
+        ? []
+        : await prisma.batchStudent.findMany({
+            where: {
+              batchId: { in: relevantBatchIds },
+              createdAt: { lte: endOfDay },
+              student: { role: Role.STUDENT },
+            },
+            select: { batchId: true, studentId: true },
+          });
+
+      const expectedStudentKeys = new Set(
+        enrolledStudents.map((record) => `${record.batchId}:${record.studentId}`)
+      );
+      const attendanceByStudent = new Map<string, AttendanceStatus>();
+
+      // If a student has more than one row in a day, a join (present/late)
+      // takes precedence over leave/absence for their daily batch attendance.
+      const statusPriority: Record<AttendanceStatus, number> = {
+        PRESENT: 4,
+        LATE: 3,
+        LEAVE: 2,
+        ABSENT: 1,
+      };
+      for (const record of todayAttendanceRows) {
+        if (!record.batchId) continue;
+        const key = `${record.batchId}:${record.studentId}`;
+        if (!expectedStudentKeys.has(key)) continue;
+        const currentStatus = attendanceByStudent.get(key);
+        if (!currentStatus || statusPriority[record.status] > statusPriority[currentStatus]) {
+          attendanceByStudent.set(key, record.status);
+        }
+      }
+
+      let present = 0;
+      let absent = 0;
+      let leave = 0;
+      for (const status of attendanceByStudent.values()) {
+        if (status === AttendanceStatus.PRESENT || status === AttendanceStatus.LATE) present += 1;
+        else if (status === AttendanceStatus.ABSENT) absent += 1;
+        else if (status === AttendanceStatus.LEAVE) leave += 1;
+      }
+      const expectedStudents = expectedStudentKeys.size;
+      const notMarked = Math.max(0, expectedStudents - attendanceByStudent.size);
 
       const attendanceSummary = {
-        presentPercent: totalAtt > 0 ? Math.round((present / totalAtt) * 100) : 0,
-        absentPercent: totalAtt > 0 ? Math.round((absent / totalAtt) * 100) : 0,
-        leavePercent: totalAtt > 0 ? Math.round((leave / totalAtt) * 100) : 0,
+        presentPercent: expectedStudents > 0 ? Math.round((present / expectedStudents) * 100) : 0,
+        absentPercent: expectedStudents > 0 ? Math.round((absent / expectedStudents) * 100) : 0,
+        leavePercent: expectedStudents > 0 ? Math.round((leave / expectedStudents) * 100) : 0,
+        notMarkedPercent: expectedStudents > 0 ? Math.round((notMarked / expectedStudents) * 100) : 0,
+        expectedStudents,
+        markedStudents: attendanceByStudent.size,
       };
 
       // ==========================================

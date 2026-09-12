@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:17
+    container_name: kathak-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: kathak_user
+      POSTGRES_PASSWORD: Kathak2026
+      POSTGRES_DB: kathak_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - kathak-pg-data:/var/lib/postgresql/data
+
+volumes:
+  kathak-pg-data:
