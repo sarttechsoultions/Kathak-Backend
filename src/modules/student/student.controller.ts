@@ -2517,12 +2517,12 @@ export const initiateUpgrade = async (
 
     if (
       !Number.isInteger(parsedMonths) ||
-      ![1, 6, 12].includes(parsedMonths)
+      ![1,3, 6, 12].includes(parsedMonths)
     ) {
       res.status(400).json({
         status: "error",
         message:
-          "Please select a valid duration: 1, 6, or 12 months.",
+          "Please select a valid duration: 1, 3, 6, or 12 months.",
       });
       return;
     }
