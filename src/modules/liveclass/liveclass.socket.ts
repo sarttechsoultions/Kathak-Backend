@@ -1043,6 +1043,35 @@ export function registerLiveClassSocket(io: Server) {
     );
 
     /**
+     * Broadcast presentation state separately from media state. A screen
+     * track is still delivered by Agora; this event only tells every client
+     * who should be spotlighted as soon as that track is available.
+     */
+    socket.on(
+      "liveclass:screen-share",
+      (payload: { roomName?: string; active?: boolean }) => {
+        const roomName = String(payload?.roomName || "");
+
+        if (!roomName || socket.data.roomName !== roomName) {
+          return;
+        }
+
+        const participant = roomParticipants[roomName]?.get(socket.id);
+
+        if (!participant || participant.agoraUid == null) {
+          return;
+        }
+
+        io.to(roomName).emit("liveclass:screen-share", {
+          active: Boolean(payload?.active),
+          agoraUid: participant.agoraUid,
+          userName: participant.userName,
+          userRole: participant.userRole,
+        });
+      }
+    );
+
+    /**
      * -------------------------------------------------------
      * RAISE HAND
      * -------------------------------------------------------
