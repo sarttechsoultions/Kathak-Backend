@@ -1893,6 +1893,9 @@ export const getStudentDashboard = async (
                   }
                 ),
 
+              scheduledStart: todayClass.scheduledStart.toISOString(),
+              scheduledEnd: todayClass.scheduledEnd.toISOString(),
+
               isLive:
                 todayClass.status ===
                 "LIVE",
@@ -1969,6 +1972,9 @@ export const getStudentDashboard = async (
                       "short",
                   }
                 ),
+
+              scheduledStart: upcomingClass.scheduledStart.toISOString(),
+              scheduledEnd: upcomingClass.scheduledEnd.toISOString(),
 
               durationStr:
                 `${Math.max(
