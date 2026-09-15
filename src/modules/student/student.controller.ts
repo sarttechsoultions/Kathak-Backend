@@ -776,12 +776,12 @@ export const studentLogin = async (req: Request, res: Response): Promise<void> =
       status: "success",
       message: "Login successful.",
       data: {
-        // Token intentionally omitted from JSON — see auth.controller.ts login for rationale.
+        token, // Added for mobile app usage
         user: {
           id: user.id,
           fullName: user.fullName,
           email: user.email,
-          phone: user.phone,               // already in E.164
+          phone: user.phone,
           role: user.role,
           avatarUrl: user.avatarUrl,
           country: user.country,
