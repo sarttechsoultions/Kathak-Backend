@@ -22,6 +22,29 @@ const uploadPublicImageMulter = multer({
   limits: { fileSize: PUBLIC_IMAGE_MAX_BYTES },
 });
 
+// Leave applications only need a small supporting document. Keep this route
+// deliberately separate from the large media upload routes so students and
+// teachers can attach evidence without receiving the admin-media 403.
+const LEAVE_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+const uploadLeaveAttachmentMulter = multer({
+  storage,
+  limits: { fileSize: LEAVE_ATTACHMENT_MAX_BYTES, files: 1 },
+  fileFilter: (_req, file, callback) => {
+    const extension = file.originalname.toLowerCase().split(".").pop();
+    const allowedExtensions = ["pdf", "jpg", "jpeg", "png"];
+    const allowedMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
+    if (
+      !extension ||
+      !allowedExtensions.includes(extension) ||
+      (file.mimetype && !allowedMimeTypes.includes(file.mimetype))
+    ) {
+      callback(new Error("Only PDF, JPG, JPEG, and PNG attachments are allowed."));
+      return;
+    }
+    callback(null, true);
+  },
+});
+
 const makeMulterHandler = (instance: multer.Multer) => (req: Request, res: Response, next: NextFunction) => {
   instance.any()(req, res, (err) => {
     if (err) {
@@ -38,6 +61,7 @@ const makeMulterHandler = (instance: multer.Multer) => (req: Request, res: Respo
 
 const handleMulterUpload = makeMulterHandler(uploadAnyMulter);
 const handlePublicImageUpload = makeMulterHandler(uploadPublicImageMulter);
+const handleLeaveAttachmentUpload = makeMulterHandler(uploadLeaveAttachmentMulter);
 
 const router = Router();
 
@@ -65,5 +89,15 @@ router.post("/video", authenticate, protectedUpload, handleMulterUpload, uploadV
 // Student assignment submissions
 router.post("/student/image", authenticate, requireRole(Role.STUDENT), handleMulterUpload, uploadImage);
 router.post("/student/video", authenticate, requireRole(Role.STUDENT), handleMulterUpload, uploadVideoToBunny);
+
+// Supporting documents for leave requests. Both portal roles are allowed;
+// admins use their own review workflow and never need to upload an attachment.
+router.post(
+  "/leave-attachment",
+  authenticate,
+  requireRole(Role.STUDENT, Role.TEACHER),
+  handleLeaveAttachmentUpload,
+  uploadImage
+);
 
 export default router;

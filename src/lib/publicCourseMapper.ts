@@ -127,7 +127,29 @@ export type PublicMarketingCourse = {
   published: boolean;
   showOnHome: boolean;
   homepageSortOrder: number;
+  pricing: {
+    group: { INR: PriceOffer; USD: PriceOffer };
+    oneToOne: { INR: PriceOffer; USD: PriceOffer };
+  };
 };
+
+export type PriceOffer = {
+  originalPrice: number | null;
+  offerPrice: number;
+  discountAmount: number;
+  discountPercent: number;
+};
+
+function mapPriceOffer(offerPrice: number, originalPrice: number | null): PriceOffer {
+  const hasDiscount = Boolean(originalPrice && originalPrice > offerPrice && offerPrice >= 0);
+  const discountAmount = hasDiscount ? Number((originalPrice! - offerPrice).toFixed(2)) : 0;
+  return {
+    originalPrice: hasDiscount ? originalPrice : null,
+    offerPrice,
+    discountAmount,
+    discountPercent: hasDiscount ? Math.round((discountAmount / originalPrice!) * 100) : 0,
+  };
+}
 
 export function mapCourseToPublicMarketingCourse(course: Course): PublicMarketingCourse {
   const description = course.description || "";
@@ -211,6 +233,16 @@ export function mapCourseToPublicMarketingCourse(course: Course): PublicMarketin
     published: course.published,
     showOnHome: course.showOnHome,
     homepageSortOrder: course.homepageSortOrder,
+    pricing: {
+      group: {
+        INR: mapPriceOffer(course.groupFeeINR, course.groupOriginalFeeINR),
+        USD: mapPriceOffer(course.groupFeeUSD, course.groupOriginalFeeUSD),
+      },
+      oneToOne: {
+        INR: mapPriceOffer(course.oneToOneFeeINR, course.oneToOneOriginalFeeINR),
+        USD: mapPriceOffer(course.oneToOneFeeUSD, course.oneToOneOriginalFeeUSD),
+      },
+    },
   };
 }
 
