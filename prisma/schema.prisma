@@ -40,6 +40,9 @@ model User {
   idProofUrl                  String?
   documents                   Json[]                   @default([])
   notificationPrefs           Json?
+  termsAcceptedAt             DateTime?
+  privacyPolicyAcceptedAt     DateTime?
+  consentVersion              String?
   designation                 String?
   primaryExpertise            String?
   salaryRate                  String?
@@ -96,9 +99,13 @@ model Course {
   category             CourseCategory @default(BASIC)
   groupFeeINR          Float
   groupFeeUSD          Float
+  groupOriginalFeeINR  Float?
+  groupOriginalFeeUSD  Float?
   groupClassesCount    String
   oneToOneFeeINR       Float
   oneToOneFeeUSD       Float
+  oneToOneOriginalFeeINR Float?
+  oneToOneOriginalFeeUSD Float?
   oneToOneClassesCount String
   badgeBgColor         String         @default("#76D7C4")
   borderColor          String         @default("border-[#76D7C4]")

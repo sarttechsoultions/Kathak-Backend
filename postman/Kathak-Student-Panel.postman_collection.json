@@ -1,0 +1,187 @@
+{
+  "info": {
+    "_postman_id": "f0b447bf-4c41-4bd0-a4ec-6f94cc6dd83b",
+    "name": "Kathak - Student Panel APIs",
+    "description": "Import this collection into Postman. Set baseUrl, studentEmail and studentPassword, then run Auth > Student Login. The login test automatically stores studentToken for all protected student-panel requests. Placeholder IDs must be replaced with real values returned by list APIs.\n\nPayment note: Razorpay payment verification requires a real Razorpay test/live payment response and must not be faked.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000/api/v1" },
+    { "key": "studentEmail", "value": "student@example.com" },
+    { "key": "studentPassword", "value": "ChangeMe123!" },
+    { "key": "studentToken", "value": "" },
+    { "key": "studentId", "value": "" },
+    { "key": "courseId", "value": "" },
+    { "key": "courseSlug", "value": "" },
+    { "key": "batchId", "value": "" },
+    { "key": "assignmentId", "value": "" },
+    { "key": "examId", "value": "" },
+    { "key": "examResultId", "value": "" },
+    { "key": "eventId", "value": "" },
+    { "key": "eventTicketId", "value": "" },
+    { "key": "liveClassId", "value": "" },
+    { "key": "recordedClassId", "value": "" },
+    { "key": "videoTaskId", "value": "" },
+    { "key": "notificationId", "value": "" },
+    { "key": "rescheduleRequestId", "value": "" },
+    { "key": "supportSubject", "value": "Postman API test" }
+  ],
+  "item": [
+    {
+      "name": "0. Health",
+      "item": [
+        {
+          "name": "Backend Health Check",
+          "request": { "method": "GET", "url": "{{baseUrl}}/health" }
+        }
+      ]
+    },
+    {
+      "name": "1. Authentication",
+      "item": [
+        {
+          "name": "Student Login (saves token)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const body = pm.response.json();",
+            "pm.test('Login succeeds', () => pm.expect(pm.response.code).to.equal(200));",
+            "if (body?.data?.token) { pm.collectionVariables.set('studentToken', body.data.token); }"
+          ] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"emailOrPhone\": \"{{studentEmail}}\",\n  \"password\": \"{{studentPassword}}\",\n  \"rememberMe\": false\n}" },
+            "url": "{{baseUrl}}/student/login"
+          }
+        },
+        {
+          "name": "Student Logout",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/logout" }
+        },
+        {
+          "name": "Forgot Password - Send OTP",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{studentEmail}}\"\n}" }, "url": "{{baseUrl}}/student/forgot-password/send-otp" }
+        },
+        {
+          "name": "Forgot Password - Reset",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{studentEmail}}\",\n  \"otp\": \"123456\",\n  \"newPassword\": \"NewPassword123!\"\n}" }, "url": "{{baseUrl}}/student/forgot-password/reset" }
+        }
+      ]
+    },
+    {
+      "name": "2. Dashboard, Profile & Settings",
+      "item": [
+        { "name": "Get Dashboard", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/dashboard" } },
+        { "name": "Get My Profile", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/profile" } },
+        { "name": "Update My Profile", "request": { "method": "PUT", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"fullName\": \"Student Name\",\n  \"phone\": \"9876543210\",\n  \"countryCode\": \"+91\",\n  \"country\": \"India\",\n  \"address\": \"Jaipur\",\n  \"gender\": \"FEMALE\",\n  \"guardianName\": \"Guardian Name\",\n  \"emergencyContact\": \"9876543210\"\n}" }, "url": "{{baseUrl}}/student/profile" } },
+        { "name": "Change Password", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"currentPassword\": \"{{studentPassword}}\",\n  \"newPassword\": \"NewPassword123!\"\n}" }, "url": "{{baseUrl}}/student/profile/change-password" } },
+        { "name": "Get Settings", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/settings" } },
+        { "name": "Update Settings Profile", "request": { "method": "PUT", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"fullName\": \"Student Name\",\n  \"phone\": \"9876543210\"\n}" }, "url": "{{baseUrl}}/student/settings/profile" } },
+        { "name": "Update Notification Preferences", "request": { "method": "PUT", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"emailNotifications\": true,\n  \"pushNotifications\": true,\n  \"smsAlerts\": false\n}" }, "url": "{{baseUrl}}/student/settings/notifications" } }
+      ]
+    },
+    {
+      "name": "1b. Student Signup / Enrollment",
+      "description": "Signup is a three-step flow: send and verify both OTPs, create the Razorpay enrollment order, complete payment in Razorpay, then verify payment with /student/enroll. Do not use fake Razorpay IDs or signatures. The bypass request works only when ENABLE_PAYMENT_BYPASS is enabled on a development server.",
+      "item": [
+        { "name": "Get Enrollment Payment Plan", "request": { "method": "GET", "url": "{{baseUrl}}/payment/plan?courseId={{courseId}}&enrollmentType=GROUP&country=India" } },
+        { "name": "Send Email OTP", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"channel\": \"EMAIL\",\n  \"email\": \"{{studentEmail}}\"\n}" }, "url": "{{baseUrl}}/student/otp/send" } },
+        { "name": "Verify Email OTP", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"channel\": \"EMAIL\",\n  \"email\": \"{{studentEmail}}\",\n  \"code\": \"123456\"\n}" }, "url": "{{baseUrl}}/student/otp/verify" } },
+        { "name": "Send Mobile OTP", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"channel\": \"MOBILE\",\n  \"phone\": \"9876543210\",\n  \"countryCode\": \"+91\"\n}" }, "url": "{{baseUrl}}/student/otp/send" } },
+        { "name": "Verify Mobile OTP", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"channel\": \"MOBILE\",\n  \"phone\": \"9876543210\",\n  \"countryCode\": \"+91\",\n  \"code\": \"123456\"\n}" }, "url": "{{baseUrl}}/student/otp/verify" } },
+        { "name": "Create Enrollment Razorpay Order", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"fullName\": \"New Student\",\n  \"email\": \"{{studentEmail}}\",\n  \"phone\": \"9876543210\",\n  \"country\": \"India\",\n  \"countryCode\": \"+91\",\n  \"password\": \"StudentPassword123!\",\n  \"dob\": \"2000-01-01\",\n  \"gender\": \"FEMALE\",\n  \"address\": \"123 Test Street\",\n  \"region\": \"Rajasthan\",\n  \"city\": \"Jaipur\",\n  \"postalCode\": \"302001\",\n  \"courseId\": \"{{courseId}}\",\n  \"batchId\": \"{{batchId}}\",\n  \"enrollmentType\": \"GROUP\",\n  \"paymentMethod\": \"RAZORPAY\",\n  \"paymentMode\": \"MONTHLY\",\n  \"months\": 1,\n  \"idempotencyKey\": \"postman-enrollment-{{$guid}}\"\n}" }, "url": "{{baseUrl}}/payment/create-order" } },
+        { "name": "Complete Enrollment After Razorpay Payment", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"pendingEnrollmentId\": \"pending-id-from-create-order\",\n  \"razorpay_payment_id\": \"pay_from_razorpay\",\n  \"razorpay_order_id\": \"order_from_create_order\",\n  \"razorpay_signature\": \"signature_from_razorpay\"\n}" }, "url": "{{baseUrl}}/student/enroll" } },
+        { "name": "Development Only - Enroll Without Payment", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"fullName\": \"New Student\",\n  \"email\": \"{{studentEmail}}\",\n  \"phone\": \"9876543210\",\n  \"country\": \"India\",\n  \"countryCode\": \"+91\",\n  \"password\": \"StudentPassword123!\",\n  \"dob\": \"2000-01-01\",\n  \"gender\": \"FEMALE\",\n  \"address\": \"123 Test Street\",\n  \"region\": \"Rajasthan\",\n  \"city\": \"Jaipur\",\n  \"postalCode\": \"302001\",\n  \"courseId\": \"{{courseId}}\",\n  \"batchId\": \"{{batchId}}\",\n  \"enrollmentType\": \"GROUP\"\n}" }, "url": "{{baseUrl}}/student/enroll/bypass" } }
+      ]
+    },
+    {
+      "name": "3. Learning, Attendance & Assignments",
+      "item": [
+        { "name": "Get Attendance", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/attendance" } },
+        { "name": "Apply for Leave", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"leaveType\": \"MEDICAL\",\n  \"startDate\": \"2026-09-20\",\n  \"endDate\": \"2026-09-21\",\n  \"totalDays\": 2,\n  \"reason\": \"Medical appointment\",\n  \"attachment\": \"\"\n}" }, "url": "{{baseUrl}}/student/leave" } },
+        { "name": "Get Progress", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/progress" } },
+        { "name": "Get Assignments", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/assignments" } },
+        { "name": "Submit Assignment", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"assignmentId\": \"{{assignmentId}}\",\n  \"fileUrl\": \"https://example.com/submissions/assignment.pdf\",\n  \"notes\": \"Submission from Postman\"\n}" }, "url": "{{baseUrl}}/student/assignments/submit" } },
+        { "name": "Get Student Content", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/content/student" } }
+      ]
+    },
+    {
+      "name": "4. Courses & Upgrade",
+      "item": [
+        { "name": "Get Public Courses", "request": { "method": "GET", "url": "{{baseUrl}}/student/public/courses" } },
+        { "name": "Get Marketing Courses", "request": { "method": "GET", "url": "{{baseUrl}}/student/public/courses/marketing" } },
+        { "name": "Get Marketing Course by Slug", "request": { "method": "GET", "url": "{{baseUrl}}/student/public/courses/marketing/{{courseSlug}}" } },
+        { "name": "Initiate Course Upgrade", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"targetCourseId\": \"{{courseId}}\",\n  \"targetType\": \"GROUP\",\n  \"targetBatchId\": \"{{batchId}}\",\n  \"months\": 1,\n  \"currency\": \"INR\"\n}" }, "url": "{{baseUrl}}/student/upgrade/initiate" } },
+        { "name": "Verify Course Upgrade", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"pendingEnrollmentId\": \"\",\n  \"razorpay_order_id\": \"\",\n  \"razorpay_payment_id\": \"\",\n  \"razorpay_signature\": \"\"\n}" }, "url": "{{baseUrl}}/student/upgrade/verify" } }
+      ]
+    },
+    {
+      "name": "5. Exams",
+      "item": [
+        { "name": "Get My Exams", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/exams" } },
+        { "name": "Get Exam Attempt", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/exams/{{examId}}/attempt" } },
+        { "name": "Submit Exam", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"answers\": [\n    { \"questionId\": \"question-id\", \"answer\": \"Selected answer\" }\n  ]\n}" }, "url": "{{baseUrl}}/student/exams/{{examId}}/submit" } },
+        { "name": "Get Exam Result", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/exams/result/{{examResultId}}" } }
+      ]
+    },
+    {
+      "name": "6. Live & Recorded Classes",
+      "item": [
+        { "name": "List Student Live Classes", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/classes" } },
+        { "name": "Get Live Class Join Token", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/classes/{{liveClassId}}/join-token" } },
+        { "name": "List Recorded Classes", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/recorded-classes" } },
+        { "name": "Get Recorded Class", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/recorded-classes/{{recordedClassId}}" } },
+        { "name": "Record Recorded-Class View", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/recorded-classes/{{recordedClassId}}/view" } }
+      ]
+    },
+    {
+      "name": "7. Video Submission",
+      "item": [
+        { "name": "Get Video Directory", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/video/directory" } },
+        { "name": "Get Video Tasks", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/video/tasks" } },
+        { "name": "Get My Video History", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/video/student/{{studentId}}/history" } },
+        { "name": "Submit Student Video", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"taskId\": \"{{videoTaskId}}\",\n  \"videoUrl\": \"https://example.com/submissions/dance.mp4\",\n  \"videoTitle\": \"Practice submission\",\n  \"notes\": \"Submission from Postman\"\n}" }, "url": "{{baseUrl}}/video/student/submit" } },
+        { "name": "Upload Student Video", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": "" }] }, "url": "{{baseUrl}}/upload/student/video" } },
+        { "name": "Upload Student Image", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": "" }] }, "url": "{{baseUrl}}/upload/student/image" } }
+      ]
+    },
+    {
+      "name": "8. Events, Competition & Offers",
+      "item": [
+        { "name": "Get Featured Event", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/events/featured" } },
+        { "name": "Get Upcoming Events", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/events/upcoming" } },
+        { "name": "Get My Event Registrations", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/events/my-registrations?limit=5" } },
+        { "name": "Get Event Calendar", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/events/calendar?month=9&year=2026" } },
+        { "name": "Get Event Details", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/events/{{eventId}}" } },
+        { "name": "Register Free Event", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/events/{{eventId}}/register" } },
+        { "name": "Cancel Free Event Registration", "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/events/{{eventId}}/register" } },
+        { "name": "Get Competition Track", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/competition/track" } },
+        { "name": "Get Active Offer", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/offers/active" } }
+      ]
+    },
+    {
+      "name": "9. Student Event Payment (Razorpay)",
+      "description": "Run Create Ticket Order first. For a paid event it returns ticketId, orderId and keyId. Complete payment in Razorpay Checkout, then use the real response values in Verify Ticket Payment. Do not use placeholder payment IDs for a real verification.",
+      "item": [
+        { "name": "Create Event Ticket Order", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"fullName\": \"Student Name\",\n  \"city\": \"Jaipur\",\n  \"email\": \"{{studentEmail}}\",\n  \"phone\": \"9876543210\",\n  \"adultCount\": 1,\n  \"childCount\": 0,\n  \"quantity\": 1,\n  \"ticketEmail\": \"{{studentEmail}}\",\n  \"sendTicketEmail\": true,\n  \"paymentMethod\": \"upi\"\n}" }, "url": "{{baseUrl}}/events/{{eventId}}/tickets" } },
+        { "name": "Verify Event Ticket Payment", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"ticketId\": \"{{eventTicketId}}\",\n  \"razorpay_payment_id\": \"pay_from_razorpay\",\n  \"razorpay_order_id\": \"order_from_create_ticket\",\n  \"razorpay_signature\": \"signature_from_razorpay\",\n  \"sendTicketEmail\": true\n}" }, "url": "{{baseUrl}}/events/{{eventId}}/tickets/verify" } }
+      ]
+    },
+    {
+      "name": "10. Finance, Notifications & Support",
+      "item": [
+        { "name": "Get Student Finance", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/student/finance" } },
+        { "name": "Get Notifications", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/notifications" } },
+        { "name": "Mark All Notifications Read", "request": { "method": "PUT", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/notifications/read-all" } },
+        { "name": "Mark Notification Read", "request": { "method": "PUT", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/notifications/{{notificationId}}/read" } },
+        { "name": "Create Support Ticket", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"subject\": \"{{supportSubject}}\",\n  \"message\": \"Testing the student support API from Postman.\",\n  \"category\": \"TECHNICAL\"\n}" }, "url": "{{baseUrl}}/support/ticket" } }
+      ]
+    },
+    {
+      "name": "11. Reschedule Requests",
+      "item": [
+        { "name": "List My Reschedule Requests", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }], "url": "{{baseUrl}}/reschedule" } },
+        { "name": "Create Reschedule Request", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{studentToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"liveClassId\": \"{{liveClassId}}\",\n  \"requestedDate\": \"2026-09-25\",\n  \"requestedTime\": \"18:00\",\n  \"reason\": \"Unable to attend at the scheduled time\"\n}" }, "url": "{{baseUrl}}/reschedule" } }
+      ]
+    }
+  ]
+}

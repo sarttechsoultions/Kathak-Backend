@@ -1,0 +1,45 @@
+{
+  "info": {
+    "_postman_id": "ab71989b-97b6-40b3-bb69-d1a9316676b8",
+    "name": "Kathak - Mobile App Auth APIs",
+    "description": "Mobile account creation and login only. These APIs do not create a course enrollment, payment, or batch membership. Import this file into Postman and run Signup or Login. The test scripts save mobileAccessToken automatically.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000/api/v1" },
+    { "key": "mobileEmail", "value": "student.mobile@example.com" },
+    { "key": "mobilePhone", "value": "9876543210" },
+    { "key": "mobilePassword", "value": "ChangeMe123!" },
+    { "key": "mobileAccessToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Create Account (does not enroll)",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "const body = pm.response.json();",
+        "pm.test('Account was created', () => pm.expect(pm.response.code).to.equal(201));",
+        "if (body?.data?.accessToken) pm.collectionVariables.set('mobileAccessToken', body.data.accessToken);"
+      ] } }],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"fullName\": \"Mobile Student\",\n  \"email\": \"{{mobileEmail}}\",\n  \"phone\": \"{{mobilePhone}}\",\n  \"password\": \"{{mobilePassword}}\",\n  \"confirmPassword\": \"{{mobilePassword}}\",\n  \"termsAccepted\": true\n}" },
+        "url": "{{baseUrl}}/mobile/auth/signup"
+      }
+    },
+    {
+      "name": "Login with Email and Password",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "const body = pm.response.json();",
+        "pm.test('Login succeeds', () => pm.expect(pm.response.code).to.equal(200));",
+        "if (body?.data?.accessToken) pm.collectionVariables.set('mobileAccessToken', body.data.accessToken);"
+      ] } }],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{mobileEmail}}\",\n  \"password\": \"{{mobilePassword}}\"\n}" },
+        "url": "{{baseUrl}}/mobile/auth/login"
+      }
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
+import { Role } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
+import { createNotification } from "../notification/notification.controller";
 
 export const getTeacherAttendance = async (req: Request, res: Response) => {
   try {
@@ -124,6 +126,18 @@ export const applyTeacherLeave = async (req: Request, res: Response) => {
         attachment,
       },
     });
+
+    const admins = await prisma.user.findMany({
+      where: { role: Role.ADMIN, isActive: true },
+      select: { id: true },
+    });
+    await Promise.all(admins.map((admin) => createNotification(
+      admin.id,
+      "LEAVE_REQUEST",
+      "New teacher leave request",
+      `${teacherName} requested ${leaveType} from ${new Date(startDate).toLocaleDateString("en-IN")} to ${new Date(endDate).toLocaleDateString("en-IN")}.`,
+      "/admin/leave-requests",
+    )));
 
     res.json({
       status: "success",

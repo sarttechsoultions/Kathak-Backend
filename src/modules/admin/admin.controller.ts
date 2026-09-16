@@ -1332,8 +1332,12 @@
         // ── Monthly Fees ──
         groupFeeINR,
         groupFeeUSD,
+        groupOriginalFeeINR,
+        groupOriginalFeeUSD,
         oneToOneFeeINR,
         oneToOneFeeUSD,
+        oneToOneOriginalFeeINR,
+        oneToOneOriginalFeeUSD,
 
         // ── Monthly Class Information ──
         groupClassesCount,
@@ -1430,6 +1434,16 @@
         "Group monthly fee (USD)"
       );
 
+      const parsedGroupOriginalFeeINR = parseNonNegativeNumber(
+        groupOriginalFeeINR,
+        "Group original monthly fee (INR)"
+      );
+
+      const parsedGroupOriginalFeeUSD = parseNonNegativeNumber(
+        groupOriginalFeeUSD,
+        "Group original monthly fee (USD)"
+      );
+
       const parsedOneToOneFeeINR = parseNonNegativeNumber(
         oneToOneFeeINR,
         "1-to-1 monthly fee (INR)"
@@ -1439,6 +1453,26 @@
         oneToOneFeeUSD,
         "1-to-1 monthly fee (USD)"
       );
+
+      const parsedOneToOneOriginalFeeINR = parseNonNegativeNumber(
+        oneToOneOriginalFeeINR,
+        "1-to-1 original monthly fee (INR)"
+      );
+
+      const parsedOneToOneOriginalFeeUSD = parseNonNegativeNumber(
+        oneToOneOriginalFeeUSD,
+        "1-to-1 original monthly fee (USD)"
+      );
+
+      const assertOfferPrice = (originalPrice: number, salePrice: number, label: string) => {
+        if (originalPrice > 0 && originalPrice < salePrice) {
+          throw new Error(`${label} original price must be greater than or equal to the offer price.`);
+        }
+      };
+      assertOfferPrice(parsedGroupOriginalFeeINR, parsedGroupFeeINR, "Group INR");
+      assertOfferPrice(parsedGroupOriginalFeeUSD, parsedGroupFeeUSD, "Group USD");
+      assertOfferPrice(parsedOneToOneOriginalFeeINR, parsedOneToOneFeeINR, "1-to-1 INR");
+      assertOfferPrice(parsedOneToOneOriginalFeeUSD, parsedOneToOneFeeUSD, "1-to-1 USD");
 
       // ============================================================
       // 4. PAYMENT CONFIGURATION
@@ -1511,12 +1545,16 @@
           // ─────────────────────────────────────────────
           groupFeeINR: parsedGroupFeeINR,
           groupFeeUSD: parsedGroupFeeUSD,
+          groupOriginalFeeINR: parsedGroupOriginalFeeINR || null,
+          groupOriginalFeeUSD: parsedGroupOriginalFeeUSD || null,
 
           // IMPORTANT:
           // oneToOneFeeINR / USD represent MONTHLY
           // 1-to-1 tuition, NOT per-class pricing.
           oneToOneFeeINR: parsedOneToOneFeeINR,
           oneToOneFeeUSD: parsedOneToOneFeeUSD,
+          oneToOneOriginalFeeINR: parsedOneToOneOriginalFeeINR || null,
+          oneToOneOriginalFeeUSD: parsedOneToOneOriginalFeeUSD || null,
 
           // ─────────────────────────────────────────────
           // Monthly Class Information
@@ -1660,8 +1698,12 @@
         // ── Monthly Fees ──
         groupFeeINR,
         groupFeeUSD,
+        groupOriginalFeeINR,
+        groupOriginalFeeUSD,
         oneToOneFeeINR,
         oneToOneFeeUSD,
+        oneToOneOriginalFeeINR,
+        oneToOneOriginalFeeUSD,
 
         // ── Monthly Class Information ──
         groupClassesCount,
@@ -1781,6 +1823,18 @@
           "Group monthly fee (USD)"
         );
 
+      const parsedGroupOriginalFeeINR =
+        parseOptionalNonNegativeNumber(
+          groupOriginalFeeINR,
+          "Group original monthly fee (INR)"
+        );
+
+      const parsedGroupOriginalFeeUSD =
+        parseOptionalNonNegativeNumber(
+          groupOriginalFeeUSD,
+          "Group original monthly fee (USD)"
+        );
+
       const parsedOneToOneFeeINR =
         parseOptionalNonNegativeNumber(
           oneToOneFeeINR,
@@ -1791,6 +1845,18 @@
         parseOptionalNonNegativeNumber(
           oneToOneFeeUSD,
           "1-to-1 monthly fee (USD)"
+        );
+
+      const parsedOneToOneOriginalFeeINR =
+        parseOptionalNonNegativeNumber(
+          oneToOneOriginalFeeINR,
+          "1-to-1 original monthly fee (INR)"
+        );
+
+      const parsedOneToOneOriginalFeeUSD =
+        parseOptionalNonNegativeNumber(
+          oneToOneOriginalFeeUSD,
+          "1-to-1 original monthly fee (USD)"
         );
 
       const parsedJoiningFeeINR =
@@ -1858,11 +1924,15 @@
         // ─────────────────────────────────────────────
         groupFeeINR: parsedGroupFeeINR,
         groupFeeUSD: parsedGroupFeeUSD,
+        groupOriginalFeeINR: parsedGroupOriginalFeeINR,
+        groupOriginalFeeUSD: parsedGroupOriginalFeeUSD,
 
         // IMPORTANT:
         // These are MONTHLY 1-to-1 fees.
         oneToOneFeeINR: parsedOneToOneFeeINR,
         oneToOneFeeUSD: parsedOneToOneFeeUSD,
+        oneToOneOriginalFeeINR: parsedOneToOneOriginalFeeINR,
+        oneToOneOriginalFeeUSD: parsedOneToOneOriginalFeeUSD,
 
         // ─────────────────────────────────────────────
         // Monthly Class Information

@@ -25,6 +25,7 @@ import {
 } from "./enrollment.service";
 import { OtpError, sendEnrollmentOtp, verifyEnrollmentOtp, assertContactVerified } from "../../lib/otp";
 import { getStudentAccessState } from "./access.service";
+import { createNotification } from "../notification/notification.controller";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -2087,8 +2088,12 @@ export const getPublicCourses = async (req: Request, res: Response) => {
         slug: c.slug,
         groupFeeINR: c.groupFeeINR || 2500,
         groupFeeUSD: c.groupFeeUSD || 60,
+        groupOriginalFeeINR: c.groupOriginalFeeINR || null,
+        groupOriginalFeeUSD: c.groupOriginalFeeUSD || null,
         oneToOneFeeINR: c.oneToOneFeeINR || 0,
         oneToOneFeeUSD: c.oneToOneFeeUSD || 0,
+        oneToOneOriginalFeeINR: c.oneToOneOriginalFeeINR || null,
+        oneToOneOriginalFeeUSD: c.oneToOneOriginalFeeUSD || null,
         duration: c.groupClassesCount || "",
         oneToOneDuration: c.oneToOneClassesCount || "",
         level: c.category || "Beginner",
@@ -2277,6 +2282,26 @@ export const applyStudentLeave = async (req: Request, res: Response) => {
         attachment
       }
     });
+
+    const [admins, memberships] = await Promise.all([
+      prisma.user.findMany({ where: { role: Role.ADMIN, isActive: true }, select: { id: true } }),
+      prisma.batchStudent.findMany({ where: { studentId }, include: { batch: { select: { teacherId: true } } } }),
+    ]);
+    const teacherIds = [...new Set(memberships.map((membership) => membership.batch.teacherId).filter(Boolean))] as string[];
+    await Promise.all(admins.map((admin) => createNotification(
+      admin.id,
+      "LEAVE_REQUEST",
+      "New student leave request",
+      `${studentName} requested ${leaveType} from ${new Date(startDate).toLocaleDateString("en-IN")} to ${new Date(endDate).toLocaleDateString("en-IN")}.`,
+      "/admin/leave-requests",
+    )));
+    await Promise.all(teacherIds.map((teacherId) => createNotification(
+      teacherId,
+      "LEAVE_REQUEST",
+      "New student leave request",
+      `${studentName} requested ${leaveType} from ${new Date(startDate).toLocaleDateString("en-IN")} to ${new Date(endDate).toLocaleDateString("en-IN")}.`,
+      "/teacher/attendance/leave-requests",
+    )));
 
     res.json({
       status: "success",

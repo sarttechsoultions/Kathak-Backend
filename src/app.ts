@@ -31,6 +31,8 @@ import paymentRoutes from "./modules/payment/payment.routes";
 import attendanceRoutes from "./modules/attendance/attendance.routes"; 
 import mediaRoutes from "./modules/media/media.routes";
 import rescheduleRoutes from "./modules/reschedule/reschedule.routes";
+import leaveRoutes from "./modules/leave/leave.routes";
+import mobileAuthRoutes from "./modules/mobile/mobile-auth.routes";
 import {
   getCourses,
   createCourse,
@@ -119,6 +121,7 @@ app.get("/api/v1/health", (req: Request, res: Response) => {
 });
 
 app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/mobile/auth", mobileAuthRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/upload", uploadRoutes);
 app.use("/api/v1/media", mediaRoutes);
@@ -145,6 +148,7 @@ app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/payment", paymentRoutes);
 app.use("/api/v1/attendance", attendanceRoutes); // Attendance routes
 app.use("/api/v1/reschedule", rescheduleRoutes);
+app.use("/api/v1", leaveRoutes);
 // Public & Universal Module Route Aliases
 app.get("/api/v1/courses", getCourses);
 app.post("/api/v1/courses", authenticate, createCourse);
