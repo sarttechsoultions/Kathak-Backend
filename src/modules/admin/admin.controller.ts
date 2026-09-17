@@ -1332,10 +1332,12 @@
         // ── Monthly Fees ──
         groupFeeINR,
         groupFeeUSD,
+        groupInternationalFeeINR,
         groupOriginalFeeINR,
         groupOriginalFeeUSD,
         oneToOneFeeINR,
         oneToOneFeeUSD,
+        oneToOneInternationalFeeINR,
         oneToOneOriginalFeeINR,
         oneToOneOriginalFeeUSD,
 
@@ -1355,6 +1357,9 @@
 
         // ── Payment Configuration ──
         joiningFeeINR,
+        joiningFeeUSD,
+        joiningFeeInternationalINR,
+        usdInrRate,
         bulkDiscountTiers,
         autoPayEnabled,
         courseDurationMonths,
@@ -1433,6 +1438,7 @@
         groupFeeUSD,
         "Group monthly fee (USD)"
       );
+      const parsedGroupInternationalFeeINR = parseNonNegativeNumber(groupInternationalFeeINR, "International group fee reference (INR)");
 
       const parsedGroupOriginalFeeINR = parseNonNegativeNumber(
         groupOriginalFeeINR,
@@ -1453,6 +1459,7 @@
         oneToOneFeeUSD,
         "1-to-1 monthly fee (USD)"
       );
+      const parsedOneToOneInternationalFeeINR = parseNonNegativeNumber(oneToOneInternationalFeeINR, "International 1-to-1 fee reference (INR)");
 
       const parsedOneToOneOriginalFeeINR = parseNonNegativeNumber(
         oneToOneOriginalFeeINR,
@@ -1483,6 +1490,9 @@
         "Joining fee (INR)",
         1100
       );
+      const parsedJoiningFeeUSD = parseNonNegativeNumber(joiningFeeUSD, "Joining fee (USD)");
+      const parsedJoiningFeeInternationalINR = parseNonNegativeNumber(joiningFeeInternationalINR, "International joining fee reference (INR)");
+      const parsedUsdInrRate = parseNonNegativeNumber(usdInrRate, "USD exchange rate");
 
       const parsedCourseDurationMonths = parseNonNegativeInteger(
         courseDurationMonths,
@@ -1545,6 +1555,7 @@
           // ─────────────────────────────────────────────
           groupFeeINR: parsedGroupFeeINR,
           groupFeeUSD: parsedGroupFeeUSD,
+          groupInternationalFeeINR: parsedGroupInternationalFeeINR || null,
           groupOriginalFeeINR: parsedGroupOriginalFeeINR || null,
           groupOriginalFeeUSD: parsedGroupOriginalFeeUSD || null,
 
@@ -1553,6 +1564,7 @@
           // 1-to-1 tuition, NOT per-class pricing.
           oneToOneFeeINR: parsedOneToOneFeeINR,
           oneToOneFeeUSD: parsedOneToOneFeeUSD,
+          oneToOneInternationalFeeINR: parsedOneToOneInternationalFeeINR || null,
           oneToOneOriginalFeeINR: parsedOneToOneOriginalFeeINR || null,
           oneToOneOriginalFeeUSD: parsedOneToOneOriginalFeeUSD || null,
 
@@ -1613,6 +1625,10 @@
           // Payment Configuration
           // ─────────────────────────────────────────────
           joiningFeeINR: parsedJoiningFeeINR,
+          joiningFeeUSD: parsedJoiningFeeUSD || null,
+          joiningFeeInternationalINR: parsedJoiningFeeInternationalINR || null,
+          usdInrRate: parsedUsdInrRate || null,
+          usdCalculatedAt: parsedUsdInrRate > 0 ? new Date() : null,
 
           /*
           * Example:
@@ -1698,10 +1714,12 @@
         // ── Monthly Fees ──
         groupFeeINR,
         groupFeeUSD,
+        groupInternationalFeeINR,
         groupOriginalFeeINR,
         groupOriginalFeeUSD,
         oneToOneFeeINR,
         oneToOneFeeUSD,
+        oneToOneInternationalFeeINR,
         oneToOneOriginalFeeINR,
         oneToOneOriginalFeeUSD,
 
@@ -1722,6 +1740,9 @@
 
         // ── Payment Configuration ──
         joiningFeeINR,
+        joiningFeeUSD,
+        joiningFeeInternationalINR,
+        usdInrRate,
         bulkDiscountTiers,
         autoPayEnabled,
         courseDurationMonths,
@@ -1822,6 +1843,7 @@
           groupFeeUSD,
           "Group monthly fee (USD)"
         );
+      const parsedGroupInternationalFeeINR = parseOptionalNonNegativeNumber(groupInternationalFeeINR, "International group fee reference (INR)");
 
       const parsedGroupOriginalFeeINR =
         parseOptionalNonNegativeNumber(
@@ -1846,6 +1868,7 @@
           oneToOneFeeUSD,
           "1-to-1 monthly fee (USD)"
         );
+      const parsedOneToOneInternationalFeeINR = parseOptionalNonNegativeNumber(oneToOneInternationalFeeINR, "International 1-to-1 fee reference (INR)");
 
       const parsedOneToOneOriginalFeeINR =
         parseOptionalNonNegativeNumber(
@@ -1864,6 +1887,9 @@
           joiningFeeINR,
           "Joining fee (INR)"
         );
+      const parsedJoiningFeeUSD = parseOptionalNonNegativeNumber(joiningFeeUSD, "Joining fee (USD)");
+      const parsedJoiningFeeInternationalINR = parseOptionalNonNegativeNumber(joiningFeeInternationalINR, "International joining fee reference (INR)");
+      const parsedUsdInrRate = parseOptionalNonNegativeNumber(usdInrRate, "USD exchange rate");
 
       const parsedCourseDurationMonths =
         parseOptionalNonNegativeInteger(
@@ -1924,6 +1950,7 @@
         // ─────────────────────────────────────────────
         groupFeeINR: parsedGroupFeeINR,
         groupFeeUSD: parsedGroupFeeUSD,
+        groupInternationalFeeINR: parsedGroupInternationalFeeINR,
         groupOriginalFeeINR: parsedGroupOriginalFeeINR,
         groupOriginalFeeUSD: parsedGroupOriginalFeeUSD,
 
@@ -1931,6 +1958,7 @@
         // These are MONTHLY 1-to-1 fees.
         oneToOneFeeINR: parsedOneToOneFeeINR,
         oneToOneFeeUSD: parsedOneToOneFeeUSD,
+        oneToOneInternationalFeeINR: parsedOneToOneInternationalFeeINR,
         oneToOneOriginalFeeINR: parsedOneToOneOriginalFeeINR,
         oneToOneOriginalFeeUSD: parsedOneToOneOriginalFeeUSD,
 
@@ -2020,6 +2048,10 @@
         * first enrollment/payment flow.
         */
         joiningFeeINR: parsedJoiningFeeINR,
+        joiningFeeUSD: parsedJoiningFeeUSD,
+        joiningFeeInternationalINR: parsedJoiningFeeInternationalINR,
+        usdInrRate: parsedUsdInrRate,
+        usdCalculatedAt: parsedUsdInrRate !== undefined ? new Date() : undefined,
 
         /*
         * Discount applies to monthly tuition amount.

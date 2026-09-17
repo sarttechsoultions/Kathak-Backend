@@ -1,0 +1,4 @@
+ALTER TABLE "Course"
+ADD COLUMN "groupInternationalFeeINR" DOUBLE PRECISION,
+ADD COLUMN "oneToOneInternationalFeeINR" DOUBLE PRECISION,
+ADD COLUMN "joiningFeeInternationalINR" DOUBLE PRECISION;

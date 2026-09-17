@@ -74,6 +74,9 @@ export const env = {
 
   googlePlacesApiKey: process.env.GOOGLE_PLACES_API_KEY?.trim() || "",
   googlePlaceId: process.env.GOOGLE_PLACE_ID?.trim() || "",
+  // Optional public website chatbot. Keep this server-only: never expose it as NEXT_PUBLIC_*.
+  groqApiKey: process.env.GROQ_API_KEY?.trim() || "",
+  groqChatModel: process.env.GROQ_CHAT_MODEL?.trim() || "openai/gpt-oss-20b",
   googlePlaceQuery:
     process.env.GOOGLE_PLACE_QUERY?.trim() ||
     "Kathak by Harshita G-A-63 Bhawani Nagar Sikar Road Jaipur",

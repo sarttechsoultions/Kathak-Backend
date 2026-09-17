@@ -20,6 +20,7 @@ function serializeTemplate(item: {
   id: string;
   name: string;
   imageUrl: string;
+  sourcePdfUrl: string | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -28,6 +29,7 @@ function serializeTemplate(item: {
     id: item.id,
     name: item.name,
     imageUrl: item.imageUrl,
+    sourcePdfUrl: item.sourcePdfUrl,
     isActive: item.isActive,
     createdAt: item.createdAt.toISOString(),
     updatedAt: item.updatedAt.toISOString(),
@@ -116,6 +118,7 @@ export const createLetterheadTemplate = async (req: Request, res: Response): Pro
   try {
     const name = asString(req.body.name);
     const imageUrl = asString(req.body.imageUrl);
+    const sourcePdfUrl = asString(req.body.sourcePdfUrl) || null;
 
     if (!name || !imageUrl) {
       res.status(400).json({ status: "error", message: "Template name and image URL are required." });
@@ -123,7 +126,7 @@ export const createLetterheadTemplate = async (req: Request, res: Response): Pro
     }
 
     const item = await prisma.letterheadTemplate.create({
-      data: { name, imageUrl, isActive: true },
+      data: { name, imageUrl, sourcePdfUrl, isActive: true },
     });
 
     res.status(201).json({ status: "success", data: serializeTemplate(item) });
@@ -138,6 +141,7 @@ export const updateLetterheadTemplate = async (req: Request, res: Response): Pro
     const id = asString(req.params.id);
     const name = asString(req.body.name);
     const imageUrl = asString(req.body.imageUrl);
+    const sourcePdfUrl = req.body.sourcePdfUrl !== undefined ? asString(req.body.sourcePdfUrl) || null : undefined;
     const isActive = req.body.isActive !== undefined ? asBoolean(req.body.isActive) : undefined;
 
     const existing = await prisma.letterheadTemplate.findUnique({ where: { id } });
@@ -151,6 +155,7 @@ export const updateLetterheadTemplate = async (req: Request, res: Response): Pro
       data: {
         ...(name ? { name } : {}),
         ...(imageUrl ? { imageUrl } : {}),
+        ...(sourcePdfUrl !== undefined ? { sourcePdfUrl } : {}),
         ...(isActive !== undefined ? { isActive } : {}),
       },
     });

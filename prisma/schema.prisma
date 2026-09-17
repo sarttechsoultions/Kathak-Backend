@@ -97,13 +97,15 @@ model Course {
   thumbnail            String?
   videoUrl             String?
   category             CourseCategory @default(BASIC)
-  groupFeeINR          Float
-  groupFeeUSD          Float
+    groupFeeINR          Float
+    groupFeeUSD          Float
+    groupInternationalFeeINR Float?
   groupOriginalFeeINR  Float?
   groupOriginalFeeUSD  Float?
   groupClassesCount    String
-  oneToOneFeeINR       Float
-  oneToOneFeeUSD       Float
+    oneToOneFeeINR       Float
+    oneToOneFeeUSD       Float
+    oneToOneInternationalFeeINR Float?
   oneToOneOriginalFeeINR Float?
   oneToOneOriginalFeeUSD Float?
   oneToOneClassesCount String
@@ -119,8 +121,9 @@ model Course {
   showExam             Boolean        @default(true)
   showOnHome           Boolean        @default(true)
 
-  joiningFeeINR        Float     @default(1100)
-  joiningFeeUSD        Float?
+    joiningFeeINR        Float     @default(1100)
+    joiningFeeUSD        Float?
+    joiningFeeInternationalINR Float?
   usdInrRate           Float?
   usdCalculatedAt      DateTime?
   bulkDiscountTiers    Json      @default(dbgenerated("'[]'::jsonb"))
@@ -914,6 +917,7 @@ model LetterheadTemplate {
   id          String       @id @default(uuid())
   name        String
   imageUrl    String
+  sourcePdfUrl String?
   isActive    Boolean      @default(true)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt

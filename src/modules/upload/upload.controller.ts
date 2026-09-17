@@ -98,6 +98,100 @@ export const uploadImage = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
+/** Converts a PDF/image to a high-resolution A4 background for editable PDF export. */
+export const uploadLetterheadTemplate = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const file = req.file || (req.files && Array.isArray(req.files) ? req.files[0] : null);
+    if (!file) {
+      res.status(400).json({ status: "error", message: "No letterhead template file provided." });
+      return;
+    }
+
+    const isPdf = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
+
+    // The installed Sharp build does not include PDF decoding. Let Cloudinary
+    // rasterize page one of an A4 PDF instead, then save its PNG delivery URL
+    // as the editable letterhead background.
+    if (isPdf) {
+      try {
+        const pdfUpload = await new Promise<any>((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: "kathak_letterheads", resource_type: "image", format: "pdf" },
+            (error, result) => (result ? resolve(result) : reject(error))
+          );
+          stream.end(file.buffer);
+        });
+
+        if (pdfUpload?.public_id) {
+          const previewUrl = cloudinary.url(pdfUpload.public_id, {
+            resource_type: "image",
+            format: "png",
+            transformation: [{ page: 1, width: 2480, height: 3508, crop: "pad", background: "white" }],
+          });
+          res.status(200).json({
+            status: "success",
+            message: "A4 PDF template uploaded and prepared for print.",
+            data: {
+              url: previewUrl,
+              fileUrl: previewUrl,
+              sourcePdfUrl: pdfUpload.secure_url,
+              public_id: pdfUpload.public_id,
+            },
+          });
+          return;
+        }
+      } catch (error: any) {
+        console.error("Letterhead PDF upload failed:", error?.message || error);
+        res.status(502).json({
+          status: "error",
+          message: "The PDF template could not be processed. Please try again or upload a PNG/JPG template.",
+        });
+        return;
+      }
+    }
+
+    let printBackground: Buffer;
+    try {
+      printBackground = await sharp(file.buffer)
+        .rotate()
+        .resize({ width: 2480, height: 3508, fit: "contain", background: "#ffffff", withoutEnlargement: true })
+        .flatten({ background: "#ffffff" })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+    } catch (error) {
+      console.error("Letterhead template conversion failed:", error);
+      res.status(400).json({ status: "error", message: "We could not read this template. Please upload a standard single-page A4 PDF or image." });
+      return;
+    }
+
+    try {
+      const result = await new Promise<any>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "kathak_letterheads", resource_type: "image", format: "png" },
+          (error, uploadResult) => (uploadResult ? resolve(uploadResult) : reject(error))
+        );
+        stream.end(printBackground);
+      });
+      if (result?.secure_url) {
+        res.status(200).json({ status: "success", message: "Print-ready letterhead template uploaded successfully.", data: { url: result.secure_url, fileUrl: result.secure_url, public_id: result.public_id } });
+        return;
+      }
+    } catch (cloudErr: any) {
+      console.error("Letterhead template upload failed:", cloudErr?.message || cloudErr);
+      if (env.isProduction) {
+        res.status(502).json({ status: "error", message: "Template upload service is temporarily unavailable. Please try again." });
+        return;
+      }
+    }
+
+    const localUrl = saveFileLocally(printBackground, `${path.parse(file.originalname).name}.png`, "letterheads");
+    res.status(200).json({ status: "success", message: "Print-ready letterhead template saved locally.", data: { url: localUrl, fileUrl: localUrl, public_id: `local-${Date.now()}` } });
+  } catch (error: any) {
+    console.error("Letterhead Template Upload Error:", error?.message || error);
+    res.status(500).json({ status: "error", message: "Failed to upload letterhead template." });
+  }
+};
+
 /** Creates a video entry in Bunny Stream and uploads the binary. Two calls, per Bunny's API. */
 async function uploadToBunnyStream(buffer: Buffer, title: string): Promise<{ videoId: string; iframeUrl: string; directUrl: string; thumbnailUrl: string }> {
   const headers = { AccessKey: BUNNY_CONFIG.apiKey, "Content-Type": "application/json" };

@@ -52,3 +52,16 @@ export const publicUploadRateLimiter = rateLimit({
     message: "Too many upload attempts. Please try again in 15 minutes.",
   },
 });
+
+// The chatbot calls a paid third-party AI API, so it needs a stricter public limit.
+export const publicChatRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: env.isProduction ? 30 : 10000,
+  skip: () => !env.isProduction,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: "error",
+    message: "Too many chat messages. Please try again in a few minutes.",
+  },
+});

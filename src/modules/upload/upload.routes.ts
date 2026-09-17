@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import multer from "multer";
 import { Permission, Role } from "@prisma/client";
-import { uploadImage, uploadVideoToBunny } from "./upload.controller";
+import { uploadImage, uploadLetterheadTemplate, uploadVideoToBunny } from "./upload.controller";
 import { authenticate, requireAnyPermission, requireRole } from "../../middleware/auth.middleware";
 import { publicUploadRateLimiter } from "../../middleware/rateLimit.middleware";
 
@@ -45,6 +45,23 @@ const uploadLeaveAttachmentMulter = multer({
   },
 });
 
+// A4 artwork must retain print quality. This stays separate from the normal
+// image uploader, which optimizes media for the web.
+const uploadLetterheadTemplateMulter = multer({
+  storage,
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, callback) => {
+    const extension = file.originalname.toLowerCase().split(".").pop();
+    const allowedExtensions = ["pdf", "jpg", "jpeg", "png", "webp"];
+    const allowedMimeTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    if (!extension || !allowedExtensions.includes(extension) || !allowedMimeTypes.includes(file.mimetype)) {
+      callback(new Error("Upload an A4 PDF, JPG, PNG, or WEBP template (maximum 25 MB)."));
+      return;
+    }
+    callback(null, true);
+  },
+});
+
 const makeMulterHandler = (instance: multer.Multer) => (req: Request, res: Response, next: NextFunction) => {
   instance.any()(req, res, (err) => {
     if (err) {
@@ -62,6 +79,7 @@ const makeMulterHandler = (instance: multer.Multer) => (req: Request, res: Respo
 const handleMulterUpload = makeMulterHandler(uploadAnyMulter);
 const handlePublicImageUpload = makeMulterHandler(uploadPublicImageMulter);
 const handleLeaveAttachmentUpload = makeMulterHandler(uploadLeaveAttachmentMulter);
+const handleLetterheadTemplateUpload = makeMulterHandler(uploadLetterheadTemplateMulter);
 
 const router = Router();
 
@@ -84,6 +102,7 @@ const protectedUpload = (req: Request, res: Response, next: NextFunction) => {
 };
 
 router.post("/image", authenticate, protectedUpload, handleMulterUpload, uploadImage);
+router.post("/letterhead-template", authenticate, requireRole(Role.ADMIN), handleLetterheadTemplateUpload, uploadLetterheadTemplate);
 router.post("/video", authenticate, protectedUpload, handleMulterUpload, uploadVideoToBunny);
 
 // Student assignment submissions
