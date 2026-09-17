@@ -33,6 +33,7 @@ import mediaRoutes from "./modules/media/media.routes";
 import rescheduleRoutes from "./modules/reschedule/reschedule.routes";
 import leaveRoutes from "./modules/leave/leave.routes";
 import mobileAuthRoutes from "./modules/mobile/mobile-auth.routes";
+import chatRoutes from "./modules/chat/chat.routes";
 import {
   getCourses,
   createCourse,
@@ -122,6 +123,7 @@ app.get("/api/v1/health", (req: Request, res: Response) => {
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/mobile/auth", mobileAuthRoutes);
+app.use("/api/v1/chat", chatRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/upload", uploadRoutes);
 app.use("/api/v1/media", mediaRoutes);
