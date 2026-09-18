@@ -1,0 +1,3 @@
+ALTER TABLE "Certificate"
+ADD COLUMN IF NOT EXISTS "courseDuration" TEXT,
+ADD COLUMN IF NOT EXISTS "classMode" TEXT;
