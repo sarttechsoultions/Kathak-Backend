@@ -2098,6 +2098,7 @@ export const getPublicCourses = async (req: Request, res: Response) => {
         oneToOneDuration: c.oneToOneClassesCount || "",
         level: c.category || "Beginner",
         videoUrl: c.videoUrl || "",
+        thumbnail: c.thumbnail || "/courses-page/hero-layer.png",
         batches: courseBatches.map((b) => ({
           id: b.id,
           name: b.name,
