@@ -78,6 +78,8 @@ model User {
   rescheduleRequestsAsTeacher ClassRescheduleRequest[] @relation("RescheduleTeacher")
   accessUnlocksReceived       TemporaryAccessUnlock[]  @relation("StudentAccessUnlocks")
   accessUnlocksGranted        TemporaryAccessUnlock[]  @relation("AdminGrantedUnlocks")
+  certificates                Certificate[]           @relation("CertificateStudent")
+  certificatesIssued          Certificate[]           @relation("CertificateIssuer")
 }
 
 model TeacherPermission {
@@ -137,6 +139,7 @@ model Course {
   monthlyDues       MonthlyDue[]
   recordedClasses   RecordedClass[]
   demoGroupSessions DemoGroupSession[]
+  certificates      Certificate[]
 }
 
 model Lesson {
@@ -177,6 +180,7 @@ model Batch {
   liveClasses        LiveClass[]
   recordedClasses    RecordedClass[]
   rescheduleRequests ClassRescheduleRequest[]
+  certificates        Certificate[]
 }
 
 model RecordedClass {
@@ -251,6 +255,31 @@ model Enrollment {
   payments             Payment[]
   monthlyDues          MonthlyDue[]
   invoices             Invoice[]
+}
+
+model Certificate {
+  id             String    @id @default(uuid())
+  code           String    @unique
+  type           String    @default("COMPLETION")
+  achievement    String?
+  courseDuration String?
+  classMode      String?
+  issuedAt       DateTime  @default(now())
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  studentId      String
+  courseId       String
+  batchId        String?
+  issuedById     String?
+  student        User      @relation("CertificateStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  course         Course    @relation(fields: [courseId], references: [id])
+  batch          Batch?    @relation(fields: [batchId], references: [id])
+  issuedBy       User?     @relation("CertificateIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@index([courseId])
+  @@index([batchId])
 }
 
 model InvoiceCounter {

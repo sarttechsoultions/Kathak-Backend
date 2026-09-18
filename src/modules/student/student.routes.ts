@@ -3,6 +3,7 @@ import { Role } from "@prisma/client";
 import { authenticate, requireRole } from "../../middleware/auth.middleware";
 import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 import { logoutUser } from "../auth/auth.controller";
+import { studentCertificateRouter } from "../certificate/certificate.routes";
 import {
   enrollStudent,
   enrollStudentBypass,
@@ -52,6 +53,8 @@ router.get("/public/courses", getPublicCourses);
 
 // Protected student routes
 const studentOnly = [authenticate, requireRole(Role.STUDENT)];
+
+router.use("/certificates", studentCertificateRouter);
 
 router.post("/logout", ...studentOnly, logoutUser);
 

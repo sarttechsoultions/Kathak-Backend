@@ -7,6 +7,7 @@ import { adminBannersRouter } from "../banners/banners.routes";
 import { adminPopupRouter } from "../popup/popup.routes";
 import { adminDemoRouter } from "../demo/demo.routes";
 import { adminLetterheadRouter } from "../letterhead/letterhead.routes";
+import { adminCertificateRouter } from "../certificate/certificate.routes";
 import {
   getDashboardStats,
   getStudents,
@@ -87,6 +88,7 @@ router.use('/banners', adminBannersRouter);
 router.use('/popup', adminPopupRouter);
 router.use('/demo', adminDemoRouter);
 router.use('/letterheads', adminLetterheadRouter);
+router.use('/certificates', adminCertificateRouter);
 router.use(authenticate);
 
 // 1. Dashboard Overview

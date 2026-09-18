@@ -1,2 +1,2 @@
 ALTER TABLE "LetterheadTemplate"
-ADD COLUMN "sourcePdfUrl" TEXT;
+ADD COLUMN IF NOT EXISTS "sourcePdfUrl" TEXT;
