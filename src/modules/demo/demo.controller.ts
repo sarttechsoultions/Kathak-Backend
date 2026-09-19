@@ -68,12 +68,20 @@ function parseEmail(value: unknown): string {
 }
 
 function parsePhone(value: unknown): string {
-  const digits = asString(value, 40).replace(/\D/g, "");
-  const normalized = digits.startsWith("91") && digits.length === 12 ? digits.slice(2) : digits;
-  if (normalized.length !== 10) {
-    throw new DemoError("Mobile number must be a valid 10-digit Indian number.");
+  const rawStr = asString(value, 40).trim();
+  const digits = rawStr.replace(/\D/g, "");
+  
+  if (digits.length < 10 || digits.length > 15) {
+    throw new DemoError("Please enter a valid international phone number (10-15 digits).");
   }
-  return `+91 ${normalized}`;
+  
+  if (rawStr.startsWith("+")) {
+    return `+${digits}`;
+  }
+  
+  // Fallback to Indian code if a naked 10 digit number is passed
+  const normalized = digits.startsWith("91") && digits.length === 12 ? digits.slice(2) : digits;
+  return `+91${normalized}`;
 }
 
 function parseClassMode(value: unknown): string {
@@ -449,53 +457,10 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
       );
 
       // 2. Check Teacher Commitments (LiveClass overlap)
-      const conflictingClass = await tx.liveClass.findFirst({
-        where: {
-          status: { not: "CANCELLED" },
-          OR: [
-            {
-              scheduledStart: { lt: requestedEnd },
-              scheduledEnd: { gt: requestedStart },
-            },
-          ],
-        },
-      });
-
-      if (conflictingClass) {
-        throw new DemoError(
-          "The selected time conflicts with a scheduled class. Please choose another time.",
-        );
-      }
+      // Conflict checking removed as per user request to allow multiple bookings
 
       // 3. Check DemoBookings (Confirmed or Recent Pending overlap)
-      const recentPendingCutoff = new Date(
-        Date.now() - 15 * 60_000,
-      );
-
-      const conflictingDemo = await tx.demoBooking.findFirst({
-        where: {
-          type: DemoClassType.ONE_TO_ONE,
-          OR: [
-            { status: DemoBookingStatus.CONFIRMED },
-            {
-              status: DemoBookingStatus.PENDING,
-              createdAt: { gt: recentPendingCutoff },
-            },
-          ],
-          preferredDate: {
-            lt: requestedEnd,
-            gte: new Date(
-              requestedStart.getTime() - durationMins * 60_000,
-            ),
-          },
-        },
-      });
-
-      if (conflictingDemo) {
-        throw new DemoError(
-          "The selected time is already booked. Please choose another time.",
-        );
-      }
+      // Conflict checking removed as per user request to allow multiple bookings
 
       return tx.demoBooking.create({
         data: {

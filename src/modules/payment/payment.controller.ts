@@ -844,18 +844,22 @@ export const createOrder = async (
       );
 
     // ------------------------------------------------------------
-    // OTP verification
+    // OTP verification (Bypassed for Mobile App)
     // ------------------------------------------------------------
 
-    await assertContactVerified(
-      "EMAIL",
-      validated.normalizedEmail
-    );
+    const isMobileApp = req.body?.isMobileApp === true;
 
-    await assertContactVerified(
-      "MOBILE",
-      validated.e164Phone
-    );
+    if (!isMobileApp) {
+      await assertContactVerified(
+        "EMAIL",
+        validated.normalizedEmail
+      );
+
+      await assertContactVerified(
+        "MOBILE",
+        validated.e164Phone
+      );
+    }
 
     // ------------------------------------------------------------
     // Payment months
