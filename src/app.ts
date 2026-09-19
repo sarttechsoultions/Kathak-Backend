@@ -124,6 +124,7 @@ app.get("/api/v1/health", (req: Request, res: Response) => {
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/mobile/auth", mobileAuthRoutes);
+app.use("/api/v1/mobile", require("./modules/mobile/mobile-course.routes").default);
 app.use("/api/v1/chat", chatRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/upload", uploadRoutes);
