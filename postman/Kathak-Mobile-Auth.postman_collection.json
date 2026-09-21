@@ -2,14 +2,13 @@
   "info": {
     "_postman_id": "ab71989b-97b6-40b3-bb69-d1a9316676b8",
     "name": "Kathak - Mobile App Authentication",
-    "description": "OTP-first mobile signup and shared student login. Signup creates only a student account; enrollment is completed later from the course flow. The contact entered in step 1 is OTP verified. The second contact is collected in step 3 without a second OTP during the current launch flow.",
+    "description": "OTP-first mobile signup and shared student login. Signup creates only a student account; enrollment is completed later from the course flow. The contact entered in step 1 is OTP verified. The second contact is collected in step 3 without a second OTP or a password during the current launch flow.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "baseUrl", "value": "https://api.kathakbyharshita.com/api/v1" },
     { "key": "mobileEmail", "value": "student.mobile@example.com" },
     { "key": "mobilePhone", "value": "9876543210" },
-    { "key": "mobilePassword", "value": "ChangeMe123!" },
     { "key": "signupOtp", "value": "001122" },
     { "key": "mobileAccessToken", "value": "" }
   ],
@@ -42,7 +41,7 @@
       "request": {
         "method": "POST",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"verifiedIdentifier\": \"{{mobileEmail}}\",\n  \"fullName\": \"Mobile Student\",\n  \"email\": \"{{mobileEmail}}\",\n  \"phone\": \"{{mobilePhone}}\",\n  \"password\": \"{{mobilePassword}}\",\n  \"confirmPassword\": \"{{mobilePassword}}\",\n  \"termsAccepted\": true\n}" },
+        "body": { "mode": "raw", "raw": "{\n  \"verifiedIdentifier\": \"{{mobileEmail}}\",\n  \"fullName\": \"Mobile Student\",\n  \"email\": \"{{mobileEmail}}\",\n  \"phone\": \"{{mobilePhone}}\",\n  \"termsAccepted\": true\n}" },
         "url": "{{baseUrl}}/mobile/auth/signup/complete"
       }
     },
@@ -51,7 +50,7 @@
       "request": {
         "method": "POST",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"verifiedIdentifier\": \"{{mobilePhone}}\",\n  \"countryCode\": \"+91\",\n  \"fullName\": \"Mobile Student\",\n  \"email\": \"{{mobileEmail}}\",\n  \"phone\": \"{{mobilePhone}}\",\n  \"password\": \"{{mobilePassword}}\",\n  \"confirmPassword\": \"{{mobilePassword}}\",\n  \"termsAccepted\": true\n}" },
+        "body": { "mode": "raw", "raw": "{\n  \"verifiedIdentifier\": \"{{mobilePhone}}\",\n  \"countryCode\": \"+91\",\n  \"fullName\": \"Mobile Student\",\n  \"email\": \"{{mobileEmail}}\",\n  \"phone\": \"{{mobilePhone}}\",\n  \"termsAccepted\": true\n}" },
         "url": "{{baseUrl}}/mobile/auth/signup/complete"
       }
     },

@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { Role } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { signUserToken } from "../../lib/authHelpers";
@@ -67,8 +68,16 @@ function getSignupContact(input: unknown, countryCode?: unknown):
   };
 }
 
-function signupDestination(hasActiveEnrollment: boolean) {
+function loginDestination(hasActiveEnrollment: boolean) {
   return hasActiveEnrollment ? "DASHBOARD" : "COURSE_EXPLORE";
+}
+
+/**
+ * A completed mobile signup must open the student home, even before the student
+ * has selected a course. Enrollment is intentionally a separate, later flow.
+ */
+function signupDestination() {
+  return "DASHBOARD";
 }
 
 /**
@@ -154,8 +163,8 @@ export const mobileSignupVerifyOtp = async (req: Request, res: Response): Promis
         identifier: verified.target,
         requiredFields:
           verified.channel === "EMAIL"
-            ? ["fullName", "phone", "password", "confirmPassword", "termsAccepted"]
-            : ["fullName", "email", "password", "confirmPassword", "termsAccepted"],
+            ? ["fullName", "phone", "termsAccepted"]
+            : ["fullName", "email", "termsAccepted"],
         secondContactVerification: "BYPASSED_ONCE_DURING_SIGNUP",
         nextStep: "COMPLETE_SIGNUP",
       },
@@ -172,6 +181,7 @@ export const mobileSignupVerifyOtp = async (req: Request, res: Response): Promis
 /**
  * Step 3 of mobile signup. The initially-entered contact must have a recent verified OTP.
  * The second contact is deliberately not OTP-verified in this first-release flow.
+ * Passwords are not collected in the OTP-only mobile flow.
  */
 export const mobileSignupComplete = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -202,11 +212,11 @@ export const mobileSignupComplete = async (req: Request, res: Response): Promise
       res.status(400).json({ status: "error", message: "The verified contact must match your signup details." });
       return;
     }
-    if (password.length < 8 || password.length > 128) {
+    if ((password || confirmPassword) && (password.length < 8 || password.length > 128)) {
       res.status(400).json({ status: "error", message: "Password must be between 8 and 128 characters." });
       return;
     }
-    if (password !== confirmPassword) {
+    if ((password || confirmPassword) && password !== confirmPassword) {
       res.status(400).json({ status: "error", message: "Password and confirm password do not match." });
       return;
     }
@@ -231,13 +241,16 @@ export const mobileSignupComplete = async (req: Request, res: Response): Promise
       return;
     }
 
+    // The mobile app uses OTP authentication. A random hash satisfies the shared
+    // user schema while ensuring no password is created or exposed to the client.
+    const passwordForStorage = password || crypto.randomBytes(32).toString("base64url");
     const acceptedAt = new Date();
     const user = await prisma.user.create({
       data: {
         fullName,
         email,
         phone,
-        passwordHash: await bcrypt.hash(password, 12),
+        passwordHash: await bcrypt.hash(passwordForStorage, 12),
         role: Role.STUDENT,
         termsAcceptedAt: acceptedAt,
         privacyPolicyAcceptedAt: acceptedAt,
@@ -254,7 +267,7 @@ export const mobileSignupComplete = async (req: Request, res: Response): Promise
         ...createMobileSession(user),
         user: mobileUser(user),
         enrollment: { hasActiveEnrollment },
-        nextScreen: signupDestination(hasActiveEnrollment),
+        nextScreen: signupDestination(),
       },
     });
   } catch (error) {
@@ -336,7 +349,7 @@ export const mobileSignup = async (req: Request, res: Response): Promise<void> =
         ...createMobileSession(user),
         user: mobileUser(user),
         enrollment: { hasActiveEnrollment: false },
-        nextScreen: "COURSE_EXPLORE",
+        nextScreen: signupDestination(),
       },
     });
   } catch (error: unknown) {
@@ -375,7 +388,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
         ...createMobileSession(user),
         user: mobileUser(user),
         enrollment: { hasActiveEnrollment: user.enrollments.length > 0 },
-        nextScreen: signupDestination(user.enrollments.length > 0),
+        nextScreen: loginDestination(user.enrollments.length > 0),
       },
     });
   } catch (error) {
