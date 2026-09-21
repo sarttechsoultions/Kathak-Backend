@@ -31,10 +31,20 @@ export const getMobileDashboard = async (req: Request, res: Response): Promise<v
         fullName: true,
         avatarUrl: true,
         batchMemberships: { select: { batchId: true } },
+        enrollments: { where: { active: true }, select: { id: true }, take: 1 },
       },
     });
     if (!student) {
       res.status(404).json({ status: "error", message: "Student profile not found." });
+      return;
+    }
+    if (student.enrollments.length === 0) {
+      res.status(403).json({
+        status: "error",
+        code: "ENROLLMENT_REQUIRED",
+        message: "Please enroll in a course before opening the dashboard.",
+        data: { nextScreen: "COURSE_EXPLORE" },
+      });
       return;
     }
 

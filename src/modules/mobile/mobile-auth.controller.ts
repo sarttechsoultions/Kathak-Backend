@@ -73,12 +73,9 @@ function loginDestination(hasActiveEnrollment: boolean) {
   return hasActiveEnrollment ? "DASHBOARD" : "COURSE_EXPLORE";
 }
 
-/**
- * A completed mobile signup must open the student home, even before the student
- * has selected a course. Enrollment is intentionally a separate, later flow.
- */
+/** A new account must choose and pay for a course before entering the dashboard. */
 function signupDestination() {
-  return "DASHBOARD";
+  return "COURSE_EXPLORE";
 }
 
 /**
