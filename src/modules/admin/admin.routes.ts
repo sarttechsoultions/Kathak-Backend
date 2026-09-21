@@ -70,7 +70,10 @@ import {
   renewStudentCash,
   renewStudentOnline,
   getStudentFinance,
-  previewRenewalPricing
+  previewRenewalPricing,
+  getTeacherSalaryPayments,
+  recordTeacherSalaryPayment,
+  downloadTeacherSalaryReceipt
 } from "./admin.controller";
 import { getReportsOverview } from "./admin.reports.controller";
 import { getStudentReports, getStudentReportDetail, downloadStudentReportPdf } from "./studentReports.controller";
@@ -168,6 +171,9 @@ router.post("/finance/renew-online", requirePermission(Permission.VIEW_PAYMENTS)
 router.get("/payments/:id/invoice", requirePermission(Permission.VIEW_PAYMENTS), getPaymentInvoice);
 router.post("/payments", requirePermission(Permission.VIEW_PAYMENTS), recordFeePayment);
 router.post("/payments/:id/refund", requirePermission(Permission.VIEW_PAYMENTS), refundPayment);
+router.get("/finance/teacher-salary", requirePermission(Permission.VIEW_PAYMENTS), getTeacherSalaryPayments);
+router.post("/finance/teacher-salary", requirePermission(Permission.VIEW_PAYMENTS), recordTeacherSalaryPayment);
+router.get("/finance/teacher-salary/:id/receipt", requirePermission(Permission.VIEW_PAYMENTS), downloadTeacherSalaryReceipt);
 
 // 7b. Monthly Dues
 router.get("/monthly-dues", requirePermission(Permission.VIEW_PAYMENTS), getMonthlyDues);

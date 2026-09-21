@@ -40,6 +40,7 @@ model User {
   idProofUrl                  String?
   documents                   Json[]                   @default([])
   notificationPrefs           Json?
+  fcmTokens                   String[]                 @default([])
   termsAcceptedAt             DateTime?
   privacyPolicyAcceptedAt     DateTime?
   consentVersion              String?
@@ -80,6 +81,8 @@ model User {
   accessUnlocksGranted        TemporaryAccessUnlock[]  @relation("AdminGrantedUnlocks")
   certificates                Certificate[]           @relation("CertificateStudent")
   certificatesIssued          Certificate[]           @relation("CertificateIssuer")
+  salaryPaymentsReceived      TeacherSalaryPayment[]  @relation("SalaryPaymentTeacher")
+  salaryPaymentsRecorded      TeacherSalaryPayment[]  @relation("SalaryPaymentRecorder")
 }
 
 model TeacherPermission {
@@ -140,6 +143,7 @@ model Course {
   recordedClasses   RecordedClass[]
   demoGroupSessions DemoGroupSession[]
   certificates      Certificate[]
+  contentResources  ContentResource[]
 }
 
 model Lesson {
@@ -339,6 +343,31 @@ model Payment {
   enrollment        Enrollment?    @relation(fields: [enrollmentId], references: [id])
   user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   Invoice           Invoice?
+}
+
+model TeacherSalaryPayment {
+  id                   String   @id @default(uuid())
+  receiptNumber        String   @unique
+  teacherId            String
+  recordedByAdminId    String
+  salaryMonth          String   // YYYY-MM
+  basicAmount          Float
+  allowanceAmount      Float    @default(0)
+  deductionAmount      Float    @default(0)
+  netAmount            Float
+  currency             Currency @default(INR)
+  paymentMethod        String
+  transactionReference String?
+  paidAt               DateTime @default(now())
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  teacher              User     @relation("SalaryPaymentTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  recordedByAdmin      User     @relation("SalaryPaymentRecorder", fields: [recordedByAdminId], references: [id], onDelete: Restrict)
+
+  @@unique([teacherId, salaryMonth])
+  @@index([teacherId, paidAt])
+  @@index([paidAt])
 }
 
 model PendingEnrollment {
@@ -763,14 +792,17 @@ model ContentResource {
   category     String       @default("General")
   isGlobal     Boolean      @default(true)
   batchId      String?
+  courseId     String?
   uploadedById String
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   batch        Batch?       @relation(fields: [batchId], references: [id])
+  course       Course?      @relation(fields: [courseId], references: [id])
   uploadedBy   User         @relation("UploadedResources", fields: [uploadedById], references: [id], onDelete: Cascade)
 
   @@index([category])
   @@index([batchId])
+  @@index([courseId])
 }
 
 model GalleryItem {

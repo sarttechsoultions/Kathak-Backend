@@ -13,8 +13,9 @@ const router = Router();
 
 // Admin routes
 router.get("/admin", authenticate, requireRole(Role.ADMIN), getAllContentAdmin);
-router.post("/", authenticate, requireRole(Role.ADMIN), createContentResource);
-router.delete("/:id", authenticate, requireRole(Role.ADMIN), deleteContentResource);
+router.get("/teacher", authenticate, requireRole(Role.TEACHER), getAllContentAdmin);
+router.post("/", authenticate, requireRole(Role.ADMIN, Role.TEACHER), createContentResource);
+router.delete("/:id", authenticate, requireRole(Role.ADMIN, Role.TEACHER), deleteContentResource);
 
 // Student routes
 router.get("/student", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, getStudentContent);

@@ -15,7 +15,7 @@ import {
 } from "../../lib/liveClassAccess";
 import { getIO } from "../../lib/socket";
 import { teacherOwnsBatch } from "../../lib/teacherBatchAccess";
-import { createNotification } from "../notification/notification.controller";
+import { createNotification, notifyAdmins } from "../notification/notification.controller";
 import { agoraKeyReady, buildAgoraToken, numericUidFromString } from "./agoraToken";
 import { broadcastLiveClassEvent } from "./liveclass.events";
 
@@ -51,10 +51,12 @@ const broadcastClass = (liveClass: any) => {
 
 const batchSelect = { name: true, code: true, courseName: true, teacherId: true, teacherName: true, schedule: true } as const;
 
-const notifyBatchStudents = async (
+const notifyClassParticipants = async (
   batchId: string,
+  teacherId: string | null,
   opts: { type: string; title: string; message: string; link?: string }
 ) => {
+  // Notify Students
   const memberships = await prisma.batchStudent.findMany({
     where: { batchId },
     select: {
@@ -70,6 +72,14 @@ const notifyBatchStudents = async (
       await createNotification(row.studentId, opts.type, opts.title, opts.message, opts.link);
     })
   );
+
+  // Notify Teacher
+  if (teacherId) {
+    await createNotification(teacherId, opts.type, opts.title, opts.message, opts.link);
+  }
+
+  // Notify Admins
+  await notifyAdmins(opts.type, opts.title, opts.message, opts.link);
 };
 
 const buildRoomName = (batchCode: string) =>
@@ -162,6 +172,29 @@ export const createLiveClass = async (req: Request, res: Response) => {
   try {
     broadcastLiveClassEvent(getIO(), "liveclass:class-created", serialise(liveClass));
   } catch {}
+
+  // Format date and time
+  const formattedDate = start.toLocaleDateString("en-IN", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
+  
+  const formattedTime = start.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  });
+
+  await notifyClassParticipants(batchId, liveClass.batch?.teacherId || null, {
+    type: "LIVE_CLASS_SCHEDULED",
+    title: "Class Scheduled",
+    message: `New Live Class scheduled: ${liveClass.title} for Batch ${liveClass.batch?.name || "Unknown"} on ${formattedDate} at ${formattedTime}`,
+    link: "/student/classes",
+  });
+
   res.status(201).json({ status: "success", data: serialise(liveClass) });
 };
 
@@ -213,15 +246,17 @@ export const setLiveClassStatus = async (req: Request, res: Response) => {
   broadcastClass(liveClass);
 
   if (status === "CANCELLED") {
-    await notifyBatchStudents(existing.batchId, {
+    await notifyClassParticipants(existing.batchId, existing.batch.teacherId, {
       type: "LIVE_CLASS_CANCELLED",
       title: "Class Cancelled",
-      message: `"${existing.title}" scheduled for ${existing.scheduledStart.toLocaleDateString("en-IN", {
-        weekday: "short",
-        day: "numeric",
-        month: "short",
-        timeZone: "Asia/Kolkata",
-      })} has been cancelled.`,
+      message: `Live Class cancelled: ${existing.title}`,
+      link: "/student/classes",
+    });
+  } else if (status === "LIVE") {
+    await notifyClassParticipants(existing.batchId, existing.batch.teacherId, {
+      type: "LIVE_CLASS_STARTED",
+      title: "Class Started",
+      message: `Live Class has started: ${existing.title}`,
       link: "/student/classes",
     });
   }
@@ -336,7 +371,7 @@ export const generateMonthLiveClasses = async (req: Request, res: Response) => {
 
   if (created.length > 0) {
     const monthLabel = formatMonthYearLabel(targetYear, targetMonth);
-    await notifyBatchStudents(batch.id, {
+    await notifyClassParticipants(batch.id, batch.teacherId, {
       type: "LIVE_CLASS_SCHEDULE",
       title: "Live Class Schedule Updated",
       message: `${created.length} live class${created.length === 1 ? "" : "es"} scheduled for ${batch.name} in ${monthsToGenerate === 1 ? monthLabel : `${monthsToGenerate} months`}.`,
@@ -421,7 +456,7 @@ export const rescheduleLiveClass = async (req: Request, res: Response) => {
       timeZone: "Asia/Kolkata",
     });
 
-    await notifyBatchStudents(existing.batchId, {
+    await notifyClassParticipants(existing.batchId, existing.batch.teacherId, {
       type: "LIVE_CLASS_RESCHEDULED",
       title: "Class Rescheduled",
       message: `"${existing.title}" has been moved to ${newDateStr} at ${newTimeStr}.`,

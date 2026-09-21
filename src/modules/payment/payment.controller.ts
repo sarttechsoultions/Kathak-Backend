@@ -830,6 +830,8 @@ export const createOrder = async (
   res: Response
 ): Promise<void> => {
   try {
+    const isMobileApp = req.body?.isMobileApp === true;
+
     // ------------------------------------------------------------
     // Validate enrollment data
     // ------------------------------------------------------------
@@ -839,15 +841,29 @@ export const createOrder = async (
         req.body,
         {
           requirePassword: true,
-          allowExistingUser: false,
+          allowExistingUser: isMobileApp,
         }
       );
+
+    // Mobile enrollment follows OTP account creation. Reusing an account is
+    // allowed only for the currently authenticated OTP-signup user, never for
+    // a contact supplied by another user.
+    if (isMobileApp) {
+      if (!req.user) {
+        throw new EnrollmentError("Authentication is required for mobile enrollment.", 401);
+      }
+      const sessionUser = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { email: true, phone: true },
+      });
+      if (!sessionUser || sessionUser.email !== validated.normalizedEmail || sessionUser.phone !== validated.e164Phone) {
+        throw new EnrollmentError("Enrollment details must match the signed-in mobile account.", 403);
+      }
+    }
 
     // ------------------------------------------------------------
     // OTP verification (Bypassed for Mobile App)
     // ------------------------------------------------------------
-
-    const isMobileApp = req.body?.isMobileApp === true;
 
     if (!isMobileApp) {
       await assertContactVerified(
