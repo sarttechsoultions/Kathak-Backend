@@ -9,10 +9,11 @@ import { assertContactVerified, OtpError, sendEnrollmentOtp, verifyEnrollmentOtp
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MOBILE_CONSENT_VERSION = "2026-09-16";
 
-function normalisePhone(value: unknown): string | null {
+function normalisePhone(value: unknown, countryCode: unknown = "+91"): string | null {
   const digits = String(value || "").replace(/\D/g, "");
+  const countryDigits = String(countryCode || "+91").replace(/\D/g, "");
   if (digits.length < 10 || digits.length > 15) return null;
-  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length === 10) return `+${countryDigits || "91"}${digits}`;
   return `+${digits}`;
 }
 
@@ -59,7 +60,7 @@ function getSignupContact(input: unknown, countryCode?: unknown):
     return { channel: "EMAIL", email: value.toLowerCase() };
   }
 
-  const phone = normalisePhone(value);
+  const phone = normalisePhone(value, countryCode);
   if (!phone) return null;
   return {
     channel: "MOBILE",
@@ -188,7 +189,7 @@ export const mobileSignupComplete = async (req: Request, res: Response): Promise
     const verifiedContact = getSignupContact(req.body?.verifiedIdentifier, req.body?.countryCode);
     const fullName = String(req.body?.fullName || "").trim();
     const email = String(req.body?.email || "").trim().toLowerCase();
-    const phone = normalisePhone(req.body?.phone);
+    const phone = normalisePhone(req.body?.phone, req.body?.countryCode);
     const password = String(req.body?.password || "");
     const confirmPassword = String(req.body?.confirmPassword || "");
     const termsAccepted = req.body?.termsAccepted === true;
@@ -288,7 +289,7 @@ export const mobileSignup = async (req: Request, res: Response): Promise<void> =
   try {
     const fullName = String(req.body?.fullName || "").trim();
     const email = String(req.body?.email || "").trim().toLowerCase();
-    const phone = normalisePhone(req.body?.phone);
+    const phone = normalisePhone(req.body?.phone, req.body?.countryCode);
     const password = String(req.body?.password || "");
     const confirmPassword = String(req.body?.confirmPassword || "");
     const termsAccepted = req.body?.termsAccepted === true;
