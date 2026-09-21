@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
-import { AttendanceStatus } from "@prisma/client";
+import { AttendanceStatus, Role } from "@prisma/client";
+import { createNotification, notifyAdmins } from "../notification/notification.controller";
 
 // 1. Get Student Attendance for a Specific Batch & Date
 export const getBatchAttendance = async (req: Request, res: Response) => {
@@ -151,7 +152,24 @@ export const saveBulkAttendance = async (req: Request, res: Response) => {
           },
         });
       }
+
+      // Notify the student
+      await createNotification(
+        record.userId,
+        "ATTENDANCE",
+        "Attendance Marked",
+        `Your attendance for ${batchName || "Class"} on ${targetDate.toLocaleDateString("en-IN")} has been marked as ${record.status}.`,
+        "/student/attendance"
+      );
     }
+
+    // Notify admins about attendance submission
+    await notifyAdmins(
+      "ATTENDANCE",
+      "Attendance Submitted",
+      `Attendance for ${batchName || "Class"} on ${targetDate.toLocaleDateString("en-IN")} has been submitted.`,
+      "/admin/attendance"
+    );
 
     res.status(200).json({ status: "success", message: "Attendance saved successfully" });
   } catch (error: any) {

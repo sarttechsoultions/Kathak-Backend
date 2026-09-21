@@ -387,3 +387,34 @@ export const generatePdfBuffer = async (html: string): Promise<Buffer> => {
     await browser.close();
   }
 };
+
+export type TeacherSalaryReceiptData = {
+  receiptNumber: string;
+  salaryMonth: string;
+  paidAt: Date;
+  teacherName: string;
+  teacherEmail: string;
+  teacherPhone?: string | null;
+  designation?: string | null;
+  basicAmount: number;
+  allowanceAmount: number;
+  deductionAmount: number;
+  netAmount: number;
+  paymentMethod: string;
+  transactionReference?: string | null;
+  notes?: string | null;
+};
+
+/** Salary receipt shared with the teacher after an admin records payment. */
+export const buildTeacherSalaryReceiptHtml = (receipt: TeacherSalaryReceiptData): string => {
+  const { amountToWords } = require("./currencyToWords");
+  const academyName = process.env.ACADEMY_NAME || "KATHAK BY HARSHITA ACADEMY";
+  const academyAddress = process.env.ACADEMY_ADDRESS || "";
+  const academyEmail = process.env.ACADEMY_CONTACT_EMAIL || "";
+  const money = (amount: number) => `₹${Number(amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const monthLabel = new Date(`${receipt.salaryMonth}-01T00:00:00`).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+
+  return `<!doctype html><html><head><meta charset="utf-8"/><title>Salary Receipt ${escapeHtml(receipt.receiptNumber)}</title><style>
+    *{box-sizing:border-box} body{margin:0;padding:24px;background:#f5f5f5;color:#1f2937;font:13px Arial,sans-serif}.sheet{width:100%;max-width:794px;min-height:1040px;margin:auto;background:#fff;border:1px solid #d7dce2}.top{height:7px;background:#990d2e}.header{padding:30px 38px 22px;text-align:center;border-bottom:1px solid #e5e7eb}.academy{margin:0;color:#990d2e;font-size:24px;font-weight:800}.sub{margin:6px 0 0;color:#667085;font-size:12px}.title{padding:14px;text-align:center;background:#fdf2f4;color:#990d2e;font-weight:800;font-size:18px;letter-spacing:2px}.content{padding:30px 38px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-bottom:28px}.label{color:#667085;text-transform:uppercase;letter-spacing:1px;font-size:10px;font-weight:700;padding-bottom:7px;border-bottom:1px solid #e5e7eb;margin-bottom:10px}.name{font-weight:700;font-size:17px}.muted{color:#667085;line-height:1.6}.row{display:flex;justify-content:space-between;gap:12px;padding:6px 0}.row span:first-child{color:#667085}.table{width:100%;border-collapse:collapse;margin-top:10px}.table th{background:#f9fafb;color:#475467;text-align:left;padding:11px;border:1px solid #e5e7eb;text-transform:uppercase;font-size:10px}.table th:last-child,.table td:last-child{text-align:right}.table td{padding:12px;border:1px solid #e5e7eb}.total td{background:#fdf2f4;color:#990d2e;font-weight:800;font-size:15px}.paid{margin-top:26px;border:1px solid #d8e9dc;background:#f2fbf4;padding:17px;border-radius:8px}.paid strong{color:#18753a}.footer{padding:20px 38px;border-top:1px solid #e5e7eb;text-align:center;color:#667085;font-size:11px}@media print{body{padding:0;background:#fff}.sheet{border:0}}
+  </style></head><body><main class="sheet"><div class="top"></div><header class="header"><h1 class="academy">${escapeHtml(academyName)}</h1>${academyAddress ? `<p class="sub">${escapeHtml(academyAddress)}</p>` : ""}${academyEmail ? `<p class="sub">${escapeHtml(academyEmail)}</p>` : ""}</header><div class="title">TEACHER SALARY RECEIPT</div><section class="content"><div class="grid"><div><div class="label">Paid To</div><div class="name">${escapeHtml(receipt.teacherName)}</div><div class="muted">${escapeHtml(receipt.designation || "Teacher")}<br/>${escapeHtml(receipt.teacherEmail)}${receipt.teacherPhone ? `<br/>${escapeHtml(receipt.teacherPhone)}` : ""}</div></div><div><div class="label">Payment Details</div><div class="row"><span>Receipt No.</span><strong>${escapeHtml(receipt.receiptNumber)}</strong></div><div class="row"><span>Salary Month</span><strong>${escapeHtml(monthLabel)}</strong></div><div class="row"><span>Paid on</span><strong>${escapeHtml(formatDate(receipt.paidAt))}</strong></div><div class="row"><span>Payment mode</span><strong>${escapeHtml(receipt.paymentMethod)}</strong></div>${receipt.transactionReference ? `<div class="row"><span>Reference</span><strong>${escapeHtml(receipt.transactionReference)}</strong></div>` : ""}</div></div><table class="table"><thead><tr><th>Particulars</th><th>Amount</th></tr></thead><tbody><tr><td>Basic salary</td><td>${money(receipt.basicAmount)}</td></tr><tr><td>Allowances</td><td>${money(receipt.allowanceAmount)}</td></tr><tr><td>Deductions</td><td>− ${money(receipt.deductionAmount)}</td></tr><tr class="total"><td>Net salary paid</td><td>${money(receipt.netAmount)}</td></tr></tbody></table><div class="paid"><strong>Payment completed</strong><br/><span class="muted">Amount in words: ${escapeHtml(amountToWords(receipt.netAmount))}</span>${receipt.notes ? `<br/><span class="muted">Notes: ${escapeHtml(receipt.notes)}</span>` : ""}</div></section><footer class="footer">This is a computer-generated salary receipt. No signature is required.</footer></main></body></html>`;
+};

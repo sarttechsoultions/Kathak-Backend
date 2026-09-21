@@ -58,6 +58,8 @@ export const reviewLeaveRequest = async (req: Request, res: Response): Promise<v
     });
 
     const decision = nextStatus === LeaveStatus.APPROVED ? "approved" : "denied";
+    
+    // Notify the user who requested the leave
     await createNotification(
       leave.userId,
       "LEAVE_REQUEST",
@@ -65,6 +67,23 @@ export const reviewLeaveRequest = async (req: Request, res: Response): Promise<v
       `Your ${leave.leaveType} request from ${leave.startDate.toLocaleDateString("en-IN")} to ${leave.endDate.toLocaleDateString("en-IN")} has been ${decision} by the admin.`,
       leave.user.role === Role.TEACHER ? "/teacher/attendance" : "/student/attendance",
     );
+
+    // If the user is a student, notify their teachers
+    if (leave.user.role === Role.STUDENT) {
+      const memberships = await prisma.batchStudent.findMany({
+        where: { studentId: leave.userId },
+        include: { batch: { select: { teacherId: true } } },
+      });
+      const teacherIds = [...new Set(memberships.map(m => m.batch.teacherId).filter(Boolean))] as string[];
+      
+      await Promise.all(teacherIds.map(teacherId => createNotification(
+        teacherId,
+        "LEAVE_REQUEST",
+        `Student leave ${decision}`,
+        `${leave.user.fullName}'s ${leave.leaveType} request has been ${decision} by the admin.`,
+        "/teacher/attendance/leave-requests"
+      )));
+    }
 
     res.json({ status: "success", message: `Leave request ${decision}.`, data: updated });
   } catch (error) {

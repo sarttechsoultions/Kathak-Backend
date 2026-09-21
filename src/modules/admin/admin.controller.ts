@@ -1,5 +1,14 @@
   import { Request, Response } from "express";
-  import { validateEnrollmentInput, completePendingEnrollment, sendEnrollmentWelcomeEmail, EnrollmentError } from "../student/enrollment.service";
+  import { 
+    validateEnrollmentInput, 
+    completePendingEnrollment, 
+    initiateEnrollmentUpgrade, 
+    completeEnrollmentUpgrade, 
+    sendEnrollmentWelcomeEmail, 
+    EnrollmentError 
+  } from "../student/enrollment.service";
+  import { parseLiveClassReminderPrefs } from "../../lib/liveClassReminders";
+  import { createNotification } from "../notification/notification.controller";
   import { getStudentAccessState } from "../student/access.service";
   import { createEnrollmentPaymentOrder, getRazorpay } from "../payment/payment.controller";
   import { parseTiers, BulkDiscountTier, calculateBulkEnrollmentAmount, calculateRenewalAmount } from "../../lib/fees";
@@ -11,7 +20,7 @@
   import { sanitizeUser } from "../../lib/authHelpers";
   import { sendEmail } from "../../lib/mailer";
   import { env } from "../../config/env";
-  import { buildInvoiceHtml, generatePdfBuffer, InvoiceData } from "../../lib/invoice";
+  import { buildInvoiceHtml, buildTeacherSalaryReceiptHtml, generatePdfBuffer, InvoiceData } from "../../lib/invoice";
   import { BUSINESS_DETAILS } from "../../lib/businessConfig";
   import { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } from "../../lib/gst";
   import { calculateMonthlyEnrollmentAmount } from "../../lib/fees";
@@ -602,6 +611,14 @@
 
         return user;
       });
+
+      await createNotification(
+        id,
+        "SYSTEM",
+        "Profile Updated",
+        "Your profile details have been updated by the admin.",
+        "/student/settings"
+      );
 
       res.json({ status: "success", message: "Student updated successfully.", data: sanitizeUser(updatedStudent) });
     } catch (error) {
@@ -3233,6 +3250,158 @@
   };
 
   // ================= 7. PAYMENTS & FINANCE =================
+
+  const salaryReceiptPayload = (salary: any) => ({
+    receiptNumber: salary.receiptNumber,
+    salaryMonth: salary.salaryMonth,
+    paidAt: salary.paidAt,
+    teacherName: salary.teacher.fullName,
+    teacherEmail: salary.teacher.email,
+    teacherPhone: salary.teacher.phone,
+    designation: salary.teacher.designation,
+    basicAmount: salary.basicAmount,
+    allowanceAmount: salary.allowanceAmount,
+    deductionAmount: salary.deductionAmount,
+    netAmount: salary.netAmount,
+    paymentMethod: salary.paymentMethod,
+    transactionReference: salary.transactionReference,
+    notes: salary.notes,
+  });
+
+  const salaryReceiptFileName = (receiptNumber: string) =>
+    `Kathak_Teacher_Salary_Receipt_${receiptNumber}.pdf`;
+
+  export const getTeacherSalaryPayments = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const salaryMonth = /^\d{4}-\d{2}$/.test(String(req.query.month || ""))
+        ? String(req.query.month)
+        : new Date().toISOString().slice(0, 7);
+      const payments = await prisma.teacherSalaryPayment.findMany({
+        where: { salaryMonth },
+        include: {
+          teacher: { select: { id: true, fullName: true, email: true, phone: true, designation: true, salaryRate: true, avatarUrl: true } },
+          recordedByAdmin: { select: { id: true, fullName: true } },
+        },
+        orderBy: { paidAt: "desc" },
+      });
+      const teachers = await prisma.user.findMany({
+        where: { role: Role.TEACHER, isActive: true },
+        select: { id: true, fullName: true, email: true, phone: true, designation: true, salaryRate: true },
+        orderBy: { fullName: "asc" },
+      });
+      const paymentByTeacher = new Map(payments.map((payment) => [payment.teacherId, payment]));
+      const teacherStatus = teachers.map((teacher) => {
+        const configuredSalary = Number(String(teacher.salaryRate || "0").replace(/[^\d.-]/g, "")) || 0;
+        const payment = paymentByTeacher.get(teacher.id);
+        const paidAmount = payment?.netAmount || 0;
+        return {
+          ...teacher,
+          configuredSalary,
+          paidAmount,
+          pendingAmount: Math.max(0, configuredSalary - paidAmount),
+          status: payment ? "PAID" : "PENDING",
+          paymentId: payment?.id || null,
+          receiptNumber: payment?.receiptNumber || null,
+        };
+      });
+      const totalPaid = payments.reduce((total, payment) => total + payment.netAmount, 0);
+      const totalConfigured = teacherStatus.reduce((total, teacher) => total + teacher.configuredSalary, 0);
+      res.json({ status: "success", data: { salaryMonth, payments, teachers, teacherStatus, metrics: { totalPaid, totalConfigured, pendingAmount: Math.max(0, totalConfigured - totalPaid), paymentCount: payments.length } } });
+    } catch (error) {
+      console.error("Get teacher salary payments error:", error);
+      res.status(500).json({ status: "error", message: "Failed to load teacher salary payments." });
+    }
+  };
+
+  export const recordTeacherSalaryPayment = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { teacherId, salaryMonth, basicAmount, allowanceAmount = 0, deductionAmount = 0, paymentMethod, transactionReference, paidAt, notes } = req.body;
+      const basic = Number(basicAmount);
+      const allowance = Number(allowanceAmount || 0);
+      const deduction = Number(deductionAmount || 0);
+      const netAmount = basic + allowance - deduction;
+
+      if (!teacherId || !/^\d{4}-\d{2}$/.test(String(salaryMonth || "")) || !Number.isFinite(basic) || basic < 0 || !Number.isFinite(allowance) || allowance < 0 || !Number.isFinite(deduction) || deduction < 0 || netAmount < 0 || !paymentMethod?.trim()) {
+        res.status(400).json({ status: "error", message: "Enter a teacher, salary month, valid amounts, and payment method." });
+        return;
+      }
+
+      const teacher = await prisma.user.findFirst({ where: { id: teacherId, role: Role.TEACHER, isActive: true } });
+      if (!teacher) {
+        res.status(404).json({ status: "error", message: "Active teacher not found." });
+        return;
+      }
+
+      const existing = await prisma.teacherSalaryPayment.findUnique({ where: { teacherId_salaryMonth: { teacherId, salaryMonth } } });
+      if (existing) {
+        res.status(409).json({ status: "error", message: "A salary payment for this teacher and month already exists." });
+        return;
+      }
+
+      const receiptNumber = `TSR-${salaryMonth.replace("-", "")}-${Date.now().toString(36).toUpperCase()}`;
+      const salary = await prisma.teacherSalaryPayment.create({
+        data: {
+          receiptNumber,
+          teacherId,
+          recordedByAdminId: req.user!.id,
+          salaryMonth,
+          basicAmount: basic,
+          allowanceAmount: allowance,
+          deductionAmount: deduction,
+          netAmount,
+          paymentMethod: String(paymentMethod).trim(),
+          transactionReference: transactionReference?.trim() || null,
+          paidAt: paidAt ? new Date(paidAt) : new Date(),
+          notes: notes?.trim() || null,
+        },
+        include: { teacher: true, recordedByAdmin: { select: { id: true, fullName: true } } },
+      });
+
+      const receiptHtml = buildTeacherSalaryReceiptHtml(salaryReceiptPayload(salary));
+      let emailSent = false;
+      try {
+        const receiptPdf = await generatePdfBuffer(receiptHtml);
+        emailSent = await sendEmail({
+          to: salary.teacher.email,
+          subject: `Salary payment receipt — ${salary.salaryMonth}`,
+          html: `<p>Hi ${salary.teacher.fullName},</p><p>Your salary payment of <strong>₹${salary.netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong> for ${salary.salaryMonth} has been recorded.</p><p>Your receipt is attached to this email.</p><p>Kathak Academy Administration</p>`,
+          attachments: [{ filename: salaryReceiptFileName(salary.receiptNumber), content: receiptPdf, contentType: "application/pdf" }],
+        });
+      } catch (emailError) {
+        console.error("Teacher salary receipt email failed:", emailError);
+      }
+
+      const receiptLink = `/admin/finance/teacher-salary/${salary.id}/receipt`;
+      await createNotification(salary.teacherId, "SALARY_PAID", "Salary payment recorded", `Your salary for ${salary.salaryMonth} has been paid. Receipt ${salary.receiptNumber} was sent to your registered email.`);
+      const admins = await prisma.user.findMany({ where: { role: Role.ADMIN }, select: { id: true } });
+      await Promise.all(admins.map((admin) => createNotification(admin.id, "SALARY_RECEIPT", "Teacher salary receipt created", `${salary.teacher.fullName}'s salary receipt for ${salary.salaryMonth} has been generated.`, receiptLink)));
+
+      res.status(201).json({ status: "success", message: emailSent ? "Salary payment recorded and receipt emailed to the teacher." : "Salary payment recorded. The receipt is available to download; email could not be sent.", data: { ...salary, emailSent } });
+    } catch (error: any) {
+      console.error("Record teacher salary payment error:", error);
+      res.status(500).json({ status: "error", message: error?.code === "P2002" ? "A salary payment for this teacher and month already exists." : "Failed to record teacher salary payment." });
+    }
+  };
+
+  export const downloadTeacherSalaryReceipt = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const salary = await prisma.teacherSalaryPayment.findUnique({
+        where: { id: req.params.id as string },
+        include: { teacher: true },
+      });
+      if (!salary) {
+        res.status(404).json({ status: "error", message: "Salary receipt not found." });
+        return;
+      }
+      const pdf = await generatePdfBuffer(buildTeacherSalaryReceiptHtml(salaryReceiptPayload(salary)));
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename=\"${salaryReceiptFileName(salary.receiptNumber)}\"`);
+      res.send(pdf);
+    } catch (error) {
+      console.error("Download teacher salary receipt error:", error);
+      res.status(500).json({ status: "error", message: "Failed to generate salary receipt." });
+    }
+  };
 
   export const getPayments = async (req: Request, res: Response): Promise<void> => {
     try {

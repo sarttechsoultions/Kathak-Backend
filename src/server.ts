@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 import app from "./app";
 import { env } from "./config/env";
 import { registerLiveClassSocket } from "./modules/liveclass/liveclass.socket";
+import { registerNotificationSocket } from "./modules/notification/notification.socket";
 import { setIO } from "./lib/socket";
 import { startClassExpiryJob } from "./modules/scheduler/expireClasses";
 
@@ -30,6 +31,7 @@ const io = new Server(httpServer, {
 setIO(io);
 
 registerLiveClassSocket(io);
+registerNotificationSocket(io);
 
 const PORT = env.port || 5000;
 
