@@ -871,10 +871,8 @@ export const createOrder = async (
         validated.normalizedEmail
       );
 
-      await assertContactVerified(
-        "MOBILE",
-        validated.e164Phone
-      );
+      // TEMPORARY: Mobile OTP is disabled. Email OTP remains mandatory for
+      // public enrollment until mobile verification is re-enabled.
     }
 
     // ------------------------------------------------------------
