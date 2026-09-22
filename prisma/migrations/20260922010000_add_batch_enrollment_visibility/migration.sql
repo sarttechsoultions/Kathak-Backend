@@ -1,0 +1,2 @@
+ALTER TABLE "Batch"
+ADD COLUMN IF NOT EXISTS "isEnrollmentVisible" BOOLEAN NOT NULL DEFAULT true;

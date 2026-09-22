@@ -171,6 +171,8 @@ model Batch {
   teacherName        String                   @default("Unassigned")
   schedule           String?
   totalStudents      Int                      @default(0)
+  capacity           Int?
+  isEnrollmentVisible Boolean                 @default(true)
   status             String                   @default("Active")
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
@@ -319,6 +321,8 @@ model PendingUpgrade {
   preferredDate       String?
   preferredTime       String?
   razorpayOrderId     String?                 @unique
+  currency            String                  @default("INR")
+  expectedAmount      Float                   @default(0)
   status              PendingEnrollmentStatus @default(PENDING)
   errorMessage        String?
   createdAt           DateTime                @default(now())
@@ -535,24 +539,26 @@ model LeaveRequest {
 }
 
 model Assignment {
-  id                 String                 @id @default(uuid())
-  batchId            String?
-  batchName          String                 @default("All Batches")
-  title              String
-  description        String
-  typeTag            String                 @default("Practical Assessment")
-  dueDate            DateTime
-  totalPoints        Int                    @default(100)
-  referenceFileUrl   String?
-  status             String                 @default("ACTIVE")
-  teacherId          String?
-  teacherName        String?
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
-  referenceFileName  String?
-  evaluationCriteria String?
-  batch              Batch?                 @relation(fields: [batchId], references: [id])
-  submissions        AssignmentSubmission[]
+  id                   String                 @id @default(uuid())
+  batchId              String?
+  batchName            String                 @default("All Batches")
+  title                String
+  description          String
+  typeTag              String                 @default("Practical Assessment")
+  dueDate              DateTime
+  allowLateSubmissions Boolean                @default(true)
+  totalPoints          Int                    @default(100)
+  referenceFileUrl     String?
+  referenceFiles       Json?
+  status               String                 @default("ACTIVE")
+  teacherId            String?
+  teacherName          String?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  referenceFileName    String?
+  evaluationCriteria   String?
+  batch                Batch?                 @relation(fields: [batchId], references: [id])
+  submissions          AssignmentSubmission[]
 }
 
 model AssignmentSubmission {
@@ -561,6 +567,7 @@ model AssignmentSubmission {
   studentId    String
   studentName  String
   fileUrl      String?
+  files        Json?
   notes        String?
   submittedAt  DateTime         @default(now())
   status       SubmissionStatus @default(SUBMITTED)
@@ -585,6 +592,7 @@ model VideoTask {
   strictDeadline       Boolean           @default(false)
   detailedInstructions String?
   referenceFileUrl     String?
+  referenceFiles       Json?
   creatorRole          Role              @default(ADMIN)
   createdById          String?
   createdByName        String?
@@ -604,6 +612,8 @@ model VideoSubmission {
   courseAndBatch   String                @default("Kathak Foundations • #402")
   videoTitle       String
   fileUrl          String?
+  files            Json?
+  isLate           Boolean               @default(false)
   status           VideoSubmissionStatus @default(PENDING)
   marks            Float?
   feedbackNotes    String?

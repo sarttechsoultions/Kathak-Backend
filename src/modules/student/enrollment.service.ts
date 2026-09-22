@@ -40,7 +40,7 @@ export class EnrollmentError extends Error {
   }
 }
 
-const VALID_UPGRADE_DURATIONS = [1, 6, 12];
+const VALID_UPGRADE_DURATIONS = [1, 3, 6, 12];
 
 const calculateUpgradeFee = (
   monthlyFee: number,
@@ -1345,6 +1345,27 @@ if (!enrollment) {
   }
 
   if (assignedBatchId) {
+    if (enrollmentType === "GROUP") {
+      const targetBatch = await tx.batch.findUnique({
+        where: { id: assignedBatchId },
+        select: {
+          courseId: true,
+          status: true,
+          isEnrollmentVisible: true,
+          capacity: true,
+          _count: { select: { students: true } },
+        },
+      });
+
+      if (!targetBatch || targetBatch.courseId !== payload.courseId || !targetBatch.isEnrollmentVisible || String(targetBatch.status).toUpperCase() !== "ACTIVE") {
+        throw new EnrollmentError("This batch is no longer open for enrollment.", 409);
+      }
+
+      if (targetBatch.capacity !== null && targetBatch._count.students >= targetBatch.capacity) {
+        throw new EnrollmentError("This batch is now full. Please select another batch.", 409);
+      }
+    }
+
     const membership =
       await tx.batchStudent.findUnique({
         where: {
@@ -2001,21 +2022,6 @@ export async function initiateEnrollmentUpgrade(
   const months =
     Number(params.months ?? 1);
 
-  const normalizedCurrency =
-    String(params.currency ?? "INR")
-      .trim()
-      .toUpperCase();
-
-  if (
-    normalizedCurrency !== "INR" &&
-    normalizedCurrency !== "USD"
-  ) {
-    throw new EnrollmentError(
-      "Invalid payment currency.",
-      400
-    );
-  }
-
   /* -------------------------------------------------------
      Validate duration
      ------------------------------------------------------- */
@@ -2076,6 +2082,21 @@ export async function initiateEnrollmentUpgrade(
       400
     );
   }
+
+  // Currency is tied to the student's registered country. Never trust the
+  // browser to choose INR or USD for an upgrade.
+  const upgradingUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { country: true, countryCode: true },
+  });
+
+  if (!upgradingUser) {
+    throw new EnrollmentError("Student not found.", 404);
+  }
+
+  const normalizedCurrency = resolveCurrency(
+    upgradingUser.countryCode || upgradingUser.country
+  );
 
   /* -------------------------------------------------------
      Find target course
@@ -2372,6 +2393,10 @@ export async function initiateEnrollmentUpgrade(
 
         razorpayOrderId:
           razorpayOrder.id,
+
+        currency: normalizedCurrency,
+
+        expectedAmount: finalAmount,
       },
     });
 
@@ -2426,32 +2451,13 @@ export async function completeEnrollmentUpgrade(
     pendingUpgradeId: string;
     razorpayOrderId: string;
     razorpayPaymentId: string;
-    currency?: "INR" | "USD";
   }
 ) {
   const {
     pendingUpgradeId,
     razorpayOrderId,
     razorpayPaymentId,
-    currency = "INR",
   } = params;
-
-  const normalizedCurrency =
-    String(currency)
-      .trim()
-      .toUpperCase() as
-      | "INR"
-      | "USD";
-
-  if (
-    normalizedCurrency !== "INR" &&
-    normalizedCurrency !== "USD"
-  ) {
-    throw new EnrollmentError(
-      "Invalid payment currency.",
-      400
-    );
-  }
 
   /* -------------------------------------------------------
      Find pending upgrade
@@ -2469,6 +2475,14 @@ export async function completeEnrollmentUpgrade(
       "Upgrade request not found.",
       400
     );
+  }
+
+  const normalizedCurrency = String(pending.currency || "INR")
+    .trim()
+    .toUpperCase() as "INR" | "USD";
+
+  if (normalizedCurrency !== "INR" && normalizedCurrency !== "USD") {
+    throw new EnrollmentError("Invalid saved payment currency.", 400);
   }
 
   /* -------------------------------------------------------
@@ -2693,6 +2707,13 @@ export async function completeEnrollmentUpgrade(
 
   const finalAmount =
     pricing.finalAmount;
+
+  if (Math.abs(Number(pending.expectedAmount || 0) - finalAmount) > 0.01) {
+    throw new EnrollmentError(
+      "The upgrade price has changed. Please start a new upgrade payment.",
+      409
+    );
+  }
 
   if (
     !Number.isFinite(finalAmount) ||

@@ -8,6 +8,31 @@ import {
   getUserDisplayName,
   resolveStudentBatchForAssignment,
 } from "../../lib/batchHelpers";
+import { createNotification, notifyAdmins } from "../notification/notification.controller";
+
+// The academy schedule is set in India time, regardless of where a student
+// opens the portal. Store the date separately, then calculate the precise IST
+// cut-off as UTC for reliable server-side comparison.
+const ACADEMY_TIME_ZONE = "Asia/Kolkata";
+const getTaskDeadline = (submissionDate: Date, cutOffTime?: string | null) => {
+  const date = submissionDate.toISOString().slice(0, 10);
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour = 23, minute = 59] = String(cutOffTime || "23:59").split(":").map(Number);
+  return new Date(Date.UTC(year, month - 1, day, hour - 5, minute - 30, 0, 0));
+};
+
+const serialiseTask = (task: any) => ({
+  ...task,
+  deadlineAt: getTaskDeadline(task.submissionDate, task.cutOffTime).toISOString(),
+  deadlineTimeZone: ACADEMY_TIME_ZONE,
+});
+
+const serialiseSubmission = (submission: any) => ({
+  ...submission,
+  files: Array.isArray(submission?.files)
+    ? submission.files
+    : (submission?.fileUrl ? [{ url: submission.fileUrl, name: "Submitted video" }] : []),
+});
 
 // ─────────────────────────────────────────────
 // GET /video/directory
@@ -101,7 +126,7 @@ export async function getDirectory(req: Request, res: Response): Promise<void> {
       total,
       page,
       totalPages: Math.ceil(total / limit),
-      data: list,
+      data: list.map(serialiseSubmission),
     });
   } catch (error: any) {
     res.status(500).json({
@@ -185,6 +210,7 @@ export async function getStudentHistory(req: Request, res: Response): Promise<vo
       taskCourse: submission.task?.course || null,
       taskBatchName: submission.task?.batchName || null,
       taskCreatedByName: submission.task?.createdByName || null,
+      files: Array.isArray((submission as any).files) ? (submission as any).files : ((submission as any).fileUrl ? [{ url: (submission as any).fileUrl, name: "Submitted video" }] : []),
     }));
 
     res.json({ status: "success", count: mapped.length, data: mapped });
@@ -261,7 +287,7 @@ export async function getVideoTasks(req: Request, res: Response): Promise<void> 
       total,
       page,
       totalPages: Math.ceil(total / limit),
-      data: list,
+      data: list.map(serialiseTask),
     });
   } catch (error: any) {
     res.status(500).json({
@@ -302,6 +328,7 @@ export async function createVideoTask(req: Request, res: Response): Promise<void
       strictDeadline,
       detailedInstructions,
       referenceFileUrl,
+      referenceFiles,
     } = req.body;
 
     if (!title || !submissionDate) {
@@ -341,7 +368,7 @@ export async function createVideoTask(req: Request, res: Response): Promise<void
       }
     }
 
-    const newTask = await prisma.videoTask.create({
+    const newTask = await (prisma.videoTask as any).create({
       data: {
         title,
         category: category || "Kathak",
@@ -349,11 +376,14 @@ export async function createVideoTask(req: Request, res: Response): Promise<void
         batchId: batchId || null,
         batchName: targetBatch,
         priority: priority || "Low",
-        submissionDate: new Date(submissionDate),
+        submissionDate: new Date(`${String(submissionDate).slice(0, 10)}T00:00:00.000Z`),
         cutOffTime: cutOffTime || "18:00",
         strictDeadline: Boolean(strictDeadline),
         detailedInstructions: detailedInstructions || null,
         referenceFileUrl: referenceFileUrl || null,
+        referenceFiles: Array.isArray(referenceFiles)
+          ? referenceFiles.filter((file: any) => typeof file?.url === "string" && file.url.trim())
+          : null,
         creatorRole: user.role === "ADMIN" ? "ADMIN" : "TEACHER",
         createdById: user.id,
         createdByName: creatorName,
@@ -363,7 +393,7 @@ export async function createVideoTask(req: Request, res: Response): Promise<void
     res.status(201).json({
       status: "success",
       message: `Practice Task "${newTask.title}" created successfully!`,
-      data: newTask,
+      data: serialiseTask(newTask),
     });
   } catch (error: any) {
     res.status(500).json({
@@ -496,20 +526,16 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
       return;
     }
 
-    const { taskId, videoTitle, fileUrl, courseAndBatch } = req.body;
+    const { taskId, videoTitle, fileUrl, files, courseAndBatch } = req.body;
+    const submittedFiles = (Array.isArray(files) ? files : [])
+      .map((file: any) => ({ url: typeof file?.url === "string" ? file.url.trim() : "", name: typeof file?.name === "string" ? file.name.trim().slice(0, 255) : "Practice video" }))
+      .filter((file: { url: string }) => file.url && !file.url.startsWith("blob:"));
+    if (!submittedFiles.length && fileUrl && !String(fileUrl).startsWith("blob:")) submittedFiles.push({ url: String(fileUrl).trim(), name: "Practice video" });
 
-    if (!videoTitle || !fileUrl) {
+    if (!videoTitle || !submittedFiles.length) {
       res.status(400).json({
         status: "error",
         message: "Video Title and File URL are required.",
-      });
-      return;
-    }
-
-    if (String(fileUrl).startsWith("blob:")) {
-      res.status(400).json({
-        status: "error",
-        message: "A valid uploaded video URL is required. Please wait for upload to finish.",
       });
       return;
     }
@@ -524,8 +550,9 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
     }
 
     let matchedBatch = memberships[0].batch;
+    let task: any = null;
     if (taskId) {
-      const task = await prisma.videoTask.findUnique({ where: { id: String(taskId) } });
+      task = await prisma.videoTask.findUnique({ where: { id: String(taskId) } });
       if (!task) {
         res.status(404).json({ status: "error", message: "Practice task not found." });
         return;
@@ -540,6 +567,15 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
         return;
       }
       matchedBatch = resolvedBatch;
+
+      const deadline = getTaskDeadline(task.submissionDate, task.cutOffTime);
+      if (new Date() > deadline && task.strictDeadline) {
+        res.status(403).json({
+          status: "error",
+          message: `The submission deadline was ${deadline.toLocaleString("en-IN", { timeZone: ACADEMY_TIME_ZONE, dateStyle: "medium", timeStyle: "short" })} IST.`,
+        });
+        return;
+      }
     }
 
     const studentUser: any = await prisma.user.findUnique({
@@ -549,7 +585,9 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
 
     const studentBatch = matchedBatch.name || (await getStudentBatchName(user.id));
 
-    const newSubmission = await prisma.videoSubmission.create({
+    const deadline = task ? getTaskDeadline(task.submissionDate, task.cutOffTime) : null;
+    const isLate = Boolean(deadline && new Date() > deadline);
+    const newSubmission = await (prisma.videoSubmission as any).create({
       data: {
         taskId: taskId || null,
         studentId: user.id,
@@ -563,11 +601,34 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
           studentBatch ||
           "Unassigned",
         videoTitle,
-        fileUrl,
+        fileUrl: submittedFiles[0].url,
+        files: submittedFiles,
         status: "PENDING",
+        isLate,
         marks: null,
       },
     });
+
+    const notificationTitle = "Practice video submitted";
+    const notificationMessage = `${studentUser?.fullName || user.email || "A student"} submitted “${videoTitle}”${isLate ? " late" : ""}.`;
+    await notifyAdmins("VIDEO_SUBMITTED", notificationTitle, notificationMessage, "/admin/video-review");
+    await createNotification(user.id, "VIDEO_SUBMITTED", "Video submission received", `Your submission “${videoTitle}” has been received${isLate ? " and marked late" : ""}.`, "/student/video-submission");
+
+    // Only the teacher responsible for this student's batch is notified.
+    // A task creator is also included when that creator is a teacher.
+    const batchOwner = await prisma.batch.findUnique({
+      where: { id: matchedBatch.id },
+      select: { teacherId: true },
+    });
+    const taskOwner = taskId
+      ? await prisma.videoTask.findUnique({ where: { id: String(taskId) }, select: { createdById: true, creatorRole: true } })
+      : null;
+    const teacherIds = new Set<string>();
+    if (batchOwner?.teacherId) teacherIds.add(batchOwner.teacherId);
+    if (taskOwner?.creatorRole === "TEACHER" && taskOwner.createdById) teacherIds.add(taskOwner.createdById);
+    await Promise.all([...teacherIds].map((teacherId) =>
+      createNotification(teacherId, "VIDEO_SUBMITTED", notificationTitle, notificationMessage, "/teacher/video")
+    ));
 
     res.status(201).json({
       status: "success",
@@ -766,7 +827,7 @@ export async function getTaskSubmissionsDetail(req: Request, res: Response): Pro
       status: "success",
       data: {
         task,
-        submissions,
+        submissions: submissions.map(serialiseSubmission),
         unsubmittedStudents,
       },
     });

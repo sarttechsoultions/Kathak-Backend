@@ -1,0 +1,2 @@
+ALTER TABLE "Assignment" ADD COLUMN IF NOT EXISTS "referenceFiles" JSONB;
+ALTER TABLE "VideoSubmission" ADD COLUMN IF NOT EXISTS "files" JSONB;

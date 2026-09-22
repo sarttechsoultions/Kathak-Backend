@@ -241,13 +241,28 @@ export const uploadVideoToBunny = async (req: Request, res: Response): Promise<v
     try {
       const cloudResult = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-          { resource_type: "video", folder: "kathak_videos" },
+          {
+            resource_type: "video",
+            folder: "kathak_videos",
+            // Convert iPhone/Android HEVC MOV files into a universally
+            // playable MP4 before giving its URL to the browser.
+            eager: [{ format: "mp4", transformation: [{ video_codec: "h264", audio_codec: "aac" }] }],
+            eager_async: false,
+          },
           (error, result) => (result ? resolve(result) : reject(error))
         );
         stream.end(file.buffer);
       }) as any;
 
       if (cloudResult?.secure_url) {
+        // Deliver an H.264/AAC MP4 variant. Phones frequently record HEVC
+        // videos, which may upload successfully but render as 0:00/black in
+        // Chromium on another device without this browser-safe transcode.
+        const playableUrl = cloudResult.eager?.[0]?.secure_url || cloudinary.url(cloudResult.public_id, {
+          resource_type: "video",
+          format: "mp4",
+          transformation: [{ video_codec: "h264", audio_codec: "aac" }],
+        });
         const thumbnailUrl = cloudinary.url(cloudResult.public_id, {
           resource_type: "video",
           format: "jpg",
@@ -259,10 +274,10 @@ export const uploadVideoToBunny = async (req: Request, res: Response): Promise<v
           message: "Video uploaded successfully.",
           data: {
             videoId: cloudResult.public_id,
-            iframeUrl: cloudResult.secure_url,
-            directUrl: cloudResult.secure_url,
-            url: cloudResult.secure_url,
-            fileUrl: cloudResult.secure_url,
+            iframeUrl: playableUrl,
+            directUrl: playableUrl,
+            url: playableUrl,
+            fileUrl: playableUrl,
             thumbnailUrl,
           },
         });
