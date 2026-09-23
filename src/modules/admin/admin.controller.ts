@@ -1825,10 +1825,9 @@
       const parseOptionalNonNegativeNumber = (
         value: unknown,
         fieldName: string
-      ): number | undefined => {
-        if (value === undefined || value === null || value === "") {
-          return undefined;
-        }
+      ): number | null | undefined => {
+        if (value === undefined) return undefined;
+        if (value === null || value === "") return null;
 
         const parsed = Number(value);
 
@@ -1844,10 +1843,9 @@
       const parseOptionalNonNegativeInteger = (
         value: unknown,
         fieldName: string
-      ): number | undefined => {
-        if (value === undefined || value === null || value === "") {
-          return undefined;
-        }
+      ): number | null | undefined => {
+        if (value === undefined) return undefined;
+        if (value === null || value === "") return null;
 
         const parsed = Number(value);
 

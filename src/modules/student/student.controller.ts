@@ -2126,7 +2126,7 @@ export const getPublicCourses = async (req: Request, res: Response) => {
         .filter((b) => b.isEnrollmentVisible)
         // A capacity is optional. When it is configured, a full batch is not
         // offered to new students.
-        .filter((b) => b.capacity === null || b._count.students < b.capacity)
+        
         .sort((a, b) => {
           const aStart = String(a.schedule || "").split("|")[2] || "9999-12-31";
           const bStart = String(b.schedule || "").split("|")[2] || "9999-12-31";
