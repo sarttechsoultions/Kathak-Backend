@@ -25,7 +25,7 @@ import {
 } from "./enrollment.service";
 import { OtpError, sendEnrollmentOtp, verifyEnrollmentOtp, assertContactVerified } from "../../lib/otp";
 import { getStudentAccessState } from "./access.service";
-import { createNotification } from "../notification/notification.controller";
+import { createNotification, notifyAdmins } from "../notification/notification.controller";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -1050,6 +1050,7 @@ export const getStudentAssignments = async (req: Request, res: Response): Promis
         correctionNotes,
         notes: sub?.notes || null,
         fileUrl: sub?.fileUrl,
+        files: Array.isArray(sub?.files) ? sub.files : (sub?.fileUrl ? [{ url: sub.fileUrl, name: "Submitted file" }] : []),
         referenceFileUrl: a.referenceFileUrl || null,
         referenceFileName: a.referenceFileName || null,
         teacherName: a.teacherName || null,
@@ -1098,14 +1099,25 @@ export const getStudentAssignments = async (req: Request, res: Response): Promis
 export const submitStudentAssignment = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { assignmentId, fileUrl, notes } = req.body;
+    const { assignmentId, fileUrl, files, notes } = req.body;
 
     if (!assignmentId) {
       res.status(400).json({ status: "error", message: "Assignment ID is required." });
       return;
     }
 
-    if (!fileUrl || String(fileUrl).startsWith("blob:")) {
+    const submittedFiles = (Array.isArray(files) ? files : [])
+      .map((file: any) => ({
+        url: typeof file?.url === "string" ? file.url.trim() : "",
+        name: typeof file?.name === "string" ? file.name.trim().slice(0, 255) : "Submitted file",
+        type: typeof file?.type === "string" ? file.type.trim().slice(0, 120) : "",
+      }))
+      .filter((file: { url: string }) => file.url && !file.url.startsWith("blob:"));
+    if (submittedFiles.length === 0 && fileUrl && !String(fileUrl).startsWith("blob:")) {
+      submittedFiles.push({ url: String(fileUrl).trim(), name: "Submitted file", type: "" });
+    }
+
+    if (submittedFiles.length === 0) {
       res.status(400).json({
         status: "error",
         message: "A valid uploaded file URL is required. Please wait for upload to finish.",
@@ -1127,6 +1139,13 @@ export const submitStudentAssignment = async (req: Request, res: Response): Prom
       return;
     }
 
+    const deadline = assignment.dueDate ? new Date(assignment.dueDate) : null;
+    if (deadline) deadline.setHours(23, 59, 59, 999);
+    if (!assignment.allowLateSubmissions && deadline && new Date() > deadline) {
+      res.status(403).json({ status: "error", message: "Deadline has passed. Submissions are closed." });
+      return;
+    }
+
     const matchedBatch = resolveStudentBatchForAssignment(assignment, studentBatches);
     if (!matchedBatch) {
       res.status(403).json({
@@ -1143,7 +1162,8 @@ export const submitStudentAssignment = async (req: Request, res: Response): Prom
         assignmentId_studentId: { assignmentId, studentId: userId }
       },
       update: {
-        fileUrl,
+        fileUrl: submittedFiles[0].url,
+        files: submittedFiles,
         notes,
         submittedAt: new Date(),
         status: "SUBMITTED",
@@ -1154,11 +1174,28 @@ export const submitStudentAssignment = async (req: Request, res: Response): Prom
         assignmentId,
         studentId: userId,
         studentName: student?.fullName || "Student",
-        fileUrl,
+        fileUrl: submittedFiles[0].url,
+        files: submittedFiles,
         notes,
         status: "SUBMITTED"
       }
     });
+
+    const assignmentLink = `/admin/assignments/${assignmentId}/submissions`;
+    const notificationTitle = "Assignment submitted";
+    const notificationMessage = `${student?.fullName || "A student"} submitted “${assignment.title}”.`;
+
+    // Every assignment submission is visible to all admins. The assignment's
+    // chosen teacher (or, when absent, the batch teacher) also receives it.
+    await notifyAdmins("ASSIGNMENT_SUBMITTED", notificationTitle, notificationMessage, assignmentLink);
+    const assignmentBatch = !assignment.teacherId && assignment.batchId
+      ? await prisma.batch.findUnique({ where: { id: assignment.batchId }, select: { teacherId: true } })
+      : null;
+    const teacherId = assignment.teacherId || assignmentBatch?.teacherId;
+    if (teacherId) {
+      const teacherLink = "/teacher/dashboard";
+      await createNotification(teacherId, "ASSIGNMENT_SUBMITTED", notificationTitle, notificationMessage, teacherLink);
+    }
 
     res.status(200).json({ status: "success", message: "Assignment submitted successfully.", data: submission });
   } catch (error) {
@@ -2061,15 +2098,24 @@ export const getPublicCourses = async (req: Request, res: Response) => {
     const courses = await prisma.course.findMany({
       include: {
         batches: {
-          where: { status: "Active" },
+          // Admin controls whether an active/upcoming batch is offered for
+          // enrollment. Completed, hidden, and full batches stay in CRM but
+          // are not returned to public enrollment.
+          where: { status: { in: ["Active", "Upcoming"] } },
           select: {
             id: true,
             name: true,
             schedule: true,
             code: true,
             courseId: true,
-            courseName: true,
-            status: true,
+          courseName: true,
+          status: true,
+          teacherName: true,
+          capacity: true,
+          isEnrollmentVisible: true,
+          _count: {
+            select: { students: true },
+          },
           },
           orderBy: { createdAt: "asc" },
         },
@@ -2080,7 +2126,16 @@ export const getPublicCourses = async (req: Request, res: Response) => {
     const mappedCourses = courses.map((c) => {
       const courseBatches = (c.batches || [])
         .filter((b) => !b.courseId || b.courseId === c.id)
-        .filter((b) => !isOneToOneBatch(b.name, b.code));
+        .filter((b) => !isOneToOneBatch(b.name, b.code))
+        .filter((b) => b.isEnrollmentVisible)
+        // A capacity is optional. When it is configured, a full batch is not
+        // offered to new students.
+        .filter((b) => b.capacity === null || b._count.students < b.capacity)
+        .sort((a, b) => {
+          const aStart = String(a.schedule || "").split("|")[2] || "9999-12-31";
+          const bStart = String(b.schedule || "").split("|")[2] || "9999-12-31";
+          return aStart.localeCompare(bStart);
+        });
 
       return {
         id: c.id,
@@ -2104,6 +2159,13 @@ export const getPublicCourses = async (req: Request, res: Response) => {
           name: b.name,
           schedule: b.schedule,
           code: b.code,
+          status: b.status,
+          teacherName: b.teacherName,
+          capacity: b.capacity,
+          confirmedStudents: b._count.students,
+          seatsAvailable: b.capacity === null ? null : Math.max(0, b.capacity - b._count.students),
+          enrollmentOpen: String(b.status).toUpperCase() === "ACTIVE",
+          isEnrollmentVisible: b.isEnrollmentVisible,
           courseId: c.id,
           courseName: c.title,
         })),

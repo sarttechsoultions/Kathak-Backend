@@ -1,0 +1,1 @@
+ALTER TABLE "VideoTask" ADD COLUMN IF NOT EXISTS "referenceFiles" JSONB;

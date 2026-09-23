@@ -90,6 +90,8 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
           fullName: user.fullName,
           email: user.email,
           phone: user.phone,
+          country: user.country,
+          countryCode: user.countryCode,
           role: user.role,
           avatarUrl: user.avatarUrl,
           permissions: permissionList,

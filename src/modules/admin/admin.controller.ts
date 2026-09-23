@@ -2386,7 +2386,15 @@
 
   export const createBatch = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { name, code, courseId, teacherId, schedule, level, studentIds } = req.body;
+      const { name, code, courseId, teacherId, schedule, level, studentIds, capacity, isEnrollmentVisible } = req.body;
+      const normalizedCapacity = capacity === null || capacity === undefined || capacity === ""
+        ? null
+        : Number(capacity);
+
+      if (normalizedCapacity !== null && (!Number.isInteger(normalizedCapacity) || normalizedCapacity < 1)) {
+        res.status(400).json({ status: "error", message: "Capacity must be a whole number of at least 1." });
+        return;
+      }
 
       if (!name || !name.trim()) {
         res.status(400).json({ status: "error", message: "Batch name is required." });
@@ -2420,6 +2428,8 @@
             teacherName: teacherName,
             schedule: schedule || null,
             level: level || "BEGINNER",
+            capacity: normalizedCapacity,
+            isEnrollmentVisible: isEnrollmentVisible !== false,
             totalStudents: Array.isArray(studentIds) ? studentIds.length : 0
           }
         });
@@ -2448,7 +2458,18 @@
   export const updateBatch = async (req: Request, res: Response): Promise<void> => {
     try {
       const id = req.params.id as string;
-      const { name, code, courseId, teacherId, schedule, level, status, studentIds } = req.body;
+      const { name, code, courseId, teacherId, schedule, level, status, studentIds, capacity, isEnrollmentVisible } = req.body;
+      const normalizedCapacity = capacity === undefined
+        ? undefined
+        : capacity === null || capacity === ""
+          ? null
+          : Number(capacity);
+
+      if (normalizedCapacity !== undefined && normalizedCapacity !== null &&
+        (!Number.isInteger(normalizedCapacity) || normalizedCapacity < 1)) {
+        res.status(400).json({ status: "error", message: "Capacity must be a whole number of at least 1." });
+        return;
+      }
 
       const existingBatch = await prisma.batch.findUnique({ where: { id } });
       if (!existingBatch) {
@@ -2498,6 +2519,8 @@
             schedule: schedule ?? undefined,
             level: level ?? undefined,
             status: status ?? undefined,
+            capacity: normalizedCapacity,
+            isEnrollmentVisible: typeof isEnrollmentVisible === "boolean" ? isEnrollmentVisible : undefined,
             totalStudents: totalCount
           }
         });
@@ -2647,6 +2670,9 @@
       const typeTag = req.body.typeTag || req.body.category || "Practical Assessment";
       const referenceFileUrl = req.body.referenceFileUrl || req.body.fileUrl || null;
       const referenceFileName = req.body.referenceFileName || null;
+      const referenceFiles = Array.isArray(req.body.referenceFiles)
+        ? req.body.referenceFiles.filter((file: any) => typeof file?.url === "string" && file.url.trim())
+        : [];
       let evaluationCriteriaStr: string | null = null;
       if (req.body.evaluationCriteria) {
         evaluationCriteriaStr =
@@ -2739,6 +2765,7 @@
     totalPoints: totalPoints ? Number(totalPoints) : 100,
     referenceFileUrl: referenceFileUrl || null,
     referenceFileName: referenceFileName || null,
+    referenceFiles: referenceFiles.length ? referenceFiles : null,
     evaluationCriteria: evaluationCriteriaStr,
     teacherId,
     teacherName,
@@ -2832,7 +2859,8 @@
         grade: s.grade,
         feedback: s.feedback,
         notes: s.notes,
-        fileUrl: s.fileUrl
+        fileUrl: s.fileUrl,
+        files: Array.isArray(s.files) ? s.files : (s.fileUrl ? [{ url: s.fileUrl, name: "Submitted file" }] : [])
       }));
 
       res.json({
@@ -2908,6 +2936,7 @@
           status: "PENDING",
           grade: null,
           fileUrl: null,
+          files: null,
           feedback: JSON.stringify({
             type: "reassign",
             comment: reassignComment,
@@ -3045,6 +3074,7 @@
         feedback: s.feedback,
         notes: s.notes,
         fileUrl: s.fileUrl,
+        files: Array.isArray(s.files) ? s.files : (s.fileUrl ? [{ url: s.fileUrl, name: "Submitted file" }] : []),
       }));
 
       res.json({
