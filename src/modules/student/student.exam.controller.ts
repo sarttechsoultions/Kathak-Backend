@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
 import { Prisma } from "@prisma/client";
+import { createNotification, notifyAdmins } from "../notification/notification.controller";
 
 const normalizeParam = (
   param: string | string[] | undefined
@@ -952,6 +953,29 @@ export const submitExam = async (
           submittedAt: now,
         },
       });
+
+    const notificationTitle = "Exam submitted";
+    const notificationMessage = `${exam.title} was submitted by a student.`;
+    const batchTeacher = exam.batchId
+      ? await prisma.batch.findUnique({ where: { id: exam.batchId }, select: { teacherId: true } })
+      : null;
+
+    if (batchTeacher?.teacherId) {
+      await createNotification(
+        batchTeacher.teacherId,
+        "EXAM_SUBMITTED",
+        notificationTitle,
+        notificationMessage,
+        `/teacher/exam/examresults/${result.id}`
+      );
+    }
+
+    await notifyAdmins(
+      "EXAM_SUBMITTED",
+      notificationTitle,
+      notificationMessage,
+      `/admin/exam/results/evaluate/${result.id}`
+    );
 
     res.json({
       status: "success",

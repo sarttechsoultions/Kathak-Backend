@@ -1,6 +1,7 @@
 import { EventCategory, EventLevel, EventStatus, PaymentStatus, Prisma, Role } from "@prisma/client";
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
+import { createNotifications } from "../notification/notification.controller";
 
 const EVENT_CATEGORIES = ["Event", "Workshop", "Competition", "Seminar"] as EventCategory[];
 const EVENT_LEVELS = Object.values(EventLevel) as EventLevel[];
@@ -481,7 +482,7 @@ export const createEvent = async (req: Request, res: Response): Promise<void> =>
           link: "/student/events",
         }));
         
-        await prisma.notification.createMany({ data: notifications });
+        await createNotifications(notifications);
       }
     } catch (notifErr) {
       console.error("Failed to send event notifications to students:", notifErr);
@@ -545,7 +546,7 @@ export const updateEvent = async (req: Request, res: Response): Promise<void> =>
           link: "/student/events",
         }));
         
-        await prisma.notification.createMany({ data: notifications });
+        await createNotifications(notifications);
       }
     } catch (notifErr) {
       console.error("Failed to send event update notifications to students:", notifErr);

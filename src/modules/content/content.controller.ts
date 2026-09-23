@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
+import { createNotifications } from "../notification/notification.controller";
 
 // Get all content for Admin
 export const getAllContentAdmin = async (req: Request, res: Response) => {
@@ -93,6 +94,43 @@ export const createContentResource = async (req: Request, res: Response) => {
         uploadedById: uploaderId
       }
     });
+
+    // Deliver a resource notification to exactly the students who can see it.
+    // This mirrors getStudentContent's visibility rules (global, batch, course)
+    // so the bell never advertises material a student cannot open.
+    const recipientIds = new Set<string>();
+    if (global) {
+      const students = await prisma.user.findMany({
+        where: { role: "STUDENT", isActive: true },
+        select: { id: true },
+      });
+      students.forEach((student) => recipientIds.add(student.id));
+    } else {
+      if (batchId) {
+        const students = await prisma.batchStudent.findMany({
+          where: { batchId: String(batchId) },
+          select: { studentId: true },
+        });
+        students.forEach((student) => recipientIds.add(student.studentId));
+      }
+      if (courseId) {
+        const students = await prisma.enrollment.findMany({
+          where: { courseId: String(courseId), active: true },
+          select: { userId: true },
+        });
+        students.forEach((student) => recipientIds.add(student.userId));
+      }
+    }
+
+    await createNotifications(
+      [...recipientIds].map((userId) => ({
+        userId,
+        type: "SYLLABUS_AVAILABLE",
+        title: "New syllabus available",
+        message: `“${newResource.title}” has been added to your study material.`,
+        link: "/student/content",
+      }))
+    );
 
     res.status(201).json({ status: "success", data: newResource });
   } catch (error: any) {
