@@ -79,10 +79,10 @@ model User {
   rescheduleRequestsAsTeacher ClassRescheduleRequest[] @relation("RescheduleTeacher")
   accessUnlocksReceived       TemporaryAccessUnlock[]  @relation("StudentAccessUnlocks")
   accessUnlocksGranted        TemporaryAccessUnlock[]  @relation("AdminGrantedUnlocks")
-  certificates                Certificate[]           @relation("CertificateStudent")
-  certificatesIssued          Certificate[]           @relation("CertificateIssuer")
-  salaryPaymentsReceived      TeacherSalaryPayment[]  @relation("SalaryPaymentTeacher")
-  salaryPaymentsRecorded      TeacherSalaryPayment[]  @relation("SalaryPaymentRecorder")
+  certificates                Certificate[]            @relation("CertificateStudent")
+  certificatesIssued          Certificate[]            @relation("CertificateIssuer")
+  salaryPaymentsReceived      TeacherSalaryPayment[]   @relation("SalaryPaymentTeacher")
+  salaryPaymentsRecorded      TeacherSalaryPayment[]   @relation("SalaryPaymentRecorder")
 }
 
 model TeacherPermission {
@@ -95,45 +95,45 @@ model TeacherPermission {
 }
 
 model Course {
-  id                   String         @id @default(uuid())
-  title                String
-  slug                 String         @unique
-  description          String
-  thumbnail            String?
-  videoUrl             String?
-  category             CourseCategory @default(BASIC)
-    groupFeeINR          Float
-    groupFeeUSD          Float
-    groupInternationalFeeINR Float?
-  groupOriginalFeeINR  Float?
-  groupOriginalFeeUSD  Float?
-  groupClassesCount    String
-    oneToOneFeeINR       Float
-    oneToOneFeeUSD       Float
-    oneToOneInternationalFeeINR Float?
-  oneToOneOriginalFeeINR Float?
-  oneToOneOriginalFeeUSD Float?
-  oneToOneClassesCount String
-  badgeBgColor         String         @default("#76D7C4")
-  borderColor          String         @default("border-[#76D7C4]")
-  published            Boolean        @default(true)
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
-  aliases              String[]       @default([])
-  homepageSortOrder    Int            @default(0)
-  intro                String?
-  marketingCategory    String         @default("beginners")
-  showExam             Boolean        @default(true)
-  showOnHome           Boolean        @default(true)
+  id                          String         @id @default(uuid())
+  title                       String
+  slug                        String         @unique
+  description                 String
+  thumbnail                   String?
+  videoUrl                    String?
+  category                    CourseCategory @default(BASIC)
+  groupFeeINR                 Float
+  groupFeeUSD                 Float
+  groupInternationalFeeINR    Float?
+  groupOriginalFeeINR         Float?
+  groupOriginalFeeUSD         Float?
+  groupClassesCount           String
+  oneToOneFeeINR              Float
+  oneToOneFeeUSD              Float
+  oneToOneInternationalFeeINR Float?
+  oneToOneOriginalFeeINR      Float?
+  oneToOneOriginalFeeUSD      Float?
+  oneToOneClassesCount        String
+  badgeBgColor                String         @default("#76D7C4")
+  borderColor                 String         @default("border-[#76D7C4]")
+  published                   Boolean        @default(true)
+  createdAt                   DateTime       @default(now())
+  updatedAt                   DateTime       @updatedAt
+  aliases                     String[]       @default([])
+  homepageSortOrder           Int            @default(0)
+  intro                       String?
+  marketingCategory           String         @default("beginners")
+  showExam                    Boolean        @default(true)
+  showOnHome                  Boolean        @default(true)
 
-    joiningFeeINR        Float     @default(1100)
-    joiningFeeUSD        Float?
-    joiningFeeInternationalINR Float?
-  usdInrRate           Float?
-  usdCalculatedAt      DateTime?
-  bulkDiscountTiers    Json      @default(dbgenerated("'[]'::jsonb"))
-  autoPayEnabled       Boolean   @default(true)
-  courseDurationMonths Int       @default(0)
+  joiningFeeINR              Float     @default(1100)
+  joiningFeeUSD              Float?
+  joiningFeeInternationalINR Float?
+  usdInrRate                 Float?
+  usdCalculatedAt            DateTime?
+  bulkDiscountTiers          Json      @default(dbgenerated("'[]'::jsonb"))
+  autoPayEnabled             Boolean   @default(true)
+  courseDurationMonths       Int       @default(0)
 
   batches           Batch[]
   enrollments       Enrollment[]
@@ -161,31 +161,31 @@ model Lesson {
 }
 
 model Batch {
-  id                 String                   @id @default(uuid())
-  name               String
-  code               String                   @unique
-  courseId           String?
-  teacherId          String?
-  courseName         String
-  level              String                   @default("BEGINNER")
-  teacherName        String                   @default("Unassigned")
-  schedule           String?
-  totalStudents      Int                      @default(0)
-  capacity           Int?
-  isEnrollmentVisible Boolean                 @default(true)
-  status             String                   @default("Active")
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
-  assignments        Assignment[]
-  attendances        Attendance[]
-  course             Course?                  @relation(fields: [courseId], references: [id])
-  teacher            User?                    @relation("BatchTeacher", fields: [teacherId], references: [id])
-  students           BatchStudent[]
-  contentResources   ContentResource[]
-  exams              Exam[]
-  liveClasses        LiveClass[]
-  recordedClasses    RecordedClass[]
-  rescheduleRequests ClassRescheduleRequest[]
+  id                  String                   @id @default(uuid())
+  name                String
+  code                String                   @unique
+  courseId            String?
+  teacherId           String?
+  courseName          String
+  level               String                   @default("BEGINNER")
+  teacherName         String                   @default("Unassigned")
+  schedule            String?
+  totalStudents       Int                      @default(0)
+  capacity            Int?
+  isEnrollmentVisible Boolean                  @default(true)
+  status              String                   @default("Active")
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  assignments         Assignment[]
+  attendances         Attendance[]
+  course              Course?                  @relation(fields: [courseId], references: [id])
+  teacher             User?                    @relation("BatchTeacher", fields: [teacherId], references: [id])
+  students            BatchStudent[]
+  contentResources    ContentResource[]
+  exams               Exam[]
+  liveClasses         LiveClass[]
+  recordedClasses     RecordedClass[]
+  rescheduleRequests  ClassRescheduleRequest[]
   certificates        Certificate[]
 }
 
@@ -354,7 +354,7 @@ model TeacherSalaryPayment {
   receiptNumber        String   @unique
   teacherId            String
   recordedByAdminId    String
-  salaryMonth          String   // YYYY-MM
+  salaryMonth          String // YYYY-MM
   basicAmount          Float
   allowanceAmount      Float    @default(0)
   deductionAmount      Float    @default(0)
@@ -985,14 +985,14 @@ model StudentCornerItem {
 }
 
 model LetterheadTemplate {
-  id          String       @id @default(uuid())
-  name        String
-  imageUrl    String
+  id           String       @id @default(uuid())
+  name         String
+  imageUrl     String
   sourcePdfUrl String?
-  isActive    Boolean      @default(true)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  letterheads Letterhead[]
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  letterheads  Letterhead[]
 
   @@index([isActive])
   @@index([createdAt])

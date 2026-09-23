@@ -132,7 +132,7 @@ export const getTeacherDashboard = async (req: Request, res: Response): Promise<
         where: {
           batchId: { in: batchIds },
           status: { in: ["SCHEDULED", "LIVE"] },
-          scheduledEnd: { gte: new Date() },
+          OR: [{ scheduledEnd: { gte: new Date() } }, { status: "LIVE" }],
         },
         include: {
           batch: { select: { name: true, code: true, totalStudents: true } },

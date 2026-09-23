@@ -1568,10 +1568,6 @@ export const getStudentDashboard = async (
       .toISOString()
       .split("T")[0];
 
-    // ============================================================
-    // 7. ACTIVE LIVE CLASSES
-    // ============================================================
-
     const activeClasses = liveClasses.filter(
       (liveClass: any) => {
         if (
@@ -1581,6 +1577,12 @@ export const getStudentDashboard = async (
           return false;
         }
 
+        // Always keep classes that are currently LIVE (even if they run past scheduledEnd)
+        if (liveClass.status === "LIVE") {
+          return true;
+        }
+
+        // Otherwise, only keep if not past scheduledEnd
         return (
           new Date(
             liveClass.scheduledEnd
@@ -1589,15 +1591,18 @@ export const getStudentDashboard = async (
       }
     );
 
+    const isClassLiveNow = (liveClass: any) =>
+      liveClass.status === "LIVE" ||
+      (liveClass.status === "SCHEDULED" &&
+        new Date(liveClass.scheduledStart).getTime() <= now &&
+        new Date(liveClass.scheduledEnd).getTime() > now);
+
     // ============================================================
     // 8. TODAY'S LIVE CLASS
     // ============================================================
 
     const todayClass =
-      activeClasses.find(
-        (liveClass: any) =>
-          liveClass.status === "LIVE"
-      ) ||
+      activeClasses.find(isClassLiveNow) ||
       activeClasses.find(
         (liveClass: any) => {
           const liveClassDate =
@@ -1616,10 +1621,7 @@ export const getStudentDashboard = async (
     // ============================================================
 
     const upcomingClass =
-      activeClasses.find(
-        (liveClass: any) =>
-          liveClass.status === "LIVE"
-      ) ||
+      activeClasses.find(isClassLiveNow) ||
       activeClasses.find(
         (liveClass: any) =>
           liveClass.status === "SCHEDULED" &&
@@ -1934,13 +1936,10 @@ export const getStudentDashboard = async (
               scheduledStart: todayClass.scheduledStart.toISOString(),
               scheduledEnd: todayClass.scheduledEnd.toISOString(),
 
-              isLive:
-                todayClass.status ===
-                "LIVE",
+              isLive: isClassLiveNow(todayClass),
 
               meetingLink:
-                todayClass.status ===
-                "LIVE"
+                isClassLiveNow(todayClass)
                   ? `/student/classes/room/${todayClass.id}`
                   : "/student/classes",
             }
@@ -2030,13 +2029,10 @@ export const getStudentDashboard = async (
                   )
                 )} min`,
 
-              isLive:
-                upcomingClass.status ===
-                "LIVE",
+              isLive: isClassLiveNow(upcomingClass),
 
               meetingLink:
-                upcomingClass.status ===
-                "LIVE"
+                isClassLiveNow(upcomingClass)
                   ? `/student/classes/room/${upcomingClass.id}`
                   : "/student/classes",
             }

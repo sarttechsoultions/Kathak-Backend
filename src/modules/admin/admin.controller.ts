@@ -385,17 +385,7 @@
     try {
       const id = req.params.id as string;
       const student = await prisma.user.findFirst({
-        where: { id, role: Role.STUDENT },
-        include: {
-          batchMemberships: { include: { batch: true } },
-          enrollments: { include: { course: true } },
-          attendances: { orderBy: { date: "desc" }, take: 20 },
-          payments: { orderBy: { createdAt: "desc" } },
-          assignmentSubmissions: {                          // 👈 fix
-            include: { assignment: true },
-            orderBy: { submittedAt: "desc" }
-          }
-        }
+        where: { id, role: Role.STUDENT }
       });
 
       if (!student) {
@@ -403,10 +393,39 @@
         return;
       }
 
-      const sanitized = sanitizeUser(student);
-      const assignmentSubmissions = (student as any).assignmentSubmissions || [];
+      // Fetch relations separately to avoid 500 error if any required related record (like assignment or course) is orphaned
+      let batchMemberships: any[] = [];
+      let enrollments: any[] = [];
+      let attendances: any[] = [];
+      let payments: any[] = [];
+      let assignmentSubmissions: any[] = [];
 
-      const attendances = (student as any).attendances || [];
+      try {
+        batchMemberships = await prisma.batchStudent.findMany({ where: { studentId: id }, include: { batch: true } });
+      } catch (err) { console.warn("Failed fetching batchMemberships (possible orphaned batch):", err); }
+      
+      try {
+        enrollments = await prisma.enrollment.findMany({ where: { userId: id }, include: { course: true } });
+      } catch (err) { console.warn("Failed fetching enrollments (possible orphaned course):", err); }
+
+      try {
+        attendances = await prisma.attendance.findMany({ where: { studentId: id }, orderBy: { date: "desc" }, take: 20 });
+      } catch (err) { console.warn("Failed fetching attendances:", err); }
+
+      try {
+        payments = await prisma.payment.findMany({ where: { userId: id }, orderBy: { createdAt: "desc" } });
+      } catch (err) { console.warn("Failed fetching payments:", err); }
+
+      try {
+        assignmentSubmissions = await prisma.assignmentSubmission.findMany({
+          where: { studentId: id },
+          include: { assignment: true },
+          orderBy: { submittedAt: "desc" }
+        });
+      } catch (err) { console.warn("Failed fetching assignmentSubmissions (possible orphaned assignment):", err); }
+
+      const sanitized = sanitizeUser(student);
+
       const totalAttendances = attendances.length;
       const presentCount = attendances.filter(
         (a: any) => a.status === "PRESENT" || a.status === "present" || a.status === true
@@ -423,10 +442,10 @@
         status: "success",
         data: {
           ...sanitized,
-          batchMemberships: (student as any).batchMemberships,
-          enrollments: (student as any).enrollments,
+          batchMemberships,
+          enrollments,
           attendances,
-          payments: (student as any).payments || [],
+          payments,
           submissions: assignmentSubmissions,
           attendanceRate,
           assignmentsScore

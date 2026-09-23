@@ -71,7 +71,7 @@ export const getMobileDashboard = async (req: Request, res: Response): Promise<v
       prisma.assignment.count({ where: { ...assignmentScope, status: "ACTIVE" } }),
       batchIds.length
         ? prisma.liveClass.findMany({
-            where: { batchId: { in: batchIds }, status: { notIn: ["COMPLETED", "CANCELLED"] }, scheduledEnd: { gt: now } },
+            where: { batchId: { in: batchIds }, status: { notIn: ["COMPLETED", "CANCELLED"] }, OR: [{ scheduledEnd: { gt: now } }, { status: "LIVE" }] },
             orderBy: { scheduledStart: "asc" },
             take: 3,
           })
