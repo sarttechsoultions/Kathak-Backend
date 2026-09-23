@@ -1589,15 +1589,18 @@ export const getStudentDashboard = async (
       }
     );
 
+    const isClassLiveNow = (liveClass: any) =>
+      liveClass.status === "LIVE" ||
+      (liveClass.status === "SCHEDULED" &&
+        new Date(liveClass.scheduledStart).getTime() <= now &&
+        new Date(liveClass.scheduledEnd).getTime() > now);
+
     // ============================================================
     // 8. TODAY'S LIVE CLASS
     // ============================================================
 
     const todayClass =
-      activeClasses.find(
-        (liveClass: any) =>
-          liveClass.status === "LIVE"
-      ) ||
+      activeClasses.find(isClassLiveNow) ||
       activeClasses.find(
         (liveClass: any) => {
           const liveClassDate =
@@ -1616,10 +1619,7 @@ export const getStudentDashboard = async (
     // ============================================================
 
     const upcomingClass =
-      activeClasses.find(
-        (liveClass: any) =>
-          liveClass.status === "LIVE"
-      ) ||
+      activeClasses.find(isClassLiveNow) ||
       activeClasses.find(
         (liveClass: any) =>
           liveClass.status === "SCHEDULED" &&
@@ -1934,13 +1934,10 @@ export const getStudentDashboard = async (
               scheduledStart: todayClass.scheduledStart.toISOString(),
               scheduledEnd: todayClass.scheduledEnd.toISOString(),
 
-              isLive:
-                todayClass.status ===
-                "LIVE",
+              isLive: isClassLiveNow(todayClass),
 
               meetingLink:
-                todayClass.status ===
-                "LIVE"
+                isClassLiveNow(todayClass)
                   ? `/student/classes/room/${todayClass.id}`
                   : "/student/classes",
             }
@@ -2030,13 +2027,10 @@ export const getStudentDashboard = async (
                   )
                 )} min`,
 
-              isLive:
-                upcomingClass.status ===
-                "LIVE",
+              isLive: isClassLiveNow(upcomingClass),
 
               meetingLink:
-                upcomingClass.status ===
-                "LIVE"
+                isClassLiveNow(upcomingClass)
                   ? `/student/classes/room/${upcomingClass.id}`
                   : "/student/classes",
             }

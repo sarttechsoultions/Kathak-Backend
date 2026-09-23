@@ -25,6 +25,31 @@ export function startClassExpiryJob() {
     try {
       const now = new Date();
 
+      // A class must become LIVE even when nobody has opened its room yet.
+      // Without this, student dashboards can drop a scheduled class at its
+      // start time until somebody manually triggers the join-token endpoint.
+      const starting = await prisma.liveClass.findMany({
+        where: {
+          status: "SCHEDULED",
+          scheduledStart: { lte: now },
+          scheduledEnd: { gt: now },
+        },
+        include: {
+          batch: { select: { name: true, code: true, courseName: true } },
+        },
+      });
+
+      if (starting.length > 0) {
+        await prisma.liveClass.updateMany({
+          where: { id: { in: starting.map((cls) => cls.id) }, status: "SCHEDULED" },
+          data: { status: "LIVE" },
+        });
+        const io = getIO();
+        for (const cls of starting) {
+          broadcastLiveClassEvent(io, "liveclass:class-updated", serialise({ ...cls, status: "LIVE" }));
+        }
+      }
+
       const expiring = await prisma.liveClass.findMany({
         where: {
           status: {
