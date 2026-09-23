@@ -405,7 +405,7 @@
       } catch (err) { console.warn("Failed fetching batchMemberships (possible orphaned batch):", err); }
       
       try {
-        enrollments = await prisma.enrollment.findMany({ where: { studentId: id }, include: { course: true } });
+        enrollments = await prisma.enrollment.findMany({ where: { userId: id }, include: { course: true } });
       } catch (err) { console.warn("Failed fetching enrollments (possible orphaned course):", err); }
 
       try {
