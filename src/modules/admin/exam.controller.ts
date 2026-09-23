@@ -1205,6 +1205,20 @@ export const createExam = async (
             }] : [];
         }));
 
+        const teacherIds = [...new Set(
+            (await prisma.batch.findMany({
+                where: { id: { in: targetBatches.map((batch) => batch.id) }, teacherId: { not: null } },
+                select: { teacherId: true },
+            })).map((batch) => batch.teacherId).filter(Boolean)
+        )] as string[];
+        await createNotifications(teacherIds.map((userId) => ({
+            userId,
+            type: "EXAM_SCHEDULED",
+            title: "New exam scheduled",
+            message: `An exam has been scheduled for one of your batches.`,
+            link: "/teacher/exam",
+        })));
+
         // =====================================================
         // RESPONSE
         // =====================================================

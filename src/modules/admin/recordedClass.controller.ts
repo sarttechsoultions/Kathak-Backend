@@ -310,9 +310,16 @@ export const createRecordedClass = async (req: Request, res: Response): Promise<
 
     // Notify teachers assigned to any batch that received this recorded class.
     const batchIds = [...new Set(createdClasses.map((created) => created.batchId).filter(Boolean))] as string[];
-    if (batchIds.length > 0) {
+    const courseIds = [...new Set(createdClasses.map((created) => created.courseId).filter(Boolean))] as string[];
+    if (batchIds.length > 0 || courseIds.length > 0) {
       const teacherBatches = await prisma.batch.findMany({
-        where: { id: { in: batchIds }, teacherId: { not: null } },
+        where: {
+          teacherId: { not: null },
+          OR: [
+            ...(batchIds.length > 0 ? [{ id: { in: batchIds } }] : []),
+            ...(courseIds.length > 0 ? [{ courseId: { in: courseIds } }] : []),
+          ],
+        },
         select: { teacherId: true },
       });
       const teacherIds = [...new Set(teacherBatches.map((batch) => batch.teacherId).filter(Boolean))] as string[];
