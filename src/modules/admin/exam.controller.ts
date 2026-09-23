@@ -1,6 +1,7 @@
 ﻿import { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
+import { createNotification, createNotifications } from "../notification/notification.controller";
 
 /* ============================================================
    TYPES
@@ -1186,6 +1187,24 @@ export const createExam = async (
             );
         }
 
+        // Notify every affected student immediately; this uses the shared
+        // delivery helper so the bell, socket and push notification stay in sync.
+        const students = await prisma.batchStudent.findMany({
+            where: { batchId: { in: targetBatches.map((batch) => batch.id) } },
+            select: { studentId: true, batchId: true },
+        });
+        const examByBatch = new Map(createdExams.map((exam) => [exam.batchId, exam]));
+        await createNotifications(students.flatMap((student) => {
+            const createdExam = examByBatch.get(student.batchId);
+            return createdExam ? [{
+                userId: student.studentId,
+                type: "EXAM_SCHEDULED",
+                title: "New exam scheduled",
+                message: `“${createdExam.title}” is scheduled for ${new Date(createdExam.date).toLocaleString()}.`,
+                link: "/student/exam",
+            }] : [];
+        }));
+
         // =====================================================
         // RESPONSE
         // =====================================================
@@ -2042,6 +2061,14 @@ export const evaluateExamResult =
             },
           }
         );
+
+      await createNotification(
+        updatedResult.studentId,
+        "EXAM_EVALUATED",
+        "Exam result published",
+        `Your result for this exam has been evaluated: ${parsedMarks}/${totalMarks}.`,
+        `/student/exam/results/${updatedResult.id}`
+      );
 
       const percentage =
         calculatePercentage(

@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
 import { isOneToOneBatch } from "../../lib/batchHelpers";
+import { createNotification, createNotifications } from "../notification/notification.controller";
 
 const STATUS_PENDING = "PENDING_TEACHER";
 const STATUS_TEACHER_APPROVED = "TEACHER_APPROVED";
@@ -126,14 +127,7 @@ export const createRescheduleRequest = async (req: Request, res: Response) => {
 
     // Notify Teacher and Admin
     if (teacherId) {
-      await prisma.notification.create({
-        data: {
-          userId: teacherId,
-          type: "RESCHEDULE_REQUEST",
-          title: "New Reschedule Request",
-          message: `${user.fullName} has requested to reschedule ${liveClass.title}.`,
-        },
-      });
+      await createNotification(teacherId, "RESCHEDULE_REQUEST", "New Reschedule Request", `${user.fullName} has requested to reschedule ${liveClass.title}.`);
     }
 
     const admins = await prisma.user.findMany({ where: { role: "ADMIN" } });
@@ -144,7 +138,7 @@ export const createRescheduleRequest = async (req: Request, res: Response) => {
       message: `${user.fullName} has requested to reschedule ${liveClass.title}.`,
     }));
     if (adminNotifs.length > 0) {
-      await prisma.notification.createMany({ data: adminNotifs });
+      await createNotifications(adminNotifs);
     }
 
     res.status(201).json({ status: "success", data: request });
@@ -227,14 +221,7 @@ export const teacherResponse = async (req: Request, res: Response) => {
       },
     });
 
-    await prisma.notification.create({
-      data: {
-        userId: request.studentId,
-        type: "RESCHEDULE_RESPONSE",
-        title: "Reschedule Request Update",
-        message: `Your teacher has ${action.toLowerCase()}d your reschedule request.`,
-      },
-    });
+    await createNotification(request.studentId, "RESCHEDULE_RESPONSE", "Reschedule Request Update", `Your teacher has ${action.toLowerCase()}d your reschedule request.`);
 
     res.json({ status: "success", data: updated });
   } catch (error) {
@@ -345,16 +332,12 @@ export const adminFinalize = async (req: Request, res: Response) => {
     });
 
     if (result.status === STATUS_RESCHEDULED) {
-      await prisma.notification.createMany({
-        data: [
+      await createNotifications([
           { userId: result.studentId, type: "RESCHEDULE_FINALIZED", title: "Reschedule Finalized", message: "Your reschedule request has been finalized." },
           { userId: result.teacherId, type: "RESCHEDULE_FINALIZED", title: "Reschedule Finalized", message: "A reschedule request has been finalized." },
-        ]
-      });
+        ]);
     } else {
-      await prisma.notification.create({
-        data: { userId: result.studentId, type: "RESCHEDULE_REJECTED", title: "Reschedule Rejected", message: "Your reschedule request was rejected by admin." }
-      });
+      await createNotification(result.studentId, "RESCHEDULE_REJECTED", "Reschedule Rejected", "Your reschedule request was rejected by admin.");
     }
 
     res.json({ status: "success", data: result });

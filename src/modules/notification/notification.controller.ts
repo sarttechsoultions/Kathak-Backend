@@ -126,6 +126,33 @@ export const createNotification = async (
   }
 };
 
+/**
+ * Use this instead of Prisma createMany for user-facing notifications.
+ * createMany persists rows but bypasses socket and FCM delivery, which means
+ * users only see the notification after a manual refresh.
+ */
+export const createNotifications = async (
+  notifications: Array<{
+    userId: string;
+    type: string;
+    title: string;
+    message: string;
+    link?: string | null;
+  }>
+) => {
+  await Promise.all(
+    notifications.map((notification) =>
+      createNotification(
+        notification.userId,
+        notification.type,
+        notification.title,
+        notification.message,
+        notification.link ?? undefined
+      )
+    )
+  );
+};
+
 export const notifyAdmins = async (
   type: string,
   title: string,

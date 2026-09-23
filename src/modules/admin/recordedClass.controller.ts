@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { Role } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
+import { createNotifications } from "../notification/notification.controller";
 import { BUNNY_CONFIG } from "../../config/bunny.config";
 import { env } from "../../config/env";
 import * as UAParser from "ua-parser-js";
@@ -80,15 +81,15 @@ async function notifyBatchStudents(
   const pending = studentsInBatch.filter((student) => !notifiedUserIds.has(student.studentId));
   if (pending.length === 0) return;
 
-  await prisma.notification.createMany({
-    data: pending.map((student) => ({
+  await createNotifications(
+    pending.map((student) => ({
       userId: student.studentId,
       type: "CLASS",
       title: `New Recorded Class: ${title}`,
       message: `A new video "${title}" has been uploaded for your batch.`,
       link: `/student/recorded-classes/${classId}`,
-    })),
-  });
+    }))
+  );
 
   pending.forEach((student) => notifiedUserIds.add(student.studentId));
 }
@@ -289,15 +290,15 @@ export const createRecordedClass = async (req: Request, res: Response): Promise<
 
             const pending = enrollments.filter((entry) => !notifiedUserIds.has(entry.userId));
             if (pending.length > 0) {
-              await prisma.notification.createMany({
-                data: pending.map((entry) => ({
+              await createNotifications(
+                pending.map((entry) => ({
                   userId: entry.userId,
                   type: "CLASS",
                   title: `New Video: ${created.title}`,
                   message: `A new video "${created.title}" has been uploaded to your course.`,
                   link: `/student/recorded-classes/${created.id}`,
-                })),
-              });
+                }))
+              );
               pending.forEach((entry) => notifiedUserIds.add(entry.userId));
             }
           }

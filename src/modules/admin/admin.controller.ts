@@ -8,7 +8,7 @@
     EnrollmentError 
   } from "../student/enrollment.service";
   import { parseLiveClassReminderPrefs } from "../../lib/liveClassReminders";
-  import { createNotification } from "../notification/notification.controller";
+  import { createNotification, createNotifications } from "../notification/notification.controller";
   import { getStudentAccessState } from "../student/access.service";
   import { createEnrollmentPaymentOrder, getRazorpay } from "../payment/payment.controller";
   import { parseTiers, BulkDiscountTier, calculateBulkEnrollmentAmount, calculateRenewalAmount } from "../../lib/fees";
@@ -2796,13 +2796,13 @@
 
           if (uniqueStudentIds.length > 0) {
             const notifications = uniqueStudentIds.map((studentId) => ({
-              userId: studentId,
+              userId: String(studentId),
               type: "ANNOUNCEMENT",
               title: `New Assignment: ${assignment.title}`,
               message: `A new assignment "${assignment.title}" has been posted for your batch.`,
               link: "/student/assignments",
             }));
-            await (prisma as any).notification.createMany({ data: notifications });
+            await createNotifications(notifications);
           }
         } else {
           // Broadcast to all active students if no batch specified
@@ -2818,7 +2818,7 @@
               message: `A new global assignment "${assignment.title}" has been posted.`,
               link: "/student/assignments",
             }));
-            await (prisma as any).notification.createMany({ data: notifications });
+            await createNotifications(notifications);
           }
         }
       } catch (notifErr) {
