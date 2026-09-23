@@ -488,6 +488,16 @@ export const createEvent = async (req: Request, res: Response): Promise<void> =>
       console.error("Failed to send event notifications to students:", notifErr);
     }
 
+    if (newEvent.leadInstructorId && newEvent.leadInstructorId !== adminId) {
+      await createNotifications([{
+        userId: newEvent.leadInstructorId,
+        type: "EVENT_ASSIGNED",
+        title: "You were assigned to an event",
+        message: `You are the lead instructor for “${newEvent.title}”.`,
+        link: "/teacher/events",
+      }]);
+    }
+
     res.status(201).json({
       success: true,
       message: "Event created successfully",
@@ -550,6 +560,16 @@ export const updateEvent = async (req: Request, res: Response): Promise<void> =>
       }
     } catch (notifErr) {
       console.error("Failed to send event update notifications to students:", notifErr);
+    }
+
+    if (updatedEvent.leadInstructorId && updatedEvent.leadInstructorId !== (req as any).user?.id) {
+      await createNotifications([{
+        userId: updatedEvent.leadInstructorId,
+        type: "EVENT_UPDATED",
+        title: "Event updated",
+        message: `“${updatedEvent.title}” has been updated.`,
+        link: "/teacher/events",
+      }]);
     }
 
     res.status(200).json({

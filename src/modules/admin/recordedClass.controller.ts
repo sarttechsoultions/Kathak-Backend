@@ -308,6 +308,23 @@ export const createRecordedClass = async (req: Request, res: Response): Promise<
       }
     }
 
+    // Notify teachers assigned to any batch that received this recorded class.
+    const batchIds = [...new Set(createdClasses.map((created) => created.batchId).filter(Boolean))] as string[];
+    if (batchIds.length > 0) {
+      const teacherBatches = await prisma.batch.findMany({
+        where: { id: { in: batchIds }, teacherId: { not: null } },
+        select: { teacherId: true },
+      });
+      const teacherIds = [...new Set(teacherBatches.map((batch) => batch.teacherId).filter(Boolean))] as string[];
+      await createNotifications(teacherIds.map((userId) => ({
+        userId,
+        type: "CLASS",
+        title: "New recorded class uploaded",
+        message: `“${createdClasses[0]?.title || trimmedTitle}” has been uploaded for one of your batches.`,
+        link: "/teacher/recorded-classes",
+      })));
+    }
+
     const createdCount = createdClasses.length;
     const primaryClass = createdClasses[0];
 
