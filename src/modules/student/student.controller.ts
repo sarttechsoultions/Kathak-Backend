@@ -1568,10 +1568,6 @@ export const getStudentDashboard = async (
       .toISOString()
       .split("T")[0];
 
-    // ============================================================
-    // 7. ACTIVE LIVE CLASSES
-    // ============================================================
-
     const activeClasses = liveClasses.filter(
       (liveClass: any) => {
         if (
@@ -1581,6 +1577,12 @@ export const getStudentDashboard = async (
           return false;
         }
 
+        // Always keep classes that are currently LIVE (even if they run past scheduledEnd)
+        if (liveClass.status === "LIVE") {
+          return true;
+        }
+
+        // Otherwise, only keep if not past scheduledEnd
         return (
           new Date(
             liveClass.scheduledEnd
