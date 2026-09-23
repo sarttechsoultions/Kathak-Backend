@@ -2804,6 +2804,23 @@
             }));
             await createNotifications(notifications);
           }
+
+          // When an admin posts work for a batch, its assigned teacher must
+          // receive the same update. Do not notify a teacher about their own post.
+          if (userRole === "ADMIN") {
+            const assignedTeachers = await (prisma as any).batch.findMany({
+              where: { id: { in: notifyBatchIds }, teacherId: { not: null } },
+              select: { teacherId: true },
+            });
+            const teacherIds = [...new Set(assignedTeachers.map((batch: { teacherId: string | null }) => batch.teacherId).filter(Boolean))] as string[];
+            await createNotifications(teacherIds.map((userId) => ({
+              userId,
+              type: "ASSIGNMENT_POSTED",
+              title: "New assignment posted",
+              message: `“${assignment.title}” has been posted for one of your batches.`,
+              link: "/teacher/dashboard",
+            })));
+          }
         } else {
           // Broadcast to all active students if no batch specified
           const allStudents = await (prisma as any).user.findMany({

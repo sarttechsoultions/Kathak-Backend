@@ -132,6 +132,29 @@ export const createContentResource = async (req: Request, res: Response) => {
       }))
     );
 
+    // Admin uploads for a batch/course are also sent to the teachers assigned
+    // to those batches, so they can act on the same syllabus or notes.
+    if (!isTeacher && !global && (batchId || courseId)) {
+      const teacherBatches = await prisma.batch.findMany({
+        where: {
+          teacherId: { not: null },
+          OR: [
+            ...(batchId ? [{ id: String(batchId) }] : []),
+            ...(courseId ? [{ courseId: String(courseId) }] : []),
+          ],
+        },
+        select: { teacherId: true },
+      });
+      const teacherIds = [...new Set(teacherBatches.map((batch) => batch.teacherId).filter(Boolean))] as string[];
+      await createNotifications(teacherIds.map((userId) => ({
+        userId,
+        type: "SYLLABUS_AVAILABLE",
+        title: "New syllabus or note posted",
+        message: `“${newResource.title}” has been added for one of your batches.`,
+        link: "/teacher/syllabus",
+      })));
+    }
+
     res.status(201).json({ status: "success", data: newResource });
   } catch (error: any) {
     console.error("Error creating content:", error);
