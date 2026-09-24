@@ -1,215 +1,3 @@
-
-
-Pasted text.txt
-Document
-isme mujhe exact usd chahiye to kya akru float me nhi to kya karu
-हाँ—अगर आपको USD में बिल्कुल exact money value चाहिए और Float नहीं चाहिए, तो best approach है USD को cents में integer के रूप में store करना।
-
-अभी आपके code में USD conversion .toFixed(2) से string बन रही है और फिर parseUSD() JavaScript number में convert कर रही है। यानी frontend पर दो decimal दिखेंगे, लेकिन internally वह फिर भी floating-point number ही है।
-
-Pasted text.txt
-TXT
-
-Pasted text.txt
-TXT
-
-Best approach: USD cents as integer
-मान लीजिए price है:
-
-$52.47
-database/API में store करें:
-
-5247
-यानी 5247 cents। इससे floating-point precision issue कभी नहीं आएगा।
-
-Frontend helpers ऐसे रखें:
-
-const usdToCents = (value: string | number): number => {
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount < 0) {
-    return 0;
-  }
-
-  return Math.round(amount * 100);
-};
-
-const centsToUSD = (cents: number): number => {
-  return cents / 100;
-};
-
-const formatUSDFromCents = (cents: number): string => {
-  return (cents / 100).toFixed(2);
-};
-INR reference से USD निकालते समय:
-
-const usdCentsFromReference = (
-  inrValue: string,
-  rate: number | null
-): number => {
-  const inr = Number(inrValue);
-
-  if (!rate || rate <= 0 || !Number.isFinite(inr) || inr <= 0) {
-    return 0;
-  }
-
-  return Math.round((inr / rate) * 100);
-};
-Example:
-
-₹4500
-USD rate = ₹86.50
-
-4500 / 86.50 = $52.023121...
-तो payment amount होगा:
-
-5202 cents
-और screen पर:
-
-$52.02
-यह money के हिसाब से exact है।
-
-अगर आपको decimal बिल्कुल नहीं चाहिए
-अगर आप सिर्फ $52, $53, $90 जैसे whole USD रखना चाहते हैं, तो और simple है:
-
-const exactUSD = Math.round(Number(inrValue) / rate);
-या payment कम नहीं होना चाहिए तो:
-
-const exactUSD = Math.ceil(Number(inrValue) / rate);
-
-उदाहरण:
-
-₹4500 / ₹86.50 = 52.02
-Math.round → $52
-
-Math.ceil → $53
-
-लेकिन इसमें original exact conversion lost होगा। इसलिए course/payment system के लिए मैं integer cents recommend करूँगा, whole-dollar integer नहीं।
-
-और backend/Prisma में भी अगर अभी:
-
-groupFeeUSD Float
-है, तो ideal design या तो:
-
-groupFeeUSDCents Int
-रखना है, या database Decimal(10,2) use करना है। Money के लिए Float avoid करना बेहतर है।
-
-अगर आप चाहें कि आपकी website पर USD हमेशा $52.02 exact रहे, लेकिन DB में Float बिल्कुल न हो, तो मैं Create Course + Edit Course + Prisma schema + backend payload चारों का cents-based exact implementation दे सकता हूँ।
-
-
-Pasted text.txt
-Document
-can you give me this correct updated code mere confilict aa gya
-
-Worked for 3m 7s
-
-
-हाँ, मैंने आपके uploaded admin.controller.ts का conflict resolve करके corrected file बना दिया है।
-
-आपके file में deleteStudent का old और new code दोनों साथ रह गए थे, जिससे duplicate/orphan block बन गया था।
-
-Pasted text.txt
-TXT
-Batch section में भी Git conflict की वजह से updateBatch, deleteBatch और assignments वाला हिस्सा टूट गया था।
-
-मैंने corrected version में:
-
-deleteStudent का सिर्फ final safe version रखा है।
-Invoice → Payment deletion order सही रखा है।
-ClassRescheduleRequest blocker handle किया है।
-updateBatch restore किया है।
-deleteBatch restore किया है।
-getAssignments का missing/corrupted block restore किया है।
-सारे <<<<<<<, =======, >>>>>>> conflict markers हटाए हैं।
-TypeScript syntax parser से check किया: TS_SYNTAX_OK।
-यह complete resolved file है:
-
-Download admin.controller.resolved.ts
-
-Server पर पहले backup कर लेना:
-
-cp src/modules/admin/admin.controller.ts src/modules/admin/admin.controller.ts.bak-conflict
-
-फिर downloaded file को rename करके:
-
-admin.controller.ts
-इस location पर replace करें:
-
-src/modules/admin/admin.controller.ts
-उसके बाद:
-
-npm run build
-
-अगर build clean आए तो:
-
-pm2 restart kathak-backend
-
-एक बात: syntax मैंने verify कर दिया है, लेकिन Prisma models/API imports की full semantic verification आपके actual repo में npm run build से ही होगी। अगर build में एक भी error आए, उसका output भेज दीजिए—मैं उसी file को exact final compile-ready version में correct कर दूँगा। 
-
-
-admin.controller.resolved.ts
-Code
-ise access nhi kar paa raha hu me
-
-ठीक है, मैंने इसे ZIP में भी बना दिया है ताकि access आसान हो।
-
-Download admin_controller_resolved.zip
-
-ZIP के अंदर file है:
-
-admin.controller.ts
-इसे extract करके अपने project में यहाँ replace करें:
-
-src/modules/admin/admin.controller.ts
-फिर run करें:
-
-npm run build
-
-अगर ZIP link भी open न हो, तो मैं conflict वाला corrected section यहीं chat में paste कर दूँगा ताकि आप सीधे copy-paste कर सकें। 
-
-User attachment
-kaha se karu download
-आपके screenshot में download button left side वाले file card के top-right corner में है — छोटा ↓ (down arrow) icon।
-
-ऐसे करें:
-
-Right side वाला ZIP preview बंद कर दें।
-Left chat में जहाँ admin.controller.resolved.ts वाला grey file card दिख रहा है, उसके ऊपर right corner में ↓ icon है।
-उसी ↓ icon पर click करें।
-File आपके Windows Downloads folder में आ जाएगी।
-ZIP को right-side preview में open मत करें — वहाँ “Archive previews aren't supported yet” इसलिए दिख रहा है।
-
-अगर चाहें तो मैं ZIP के बजाय सीधा admin.controller.ts file फिर से attach कर दूँ, जिससे आप एक click में download करके project में replace कर सकें।
-
-nhi ho paa raha download
-
-ठीक है, ZIP छोड़िए। मैंने सीधी .ts file और plain .txt file दोनों बना दी हैं।
-
-पहले यह try करें:
-
-Download admin.controller.ts
-
-अगर .ts download न हो, तो यह:
-
-Download admin_controller.txt
-
-.txt download होने के बाद Windows में उसका नाम बदलकर:
-
-admin.controller.ts
-कर दें, फिर इस path पर replace करें:
-
-src/modules/admin/admin.controller.ts
-अगर ये दोनों भी download नहीं होते, तो मैं आपको conflict वाला corrected code section यहीं chat में copy-paste format में दे दूँगा। 
-
-
-admin.controller.ts
-Code
-
-admin_controller.txt
-Document
-
-
-
   import { Request, Response } from "express";
   import { 
     validateEnrollmentInput, 
@@ -941,65 +729,19 @@ Document
     try {
       const id = req.params.id as string;
 
-      const student = await prisma.user.findFirst({
-        where: { id, role: Role.STUDENT },
-        select: { id: true },
-      });
-
-      if (!student) {
-        res.status(404).json({
-          status: "error",
-          message: "Student not found.",
-        });
-        return;
-      }
-
       await prisma.$transaction(async (tx) => {
-        // Required FK: ClassRescheduleRequest.studentId uses RESTRICT.
-        await tx.classRescheduleRequest.deleteMany({
-          where: { studentId: id },
-        });
-
-        // Invoice references Payment, so invoices must be removed first.
-        await tx.invoice.deleteMany({
-          where: { userId: id },
-        });
-
-        await tx.batchStudent.deleteMany({
-          where: { studentId: id },
-        });
-
-        await tx.attendance.deleteMany({
-          where: { studentId: id },
-        });
-
-        await tx.payment.deleteMany({
-          where: { userId: id },
-        });
-
-        await tx.enrollment.deleteMany({
-          where: { userId: id },
-        });
-
-        await tx.inquiry.deleteMany({
-          where: { userId: id },
-        });
-
-        await tx.user.delete({
-          where: { id },
-        });
+        await tx.batchStudent.deleteMany({ where: { studentId: id } });
+        await tx.attendance.deleteMany({ where: { studentId: id } });
+        await tx.payment.deleteMany({ where: { userId: id } });
+        await tx.enrollment.deleteMany({ where: { userId: id } });
+        await tx.inquiry.deleteMany({ where: { userId: id } });
+        await tx.user.delete({ where: { id } });
       });
 
-      res.json({
-        status: "success",
-        message: "Student deleted successfully.",
-      });
+      res.json({ status: "success", message: "Student deleted successfully." });
     } catch (error) {
-      console.error("Delete Student Error:", error);
-      res.status(500).json({
-        status: "error",
-        message: "Failed to delete student.",
-      });
+      console.error(error);
+      res.status(500).json({ status: "error", message: "Failed to delete student." });
     }
   };
 
@@ -2733,358 +2475,177 @@ Document
   export const updateBatch = async (req: Request, res: Response): Promise<void> => {
     try {
       const id = req.params.id as string;
-      const {
-        name,
-        code,
-        courseId,
-        teacherId,
-        schedule,
-        level,
-        status,
-        studentIds,
-        capacity,
-        isEnrollmentVisible,
-      } = req.body;
+      const { name, code, courseId, teacherId, schedule, level, status, studentIds, capacity, isEnrollmentVisible } = req.body;
+      const normalizedCapacity = capacity === undefined
+        ? undefined
+        : capacity === null || capacity === ""
+          ? null
+          : Number(capacity);
 
-      const normalizedCapacity =
-        capacity === undefined
-          ? undefined
-          : capacity === null || capacity === ""
-            ? null
-            : Number(capacity);
-
-      if (
-        normalizedCapacity !== undefined &&
-        normalizedCapacity !== null &&
-        (!Number.isInteger(normalizedCapacity) || normalizedCapacity < 1)
-      ) {
-        res.status(400).json({
-          status: "error",
-          message: "Capacity must be a whole number of at least 1.",
-        });
+      if (normalizedCapacity !== undefined && normalizedCapacity !== null &&
+        (!Number.isInteger(normalizedCapacity) || normalizedCapacity < 1)) {
+        res.status(400).json({ status: "error", message: "Capacity must be a whole number of at least 1." });
         return;
       }
 
-      const existingBatch = await prisma.batch.findUnique({
-        where: { id },
-      });
-
+      const existingBatch = await prisma.batch.findUnique({ where: { id } });
       if (!existingBatch) {
-        res.status(404).json({
-          status: "error",
-          message: "Batch not found.",
-        });
+        res.status(404).json({ status: "error", message: "Batch not found." });
         return;
       }
 
       const updated = await prisma.$transaction(async (tx) => {
+        // Update student assignments if a new array is provided
         if (Array.isArray(studentIds)) {
-          await tx.batchStudent.deleteMany({
-            where: { batchId: id },
-          });
-
+          await tx.batchStudent.deleteMany({ where: { batchId: id } });
           if (studentIds.length > 0) {
             await tx.batchStudent.createMany({
               data: studentIds.map((sid: string) => ({
                 batchId: id,
-                studentId: String(sid),
+                studentId: sid
               })),
-              skipDuplicates: true,
+              skipDuplicates: true
             });
           }
         }
 
-        const totalCount = await tx.batchStudent.count({
-          where: { batchId: id },
-        });
+        const totalCount = Array.isArray(studentIds) ? studentIds.length : await tx.batchStudent.count({ where: { batchId: id } });
 
+        // Fetch names for denormalized fields if IDs changed
         let newCourseName = existingBatch.courseName;
-        if (courseId !== undefined && courseId !== existingBatch.courseId) {
-          if (courseId) {
-            const course = await tx.course.findUnique({
-              where: { id: String(courseId) },
-              select: { title: true },
-            });
-
-            if (!course) {
-              throw new Error("Selected course was not found.");
-            }
-
-            newCourseName = course.title;
-          }
+        if (courseId && courseId !== existingBatch.courseId) {
+          const c = await tx.course.findUnique({ where: { id: courseId } });
+          if (c) newCourseName = c.title;
         }
 
         let newTeacherName = existingBatch.teacherName;
-
-        if (teacherId !== undefined) {
-          if (teacherId) {
-            const teacher = await tx.user.findUnique({
-              where: { id: String(teacherId) },
-              select: { fullName: true },
-            });
-
-            if (!teacher) {
-              throw new Error("Selected teacher was not found.");
-            }
-
-            newTeacherName = teacher.fullName;
-          } else {
-            newTeacherName = "Unassigned";
-          }
+        if (teacherId && teacherId !== existingBatch.teacherId) {
+          const t = await tx.user.findUnique({ where: { id: teacherId } });
+          if (t) newTeacherName = t.fullName;
         }
 
-        return tx.batch.update({
+        return await tx.batch.update({
           where: { id },
           data: {
             name: name ?? undefined,
             code: code ?? undefined,
-            courseId:
-              courseId === undefined
-                ? undefined
-                : courseId
-                  ? String(courseId)
-                  : null,
+            courseId: courseId ?? undefined,
             courseName: newCourseName,
-            teacherId:
-              teacherId === undefined
-                ? undefined
-                : teacherId
-                  ? String(teacherId)
-                  : null,
+            teacherId: teacherId ?? undefined,
             teacherName: newTeacherName,
-            schedule: schedule === undefined ? undefined : schedule || null,
+            schedule: schedule ?? undefined,
             level: level ?? undefined,
             status: status ?? undefined,
             capacity: normalizedCapacity,
-            isEnrollmentVisible:
-              typeof isEnrollmentVisible === "boolean"
-                ? isEnrollmentVisible
-                : undefined,
-            totalStudents: totalCount,
-          },
+            isEnrollmentVisible: typeof isEnrollmentVisible === "boolean" ? isEnrollmentVisible : undefined,
+            totalStudents: totalCount
+          }
         });
       });
 
-      res.json({
-        status: "success",
-        message: "Batch updated successfully.",
-        data: updated,
-      });
+      res.json({ status: "success", message: "Batch updated successfully.", data: updated });
     } catch (error) {
       console.error("Update Batch Error:", error);
-      res.status(500).json({
-        status: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to update batch.",
-      });
+      res.status(500).json({ status: "error", message: "Failed to update batch." });
     }
   };
 
   export const deleteBatch = async (req: Request, res: Response): Promise<void> => {
     try {
       const id = req.params.id as string;
-
-      const batch = await prisma.batch.findUnique({
-        where: { id },
-        select: { id: true },
-      });
-
-      if (!batch) {
-        res.status(404).json({
-          status: "error",
-          message: "Batch not found.",
-        });
-        return;
-      }
-
       await prisma.$transaction(async (tx) => {
-        // Required FK: this relation blocks Batch deletion.
-        await tx.classRescheduleRequest.deleteMany({
-          where: { batchId: id },
-        });
-
-        // Preserve historical rows whose batchId is optional.
-        await tx.recordedClass.updateMany({
-          where: { batchId: id },
-          data: { batchId: null },
-        });
-
-        await tx.certificate.updateMany({
-          where: { batchId: id },
-          data: { batchId: null },
-        });
-
-        await tx.assignment.updateMany({
-          where: { batchId: id },
-          data: { batchId: null },
-        });
-
-        await tx.exam.updateMany({
-          where: { batchId: id },
-          data: { batchId: null },
-        });
-
-        await tx.contentResource.updateMany({
-          where: { batchId: id },
-          data: { batchId: null },
-        });
-
-        await tx.batchStudent.deleteMany({
-          where: { batchId: id },
-        });
-
-        await tx.batch.delete({
-          where: { id },
-        });
+        await tx.batchStudent.deleteMany({ where: { batchId: id } });
+        await tx.batch.delete({ where: { id } });
       });
-
-      res.json({
-        status: "success",
-        message: "Batch deleted successfully.",
-      });
+      res.json({ status: "success", message: "Batch deleted successfully." });
     } catch (error) {
       console.error("Delete Batch Error:", error);
-      res.status(500).json({
-        status: "error",
-        message: "Failed to delete batch.",
-      });
+      res.status(500).json({ status: "error", message: "Failed to delete batch." });
     }
   };
 
+  // ================= 5.5 ASSIGNMENT MANAGEMENT =================
+
   export const getAssignments = async (req: Request, res: Response): Promise<void> => {
     try {
-      const userRole = (req.user as any)?.role;
-      const userId = req.user?.id;
-
-      let where: any = {};
-
-      if (userRole === "TEACHER" && userId) {
-        const teacherBatchIds = await getTeacherBatchIds(userId);
-
-        where = {
-          OR: [
-            { teacherId: userId },
-            ...(teacherBatchIds.length > 0
-              ? [{ batchId: { in: teacherBatchIds } }]
-              : []),
-          ],
-        };
-      }
-
       const assignments = await (prisma as any).assignment.findMany({
-        where,
         include: {
-          batch: {
-            select: {
-              id: true,
-              name: true,
-              code: true,
-            },
-          },
-          submissions: {
-            select: {
-              id: true,
-              studentId: true,
-              status: true,
-              grade: true,
-              submittedAt: true,
-            },
-          },
+          batch: true,
+          submissions: true,
         },
-        orderBy: {
-          createdAt: "desc",
-        },
+        orderBy: { createdAt: "desc" },
       });
 
-      const oneWeekAgo = new Date(
-        Date.now() - 7 * 24 * 60 * 60 * 1000
-      );
+  const mapped = await Promise.all(
+    assignments.map(async (a: any) => {
+      let teacherName = a.teacherName || "Unknown";
+      let teacherAvatar = "";
+      let teacherRole = "Teacher";
+
+      if (a.teacherId) {
+        const user = await prisma.user.findUnique({
+          where: { id: a.teacherId },
+          select: {
+            fullName: true,
+            avatarUrl: true,
+            role: true,
+          },
+        });
+
+        if (user) {
+          teacherName = user.fullName || teacherName;
+          teacherAvatar = user.avatarUrl || teacherAvatar;
+          teacherRole = user.role === "ADMIN" ? "Admin" : "Teacher";
+        }
+      }
+
+      return {
+        id: a.id,
+        teacherName,
+        teacherDept: teacherRole,
+        teacherAvatar,
+        title: a.title,
+        typeTag: a.typeTag || "Practical Assessment",
+        targetBatch: a.batchName || a.batch?.name || "Kathak Basics",
+        dueDate: new Date(a.dueDate).toLocaleDateString("en-US", {
+          month: "short",
+          day: "2-digit",
+          year: "numeric",
+        }),
+        totalStudents: `${a.submissions?.length || 0} Submissions`,
+        evaluationCriteria: a.evaluationCriteria || null,
+        referenceFileUrl: a.referenceFileUrl || null,
+        referenceFileName: a.referenceFileName || null,
+        description: a.description || null,
+      };
+    })
+  );
+
+      // ---- Real metrics ----
+      const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
       let pendingReviews = 0;
       let submissionsThisWeek = 0;
-      let totalExpected = 0;
       let totalSubmittedOrGraded = 0;
+      let totalExpected = 0;
 
-      const mapped = await Promise.all(
-        assignments.map(async (assignment: any) => {
-          const submissions = Array.isArray(assignment.submissions)
-            ? assignment.submissions
-            : [];
+      for (const a of assignments as any[]) {
+        const subs: any[] = a.submissions || [];
 
-          const submittedOrGraded = submissions.filter(
-            (submission: any) =>
-              submission.status === "SUBMITTED" ||
-              submission.status === "GRADED" ||
-              submission.grade !== null
-          ).length;
+        pendingReviews += subs.filter((s) => s.status === "SUBMITTED").length;
 
-          const pendingForAssignment = submissions.filter(
-            (submission: any) =>
-              submission.status !== "GRADED" &&
-              (submission.grade === null ||
-                submission.grade === undefined)
-          ).length;
+        submissionsThisWeek += subs.filter((s) => {
+          const t = new Date(s.submittedAt || s.createdAt || 0).getTime();
+          return t >= weekAgo;
+        }).length;
 
-          const submittedThisWeek = submissions.filter(
-            (submission: any) =>
-              submission.submittedAt &&
-              new Date(submission.submittedAt) >= oneWeekAgo
-          ).length;
+        totalSubmittedOrGraded += subs.filter(
+          (s) => s.status === "SUBMITTED" || s.status === "GRADED"
+        ).length;
 
-          pendingReviews += pendingForAssignment;
-          submissionsThisWeek += submittedThisWeek;
-          totalSubmittedOrGraded += submittedOrGraded;
-
-          let expectedStudents = 0;
-
-          if (assignment.batchId) {
-            expectedStudents = await prisma.batchStudent.count({
-              where: { batchId: assignment.batchId },
-            });
-          } else {
-            expectedStudents = await prisma.user.count({
-              where: {
-                role: Role.STUDENT,
-                isActive: true,
-              },
-            });
-          }
-
-          totalExpected += expectedStudents;
-
-          const dueDate = assignment.dueDate
-            ? new Date(assignment.dueDate)
-            : null;
-
-          const displayStatus =
-            assignment.status ||
-            (dueDate && dueDate.getTime() < Date.now()
-              ? "OVERDUE"
-              : "ACTIVE");
-
-          return {
-            ...assignment,
-            batch:
-              assignment.batchName ||
-              assignment.batch?.name ||
-              assignment.batch?.code ||
-              "All Batches",
-            targetBatch:
-              assignment.batchName ||
-              assignment.batch?.name ||
-              "All Batches",
-            category:
-              assignment.typeTag ||
-              "Practical Assessment",
-            status: displayStatus,
-            submissionsCount: submissions.length,
-            submittedCount: submittedOrGraded,
-            pendingReviews: pendingForAssignment,
-          };
-        })
-      );
+        const batchSize = a.batch?.totalStudents ?? 0;
+        totalExpected += batchSize > 0 ? batchSize : Math.max(subs.length, 1);
+      }
 
       const avgCompletionRate =
         totalExpected > 0
@@ -5233,10 +4794,7 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
 
     res.status(500).json({
       status: "error",
-      message:
-        env.nodeEnv === "production"
-          ? "Failed to complete cash enrollment. Please contact support with your payment ID."
-          : error?.message || "Failed to complete cash enrollment.",
+      message: "Failed to complete cash enrollment.",
     });
   }
 };
