@@ -1406,6 +1406,8 @@
         groupOriginalFeeUSD,
         oneToOneFeeINR,
         oneToOneFeeUSD,
+        oneToOnePerClassFeeINR,
+        oneToOnePerClassFeeUSD,
         oneToOneInternationalFeeINR,
         oneToOneOriginalFeeINR,
         oneToOneOriginalFeeUSD,
@@ -1528,6 +1530,8 @@
         oneToOneFeeUSD,
         "1-to-1 monthly fee (USD)"
       );
+      const parsedOneToOnePerClassFeeINR = parseNonNegativeNumber(oneToOnePerClassFeeINR, "1-to-1 per-class fee (INR)");
+      const parsedOneToOnePerClassFeeUSD = parseNonNegativeNumber(oneToOnePerClassFeeUSD, "1-to-1 per-class fee (USD)");
       const parsedOneToOneInternationalFeeINR = parseNonNegativeNumber(oneToOneInternationalFeeINR, "International 1-to-1 fee reference (INR)");
 
       const parsedOneToOneOriginalFeeINR = parseNonNegativeNumber(
@@ -1633,6 +1637,8 @@
           // 1-to-1 tuition, NOT per-class pricing.
           oneToOneFeeINR: parsedOneToOneFeeINR,
           oneToOneFeeUSD: parsedOneToOneFeeUSD,
+          oneToOnePerClassFeeINR: parsedOneToOnePerClassFeeINR || null,
+          oneToOnePerClassFeeUSD: parsedOneToOnePerClassFeeUSD || null,
           oneToOneInternationalFeeINR: parsedOneToOneInternationalFeeINR || null,
           oneToOneOriginalFeeINR: parsedOneToOneOriginalFeeINR || null,
           oneToOneOriginalFeeUSD: parsedOneToOneOriginalFeeUSD || null,
@@ -1788,6 +1794,8 @@
         groupOriginalFeeUSD,
         oneToOneFeeINR,
         oneToOneFeeUSD,
+        oneToOnePerClassFeeINR,
+        oneToOnePerClassFeeUSD,
         oneToOneInternationalFeeINR,
         oneToOneOriginalFeeINR,
         oneToOneOriginalFeeUSD,
@@ -1935,6 +1943,8 @@
           oneToOneFeeUSD,
           "1-to-1 monthly fee (USD)"
         );
+      const parsedOneToOnePerClassFeeINR = parseOptionalNonNegativeNumber(oneToOnePerClassFeeINR, "1-to-1 per-class fee (INR)");
+      const parsedOneToOnePerClassFeeUSD = parseOptionalNonNegativeNumber(oneToOnePerClassFeeUSD, "1-to-1 per-class fee (USD)");
       const parsedOneToOneInternationalFeeINR = parseOptionalNonNegativeNumber(oneToOneInternationalFeeINR, "International 1-to-1 fee reference (INR)");
 
       const parsedOneToOneOriginalFeeINR =
@@ -2025,6 +2035,8 @@
         // These are MONTHLY 1-to-1 fees.
         oneToOneFeeINR: parsedOneToOneFeeINR,
         oneToOneFeeUSD: parsedOneToOneFeeUSD,
+        oneToOnePerClassFeeINR: parsedOneToOnePerClassFeeINR,
+        oneToOnePerClassFeeUSD: parsedOneToOnePerClassFeeUSD,
         oneToOneInternationalFeeINR: parsedOneToOneInternationalFeeINR,
         oneToOneOriginalFeeINR: parsedOneToOneOriginalFeeINR,
         oneToOneOriginalFeeUSD: parsedOneToOneOriginalFeeUSD,
