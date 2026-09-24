@@ -111,6 +111,8 @@ model Course {
   groupClassesCount           String
   oneToOneFeeINR              Float
   oneToOneFeeUSD              Float
+  oneToOnePerClassFeeINR      Float?
+  oneToOnePerClassFeeUSD      Float?
   oneToOneInternationalFeeINR Float?
   oneToOneOriginalFeeINR      Float?
   oneToOneOriginalFeeUSD      Float?

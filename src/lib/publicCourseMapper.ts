@@ -117,6 +117,8 @@ export type PublicMarketingCourse = {
   indiaPersonal: { label: string; price: string; note: string } | null;
   internationalGroup: { label: string; price: string; note: string } | null;
   internationalPersonal: { label: string; price: string; note: string } | null;
+  oneToOnePerClassFeeINR: number | null;
+  oneToOnePerClassFeeUSD: number | null;
   assessmentNote?: string;
   showExam: boolean;
   thumbnail: string;
@@ -231,6 +233,8 @@ export function mapCourseToPublicMarketingCourse(
           note: course.oneToOneClassesCount || "Flexible personal sessions",
         }
       : null,
+    oneToOnePerClassFeeINR: course.oneToOnePerClassFeeINR ?? null,
+    oneToOnePerClassFeeUSD: course.oneToOnePerClassFeeUSD ?? null,
     assessmentNote,
     showExam: course.showExam ?? true,
     thumbnail: course.thumbnail || "/courses-page/hero-layer.png",
