@@ -24,6 +24,7 @@ model User {
   city                        String?
   region                      String?
   postalCode                  String?
+  gstin                       String?
   skillLevel                  String?
   joiningDate                 DateTime?
   isUnder18                   Boolean                  @default(false)
@@ -251,6 +252,14 @@ model Enrollment {
   // ── Payment Mode ──
   paymentMode          String       @default("MONTHLY") // MONTHLY | FULL_COURSE
   monthsPaid           Int          @default(0)
+  taxableValue         Float?
+  cgst                 Float?
+  sgst                 Float?
+  igst                 Float?
+  totalGst             Float?
+  gstRate              Float?
+  placeOfSupply        String?
+  isGstInclusive       Boolean      @default(true)
   nextDueDate          DateTime?
   subscriptionId       String?
   previousEnrollmentId String?      @unique
@@ -339,6 +348,14 @@ model Payment {
   enrollmentId      String?
   amount            Float
   currency          Currency       @default(INR)
+  taxableValue      Float?
+  cgst              Float?
+  sgst              Float?
+  igst              Float?
+  totalGst          Float?
+  gstRate           Float?
+  placeOfSupply     String?
+  isGstInclusive    Boolean        @default(true)
   gateway           PaymentGateway @default(RAZORPAY)
   transactionId     String         @unique
   orderId           String?        @unique
