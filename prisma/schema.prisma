@@ -131,7 +131,7 @@ model Course {
   joiningFeeInternationalINR Float?
   usdInrRate                 Float?
   usdCalculatedAt            DateTime?
-  bulkDiscountTiers          Json      @default(dbgenerated("'[]'::jsonb"))
+  bulkDiscountTiers          Json      @default("[]")
   autoPayEnabled             Boolean   @default(true)
   courseDurationMonths       Int       @default(0)
 

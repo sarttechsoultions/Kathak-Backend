@@ -726,57 +726,24 @@
   };
 
   export const deleteStudent = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const id = req.params.id as string;
+    try {
+      const id = req.params.id as string;
 
-    await prisma.$transaction(async (tx) => {
-      // Must be removed first because student FK uses ON DELETE RESTRICT.
-      await tx.classRescheduleRequest.deleteMany({
-        where: { studentId: id },
+      await prisma.$transaction(async (tx) => {
+        await tx.batchStudent.deleteMany({ where: { studentId: id } });
+        await tx.attendance.deleteMany({ where: { studentId: id } });
+        await tx.payment.deleteMany({ where: { userId: id } });
+        await tx.enrollment.deleteMany({ where: { userId: id } });
+        await tx.inquiry.deleteMany({ where: { userId: id } });
+        await tx.user.delete({ where: { id } });
       });
 
-      // Invoice references Payment, so Invoice must be deleted before Payment.
-      await tx.invoice.deleteMany({
-        where: { userId: id },
-      });
-
-      await tx.batchStudent.deleteMany({
-        where: { studentId: id },
-      });
-
-      await tx.attendance.deleteMany({
-        where: { studentId: id },
-      });
-
-      await tx.payment.deleteMany({
-        where: { userId: id },
-      });
-
-      await tx.enrollment.deleteMany({
-        where: { userId: id },
-      });
-
-      await tx.inquiry.deleteMany({
-        where: { userId: id },
-      });
-
-      await tx.user.delete({
-        where: { id },
-      });
-    });
-
-    res.json({
-      status: "success",
-      message: "Student deleted successfully.",
-    });
-  } catch (error) {
-    console.error("Delete Student Error:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Failed to delete student.",
-    });
-  }
-};
+      res.json({ status: "success", message: "Student deleted successfully." });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ status: "error", message: "Failed to delete student." });
+    }
+  };
 
   export const assignStudentBatch = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -2584,36 +2551,18 @@
   };
 
   export const deleteBatch = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const id = req.params.id as string;
-
-    await prisma.$transaction(async (tx) => {
-      // Reschedule requests have a required Batch FK and block Batch deletion.
-      await tx.classRescheduleRequest.deleteMany({
-        where: { batchId: id },
+    try {
+      const id = req.params.id as string;
+      await prisma.$transaction(async (tx) => {
+        await tx.batchStudent.deleteMany({ where: { batchId: id } });
+        await tx.batch.delete({ where: { id } });
       });
-
-      await tx.batchStudent.deleteMany({
-        where: { batchId: id },
-      });
-
-      await tx.batch.delete({
-        where: { id },
-      });
-    });
-
-    res.json({
-      status: "success",
-      message: "Batch deleted successfully.",
-    });
-  } catch (error) {
-    console.error("Delete Batch Error:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Failed to delete batch.",
-    });
-  }
-};
+      res.json({ status: "success", message: "Batch deleted successfully." });
+    } catch (error) {
+      console.error("Delete Batch Error:", error);
+      res.status(500).json({ status: "error", message: "Failed to delete batch." });
+    }
+  };
 
   // ================= 5.5 ASSIGNMENT MANAGEMENT =================
 
