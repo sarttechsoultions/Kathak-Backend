@@ -439,6 +439,35 @@ const isPrismaUniqueError = (
   return false;
 };
 
+const enrollmentFailureMessage = (error: unknown): string => {
+  const prismaError = error as { code?: string; meta?: { target?: unknown; field_name?: unknown } };
+
+  if (prismaError?.code === "P2002") {
+    const target = Array.isArray(prismaError.meta?.target)
+      ? prismaError.meta.target.join(", ")
+      : String(prismaError.meta?.target || "a unique field");
+    return `Enrollment could not be saved because ${target} already exists.`;
+  }
+
+  if (prismaError?.code === "P2003") {
+    return `Enrollment could not be saved because a related record is missing (${String(prismaError.meta?.field_name || "foreign key")}).`;
+  }
+
+  if (prismaError?.code === "P2025") {
+    return "Enrollment could not be saved because a required record no longer exists.";
+  }
+
+  if (prismaError?.code === "P2034") {
+    return "Another enrollment was being saved at the same time. Please try again.";
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return "The enrollment transaction could not be completed.";
+};
+
 const asPayload = (
   value: Prisma.JsonValue
 ): EnrollmentPayload => {
@@ -515,6 +544,7 @@ export const validateEnrollmentInput = async (
 
   const enrollmentType = parseEnrollmentType(
     body.enrollmentType ||
+      body.classType ||
       body.type ||
       body.mode
   );
@@ -564,7 +594,8 @@ export const validateEnrollmentInput = async (
   const paymentMethod =
     methodRaw === "CARD" ||
     methodRaw === "UPI" ||
-    methodRaw === "NETBANKING"
+    methodRaw === "NETBANKING" ||
+    methodRaw === "CASH"
       ? methodRaw
       : "RAZORPAY";
 
@@ -1759,22 +1790,40 @@ export const completePendingEnrollment = async (
   }
 
   try {
-    const result = await prisma.$transaction(
-      (tx) =>
-        fulfillEnrollment(
-          tx,
+    let result: CompletedEnrollment | undefined;
+    let transactionError: unknown;
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        result = await prisma.$transaction(
+          (tx) =>
+            fulfillEnrollment(
+              tx,
+              {
+                id: pending.id,
+                passwordHash: pending.passwordHash,
+                payload: asPayload(pending.payload),
+              },
+              razorpayOrderId,
+              razorpayPaymentId
+            ),
           {
-            id: pending.id,
-            passwordHash: pending.passwordHash,
-            payload: asPayload(pending.payload),
-          },
-          razorpayOrderId,
-          razorpayPaymentId
-        ),
-      {
-        isolationLevel: "Serializable",
+            isolationLevel: "Serializable",
+          }
+        );
+        break;
+      } catch (error) {
+        transactionError = error;
+        if ((error as { code?: string })?.code !== "P2034" || attempt === 3) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
       }
-    );
+    }
+
+    if (!result) {
+      throw transactionError || new EnrollmentError("Enrollment transaction did not complete.", 500);
+    }
 
     return result;
   } catch (error) {
@@ -1806,6 +1855,16 @@ export const completePendingEnrollment = async (
      * managed to finish it between the transaction failure and
      * this update.
      */
+    const failureMessage = enrollmentFailureMessage(error);
+    console.error("Enrollment finalization failed:", {
+      pendingId: pending.id,
+      paymentId: razorpayPaymentId,
+      orderId: razorpayOrderId,
+      errorCode: (error as { code?: string })?.code,
+      message: failureMessage,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+
     try {
       await prisma.pendingEnrollment.updateMany({
         where: {
@@ -1815,9 +1874,7 @@ export const completePendingEnrollment = async (
         data: {
           status: PendingEnrollmentStatus.FAILED,
           errorMessage:
-            error instanceof EnrollmentError
-              ? error.message
-              : "Enrollment finalization failed.",
+            failureMessage,
         },
       });
     } catch {
@@ -1832,7 +1889,7 @@ export const completePendingEnrollment = async (
     }
 
     throw new EnrollmentError(
-      "Enrollment failed after payment. Please contact support with your payment ID.",
+      `Enrollment failed after payment: ${failureMessage}`,
       500
     );
   }
