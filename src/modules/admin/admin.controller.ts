@@ -2554,8 +2554,17 @@
     try {
       const id = req.params.id as string;
       await prisma.$transaction(async (tx) => {
-        await tx.batchStudent.deleteMany({ where: { batchId: id } });
-        await tx.batch.delete({ where: { id } });
+        await (tx as any).classRescheduleRequest.deleteMany({ where: { batchId: id } });
+          await (tx as any).studentMonthlyProgress.deleteMany({ where: { batchId: id } });
+          
+          await (tx as any).recordedClass.updateMany({ where: { batchId: id }, data: { batchId: null } });
+          await (tx as any).certificate.updateMany({ where: { batchId: id }, data: { batchId: null } });
+          await (tx as any).assignment.updateMany({ where: { batchId: id }, data: { batchId: null } });
+          await (tx as any).exam.updateMany({ where: { batchId: id }, data: { batchId: null } });
+          await (tx as any).studyMaterial.updateMany({ where: { batchId: id }, data: { batchId: null } });
+          
+          await tx.batchStudent.deleteMany({ where: { batchId: id } });
+          await tx.batch.delete({ where: { id } });
       });
       res.json({ status: "success", message: "Batch deleted successfully." });
     } catch (error) {
@@ -4794,7 +4803,10 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
 
     res.status(500).json({
       status: "error",
-      message: "Failed to complete cash enrollment.",
+      message:
+        env.nodeEnv === "production"
+          ? "Failed to complete cash enrollment. Please contact support with your payment ID."
+          : error?.message || "Failed to complete cash enrollment.",
     });
   }
 };
