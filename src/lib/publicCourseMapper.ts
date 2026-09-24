@@ -132,6 +132,7 @@ export type PublicMarketingCourse = {
     group: { INR: PriceOffer; USD: PriceOffer };
     oneToOne: { INR: PriceOffer; USD: PriceOffer };
   };
+  displayCurrency: "INR" | "USD";
 };
 
 export type PriceOffer = {
@@ -152,7 +153,10 @@ function mapPriceOffer(offerPrice: number, originalPrice: number | null): PriceO
   };
 }
 
-export function mapCourseToPublicMarketingCourse(course: Course): PublicMarketingCourse {
+export function mapCourseToPublicMarketingCourse(
+  course: Course,
+  displayCurrency: "INR" | "USD" = "USD"
+): PublicMarketingCourse {
   const description = course.description || "";
   const category = resolveMarketingCategory(course);
   const categoryLabel = MARKETING_LABELS[category] || category;
@@ -245,6 +249,7 @@ export function mapCourseToPublicMarketingCourse(course: Course): PublicMarketin
         USD: mapPriceOffer(course.oneToOneFeeUSD, course.oneToOneOriginalFeeUSD),
       },
     },
+    displayCurrency,
   };
 }
 

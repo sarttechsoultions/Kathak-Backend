@@ -26,6 +26,7 @@ import {
 import { OtpError, sendEnrollmentOtp, verifyEnrollmentOtp, assertContactVerified } from "../../lib/otp";
 import { getStudentAccessState } from "./access.service";
 import { createNotification, notifyAdmins } from "../notification/notification.controller";
+import { getDisplayCurrency } from "../../utils/currency";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -2191,6 +2192,7 @@ export const getPublicCourses = async (req: Request, res: Response) => {
 
 export const getPublicMarketingCourses = async (req: Request, res: Response) => {
   try {
+    const displayCurrency = getDisplayCurrency(req);
     const homepageOnly = String(req.query.homepage || "") === "true";
 
     const courses = await prisma.course.findMany({
@@ -2204,7 +2206,9 @@ export const getPublicMarketingCourses = async (req: Request, res: Response) => 
     res.json({
       status: "success",
       data: {
-        courses: courses.map(mapCourseToPublicMarketingCourse),
+        courses: courses.map((course) =>
+          mapCourseToPublicMarketingCourse(course, displayCurrency)
+        ),
       },
     });
   } catch (error) {
@@ -2215,6 +2219,7 @@ export const getPublicMarketingCourses = async (req: Request, res: Response) => 
 
 export const getPublicMarketingCourseBySlug = async (req: Request, res: Response) => {
   try {
+    const displayCurrency = getDisplayCurrency(req);
     const slug = String(req.params.slug || "").trim().toLowerCase();
     if (!slug) {
       return res.status(400).json({ status: "error", message: "Course slug is required." });
@@ -2236,7 +2241,7 @@ export const getPublicMarketingCourseBySlug = async (req: Request, res: Response
 
     res.json({
       status: "success",
-      data: mapCourseToPublicMarketingCourse(matched),
+      data: mapCourseToPublicMarketingCourse(matched, displayCurrency),
     });
   } catch (error) {
     console.error("Public marketing course error:", error);
