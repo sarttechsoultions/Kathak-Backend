@@ -10,6 +10,7 @@ import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
 import { sendEmail } from "../../lib/mailer";
 import {
+  buildCaTaxInvoiceHtml,
   buildInvoiceEmailBlock,
   buildStudentPaymentReceiptHtml,
   generatePdfBuffer,
@@ -29,6 +30,7 @@ import {
 import { resolveCurrency } from "../../lib/currency";
 import { isOneToOneBatch } from "../../lib/batchHelpers";
 import { getRazorpay } from "../payment/payment.controller";
+import { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } from "../../lib/gst";
 
 export class EnrollmentError extends Error {
   statusCode: number;
@@ -605,9 +607,7 @@ export const validateEnrollmentInput = async (
   const billingLegalName = showGstIncluded
     ? String(body.billingLegalName || "").trim()
     : "";
-  const billingGstin = showGstIncluded
-    ? String(body.billingGstin || "").trim().toUpperCase()
-    : "";
+  const billingGstin = String(body.billingGstin || "").trim().toUpperCase();
 
   const isUnder18 =
     Boolean(body.isUnder18) ||
@@ -1129,6 +1129,7 @@ const fulfillEnrollment = async (
         email: payload.email,
         phone: payload.phone,
         countryCode: payload.countryCode,
+        gstin: payload.billingGstin || null,
         passwordHash: pending.passwordHash,
         role: Role.STUDENT,
         avatarUrl: payload.profileImage || null,
@@ -1162,7 +1163,15 @@ const fulfillEnrollment = async (
   } else if (pending.passwordHash) {
     user = await tx.user.update({
       where: { id: user.id },
-      data: { passwordHash: pending.passwordHash },
+      data: {
+        passwordHash: pending.passwordHash,
+        ...(payload.billingGstin ? { gstin: payload.billingGstin } : {}),
+      },
+    });
+  } else if (payload.billingGstin && user.gstin !== payload.billingGstin) {
+    user = await tx.user.update({
+      where: { id: user.id },
+      data: { gstin: payload.billingGstin },
     });
   }
 
@@ -1311,6 +1320,22 @@ if (!enrollment) {
       );
     paymentCurrency = "INR";
   }
+
+  // Prices are GST-inclusive: extract GST for finance records without changing feePaid.
+  const gstDetails = calculateGstFromInclusiveTotal(feePaid, payload.region);
+  enrollment = await tx.enrollment.update({
+    where: { id: enrollment.id },
+    data: {
+      taxableValue: gstDetails.taxableBase,
+      cgst: gstDetails.cgst,
+      sgst: gstDetails.sgst,
+      igst: gstDetails.igst,
+      totalGst: gstDetails.totalGst,
+      gstRate: gstDetails.gstRate,
+      placeOfSupply: payload.region || null,
+      isGstInclusive: true,
+    },
+  });
   
   // Determine gateway based on payload or fallback to RAZORPAY
   const gateway = (anyPayload.gateway === "CASH" ? "CASH" : "RAZORPAY") as "CASH" | "RAZORPAY";
@@ -1338,6 +1363,14 @@ if (!enrollment) {
         enrollmentId: enrollment.id,
         amount: feePaid,
         currency: paymentCurrency,
+        taxableValue: gstDetails.taxableBase,
+        cgst: gstDetails.cgst,
+        sgst: gstDetails.sgst,
+        igst: gstDetails.igst,
+        totalGst: gstDetails.totalGst,
+        gstRate: gstDetails.gstRate,
+        placeOfSupply: payload.region || null,
+        isGstInclusive: true,
         gateway: gateway,
         transactionId:
           razorpayPaymentId,
@@ -1602,9 +1635,7 @@ if (!enrollment) {
   });
 
   if (paymentRecord) {
-    const { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } = require("../../lib/gst");
     const anyPayload = payload as any;
-    const gstDetails = calculateGstFromInclusiveTotal(feePaid, anyPayload.region);
 
     const currentYear = new Date().getFullYear();
     const counter = await tx.invoiceCounter.upsert({
@@ -1634,6 +1665,14 @@ if (!enrollment) {
       sacCode: getInvoiceSacCode(),
       sacDescription: getInvoiceSacDescription(),
       gstDetails,
+      taxableValue: gstDetails.taxableBase,
+      cgst: gstDetails.cgst,
+      sgst: gstDetails.sgst,
+      igst: gstDetails.igst,
+      totalGst: gstDetails.totalGst,
+      gstRate: gstDetails.gstRate,
+      placeOfSupply: anyPayload.region || "",
+      isGstInclusive: true,
       studentName: user.fullName,
       studentEmail: user.email,
       studentPhone: user.phone,
@@ -1641,6 +1680,7 @@ if (!enrollment) {
       showGstIncluded: anyPayload.showGstIncluded === true,
       billingLegalName: anyPayload.billingLegalName || "",
       billingGstin: anyPayload.billingGstin || "",
+      studentGstin: anyPayload.billingGstin || "",
       courseTitle: course.title,
       batchName: batchName,
       months: anyPayload.months || 1,
@@ -1965,7 +2005,11 @@ export const sendEnrollmentWelcomeEmail =
         try {
           attachments = [{
             filename: `${invoice.invoiceNumber}.pdf`,
-            content: await generatePdfBuffer(buildStudentPaymentReceiptHtml(invoice)),
+            content: await generatePdfBuffer(
+              invoice.snapshot?.billingGstin
+                ? buildCaTaxInvoiceHtml(invoice)
+                : buildStudentPaymentReceiptHtml(invoice)
+            ),
             contentType: "application/pdf",
           }];
         } catch (pdfError) {
@@ -1979,7 +2023,9 @@ export const sendEnrollmentWelcomeEmail =
         to: user.email,
 
         subject: invoice
-          ? "Welcome to Kathak Academy — Enrollment & Payment Receipt"
+          ? invoice.snapshot?.billingGstin
+            ? "Welcome to Kathak Academy — Tax Invoice"
+            : "Welcome to Kathak Academy — Enrollment & Payment Receipt"
           : "Welcome to Kathak Academy!",
 
         html: `

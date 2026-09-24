@@ -28,12 +28,25 @@ export function calculateGstFromInclusiveTotal(
   inclusiveTotal: number,
   studentState: string | null | undefined
 ): GstCalculationResult {
-  const gstRate = Number(process.env.GST_RATE);
+  const gstRate = Number(process.env.GST_RATE ?? 0);
   const { BUSINESS_DETAILS } = require("./businessConfig");
   const academyState = (BUSINESS_DETAILS.state || process.env.ACADEMY_STATE || "").trim().toLowerCase();
 
   if (!Number.isFinite(gstRate) || gstRate < 0 || gstRate > 100) {
     throw new Error("GST_RATE must be configured as a percentage between 0 and 100.");
+  }
+
+  if (gstRate === 0) {
+    return {
+      taxableBase: inclusiveTotal,
+      totalGst: 0,
+      cgst: 0,
+      sgst: 0,
+      igst: 0,
+      isInterState: false,
+      gstRate: 0,
+      totalAmount: inclusiveTotal,
+    };
   }
 
   if (!academyState) {
@@ -46,7 +59,7 @@ export function calculateGstFromInclusiveTotal(
     academyState !== "" &&
     studentStateNormalized !== academyState;
 
-  if (gstRate <= 0 || inclusiveTotal <= 0) {
+  if (inclusiveTotal <= 0) {
     return {
       taxableBase: inclusiveTotal,
       totalGst: 0,

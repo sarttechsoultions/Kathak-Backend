@@ -59,6 +59,7 @@ export const buildCaTaxInvoiceHtml = (invoice: InvoiceData): string => {
   const academyUdyamRegistration =
     invoice.snapshot?.udyamRegistration || BUSINESS_DETAILS.udyamRegistration || "";
   const studentState = invoice.snapshot?.studentState || "";
+  const studentGstin = invoice.snapshot?.billingGstin || invoice.snapshot?.studentGstin || "";
   const sacCode = invoice.snapshot?.sacCode || process.env.GST_SAC_CODE || "999291";
   const sacDescription = invoice.snapshot?.sacDescription || process.env.GST_SAC_DESCRIPTION || "Cultural education services";
 
@@ -142,7 +143,7 @@ export const buildCaTaxInvoiceHtml = (invoice: InvoiceData): string => {
         <div class="column details">
           <div class="section-label">Bill To</div>
           <div class="customer-name">${escapeHtml(invoice.studentName)}</div>
-          <div class="muted">${escapeHtml(invoice.studentAddress || "")}${invoice.studentAddress ? '<br/>' : ''}${escapeHtml(studentState)}${studentState ? '<br/>' : ''}${escapeHtml(invoice.studentPhone)}${invoice.studentPhone ? '<br/>' : ''}${escapeHtml(invoice.studentEmail)}</div>
+          <div class="muted">${escapeHtml(invoice.studentAddress || "")}${invoice.studentAddress ? '<br/>' : ''}${escapeHtml(studentState)}${studentState ? '<br/>' : ''}${studentGstin ? `<br/><strong>GSTIN:</strong> ${escapeHtml(studentGstin)}` : ''}${studentGstin ? '<br/>' : ''}${escapeHtml(invoice.studentPhone)}${invoice.studentPhone ? '<br/>' : ''}${escapeHtml(invoice.studentEmail)}</div>
         </div>
         <div class="column details">
           <div class="section-label">Supply & Reference</div>
