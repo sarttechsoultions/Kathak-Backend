@@ -110,6 +110,7 @@ export type PublicMarketingCourse = {
   benefits: string[];
   durationTitle: string;
   durationNote: string;
+  courseDurationMonths?: number;
   eligibilityTitle: string;
   eligibilityNote: string;
   indiaGroup: { label: string; price: string; note: string };
@@ -197,6 +198,7 @@ export function mapCourseToPublicMarketingCourse(course: Course): PublicMarketin
     benefits: learn,
     durationTitle: durationRaw ? "Course Duration" : "Ongoing monthly batch",
     durationNote,
+    courseDurationMonths: course.courseDurationMonths || 0,
     eligibilityTitle: eligibilityRaw ? "Eligibility" : "Who can join",
     eligibilityNote,
     indiaGroup: {

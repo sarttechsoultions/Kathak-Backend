@@ -2128,9 +2128,21 @@ export const getPublicCourses = async (req: Request, res: Response) => {
         // offered to new students.
         
         .sort((a, b) => {
+          const aFull = a._count.students >= (a.capacity || 20) ? 1 : 0;
+          const bFull = b._count.students >= (b.capacity || 20) ? 1 : 0;
+          if (aFull !== bFull) return aFull - bFull;
+
+          const aActive = a.status === "Active" ? 0 : a.status === "Upcoming" ? 1 : 2;
+          const bActive = b.status === "Active" ? 0 : b.status === "Upcoming" ? 1 : 2;
+          if (aActive !== bActive) return aActive - bActive;
+
           const aStart = String(a.schedule || "").split("|")[2] || "9999-12-31";
           const bStart = String(b.schedule || "").split("|")[2] || "9999-12-31";
-          return aStart.localeCompare(bStart);
+          if (aStart !== bStart) return aStart.localeCompare(bStart);
+
+          const aTime = String(a.schedule || "").split("|")[1] || "23:59";
+          const bTime = String(b.schedule || "").split("|")[1] || "23:59";
+          return aTime.localeCompare(bTime);
         });
 
       return {
