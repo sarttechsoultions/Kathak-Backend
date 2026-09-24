@@ -4341,6 +4341,22 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
       allowExistingUser: true,
     });
 
+    if (String(req.body.paymentMethod || "").trim().toUpperCase() !== "CASH") {
+      res.status(400).json({
+        status: "error",
+        message: "Cash enrollment requires paymentMethod=CASH.",
+      });
+      return;
+    }
+
+    if (String(req.body.enrollmentOperation || "new").trim().toLowerCase() !== "new") {
+      res.status(400).json({
+        status: "error",
+        message: "Only new enrollment is supported by this cash enrollment endpoint.",
+      });
+      return;
+    }
+
     const {
       batchId,
       courseId,
@@ -4350,7 +4366,9 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
     // =========================================================
     // 3. STRICT PAYMENT PLAN
     // =========================================================
-    const requestedMonths = Number(req.body.months ?? 1);
+    const requestedMonths = Number(
+      req.body.paymentPlanMonths ?? req.body.months ?? 1
+    );
 
     if (
       !Number.isInteger(requestedMonths) ||
@@ -4562,8 +4580,9 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
         );
       }
     } else {
-      // Bulk helper calculates the authoritative discounted
-      // 3/6/12 month amount. Joining fee is deliberately zero.
+      // Keep this aligned with Create Course's bulkDiscountTiers:
+      // monthly fee x selected months - applicable tier discount. Joining fee
+      // is intentionally zero for prepaid 3/6/12-month plans.
       const calc = calculateBulkEnrollmentAmount(
         monthlyFee,
         requestedMonths,
@@ -4587,6 +4606,14 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
     // 8. CASH AMOUNT MUST MATCH EXACTLY
     // =========================================================
     const amountReceived = Number(req.body.amountReceived);
+
+    if (currency === "INR" && !Number.isInteger(amountReceived)) {
+      res.status(400).json({
+        status: "error",
+        message: "Cash amount must be a whole INR amount.",
+      });
+      return;
+    }
 
     if (!Number.isFinite(amountReceived) || amountReceived <= 0) {
       res.status(400).json({
@@ -4833,7 +4860,21 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
       },
     });
   } catch (error: any) {
-    console.error("Admin Cash Enrollment Error:", error);
+    const safeBody = { ...req.body };
+    delete safeBody.password;
+    delete safeBody.profileImage;
+
+    console.error("Admin Cash Enrollment Error:", {
+      error,
+      stack: error?.stack,
+      studentId: req.body.studentId || null,
+      email: req.body.email || null,
+      courseId: req.body.courseId || null,
+      batchId: req.body.batchId || null,
+      paymentPlanMonths: req.body.paymentPlanMonths || req.body.months || null,
+      amountReceived: req.body.amountReceived || null,
+      requestBody: safeBody,
+    });
 
     if (error instanceof EnrollmentError) {
       res.status(error.statusCode || 400).json({
@@ -4845,7 +4886,8 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
 
     res.status(500).json({
       status: "error",
-      message: "Failed to complete cash enrollment.",
+      message: error?.message || "Failed to complete cash enrollment.",
+      error: error?.code || "ENROLLMENT_FINALIZATION_FAILED",
     });
   }
 };
