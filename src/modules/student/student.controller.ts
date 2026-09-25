@@ -2192,7 +2192,7 @@ export const getPublicCourses = async (req: Request, res: Response) => {
 
 export const getPublicMarketingCourses = async (req: Request, res: Response) => {
   try {
-    const displayCurrency = getDisplayCurrency(req);
+    const displayCurrency = getDisplayCurrency(req); // now never throws
     const homepageOnly = String(req.query.homepage || "") === "true";
 
     const courses = await prisma.course.findMany({
@@ -2205,6 +2205,9 @@ export const getPublicMarketingCourses = async (req: Request, res: Response) => 
 
     res.json({
       status: "success",
+      // Keep the debug field while you verify – remove later
+      debugCfIpCountry: req.headers["cf-ipcountry"] ?? null,
+      debugDisplayCurrency: displayCurrency,
       data: {
         courses: courses.map((course) =>
           mapCourseToPublicMarketingCourse(course, displayCurrency)
@@ -2221,6 +2224,7 @@ export const getPublicMarketingCourseBySlug = async (req: Request, res: Response
   try {
     const displayCurrency = getDisplayCurrency(req);
     const slug = String(req.params.slug || "").trim().toLowerCase();
+
     if (!slug) {
       return res.status(400).json({ status: "error", message: "Course slug is required." });
     }
@@ -2241,6 +2245,8 @@ export const getPublicMarketingCourseBySlug = async (req: Request, res: Response
 
     res.json({
       status: "success",
+      debugCfIpCountry: req.headers["cf-ipcountry"] ?? null,
+      debugDisplayCurrency: displayCurrency,
       data: mapCourseToPublicMarketingCourse(matched, displayCurrency),
     });
   } catch (error) {
