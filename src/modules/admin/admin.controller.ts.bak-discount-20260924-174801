@@ -2222,8 +2222,7 @@
     tiers: unknown
   ): Array<{
     months: number;
-    discountINR: number;
-    discountUSD: number;
+    discountPercent: number;
   }> => {
     if (tiers === undefined || tiers === null) {
       return [];
@@ -2249,22 +2248,17 @@
 
       const rawTier = tier as {
         months?: unknown;
-        discountINR?: unknown;
-        discountUSD?: unknown;
         discountPercent?: unknown;
       };
 
       const months = Number(rawTier.months);
-
-      // New format uses separate INR and USD discounts.
-      // discountPercent is retained as fallback for old clients.
-      const discountINR = Number(
-        rawTier.discountINR ?? rawTier.discountPercent
+      const discountPercent = Number(
+        rawTier.discountPercent
       );
 
-      const discountUSD = Number(
-        rawTier.discountUSD ?? rawTier.discountPercent
-      );
+      // ─────────────────────────────────────────────
+      // Validate months
+      // ─────────────────────────────────────────────
 
       if (
         !Number.isFinite(months) ||
@@ -2276,25 +2270,23 @@
         );
       }
 
+      // ─────────────────────────────────────────────
+      // Validate discount
+      // ─────────────────────────────────────────────
+
       if (
-        !Number.isFinite(discountINR) ||
-        discountINR < 0 ||
-        discountINR > 100
+        !Number.isFinite(discountPercent) ||
+        discountPercent < 0 ||
+        discountPercent > 100
       ) {
         throw new Error(
-          `Discount tier ${index + 1}: discountINR must be between 0 and 100.`
+          `Discount tier ${index + 1}: discountPercent must be between 0 and 100.`
         );
       }
 
-      if (
-        !Number.isFinite(discountUSD) ||
-        discountUSD < 0 ||
-        discountUSD > 100
-      ) {
-        throw new Error(
-          `Discount tier ${index + 1}: discountUSD must be between 0 and 100.`
-        );
-      }
+      // ─────────────────────────────────────────────
+      // Prevent duplicate durations
+      // ─────────────────────────────────────────────
 
       if (seenMonths.has(months)) {
         throw new Error(
@@ -2306,10 +2298,13 @@
 
       return {
         months,
-        discountINR,
-        discountUSD,
+        discountPercent,
       };
     });
+
+    // ─────────────────────────────────────────────
+    // Sort by duration
+    // ─────────────────────────────────────────────
 
     sanitized.sort(
       (a, b) => a.months - b.months
