@@ -1529,31 +1529,34 @@ if (!enrollment) {
     
     // Create pending due for the next month after bulk
     nextDue = nextCoverageDueDate(coverageStartDate, monthsPaid);
-    const mm = String(nextDue.getMonth() + 1).padStart(2, "0");
-    const nextDueMonth = `${nextDue.getFullYear()}-${mm}`;
     
-    const existingNext = await tx.monthlyDue.findUnique({
-      where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: nextDueMonth } }
-    });
-    
-    if (existingNext) {
-      await tx.monthlyDue.update({
-        where: { id: existingNext.id },
-        data: { amount: monthlyBaseAmount, currency: currencyForDues }
+    if (enrollment.paymentMode !== "FULL_COURSE") {
+      const mm = String(nextDue.getMonth() + 1).padStart(2, "0");
+      const nextDueMonth = `${nextDue.getFullYear()}-${mm}`;
+      
+      const existingNext = await tx.monthlyDue.findUnique({
+        where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: nextDueMonth } }
       });
-    } else {
-      await tx.monthlyDue.create({
-        data: {
-          enrollmentId: enrollment.id,
-          userId: user.id,
-          courseId: course.id,
-          dueMonth: nextDueMonth,
-          dueDate: nextDue,
-          amount: monthlyBaseAmount,
-          currency: currencyForDues,
-          status: "PENDING",
-        }
-      });
+      
+      if (existingNext) {
+        await tx.monthlyDue.update({
+          where: { id: existingNext.id },
+          data: { amount: monthlyBaseAmount, currency: currencyForDues }
+        });
+      } else {
+        await tx.monthlyDue.create({
+          data: {
+            enrollmentId: enrollment.id,
+            userId: user.id,
+            courseId: course.id,
+            dueMonth: nextDueMonth,
+            dueDate: nextDue,
+            amount: monthlyBaseAmount,
+            currency: currencyForDues,
+            status: "PENDING",
+          }
+        });
+      }
     }
   } else {
     // Single month
@@ -1591,31 +1594,34 @@ if (!enrollment) {
     }
     
     nextDue = nextCoverageDueDate(coverageStartDate, 1);
-    const nextMm = String(nextDue.getMonth() + 1).padStart(2, "0");
-    const nextDueMonth = `${nextDue.getFullYear()}-${nextMm}`;
     
-    const existingNext = await tx.monthlyDue.findUnique({
-      where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: nextDueMonth } }
-    });
-    
-    if (existingNext) {
-      await tx.monthlyDue.update({
-        where: { id: existingNext.id },
-        data: { amount: monthlyBaseAmount, currency: currencyForDues }
+    if (enrollment.paymentMode !== "FULL_COURSE") {
+      const nextMm = String(nextDue.getMonth() + 1).padStart(2, "0");
+      const nextDueMonth = `${nextDue.getFullYear()}-${nextMm}`;
+      
+      const existingNext = await tx.monthlyDue.findUnique({
+        where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: nextDueMonth } }
       });
-    } else {
-      await tx.monthlyDue.create({
-        data: {
-          enrollmentId: enrollment.id,
-          userId: user.id,
-          courseId: course.id,
-          dueMonth: nextDueMonth,
-          dueDate: nextDue,
-          amount: monthlyBaseAmount,
-          currency: currencyForDues,
-          status: "PENDING",
-        }
-      });
+      
+      if (existingNext) {
+        await tx.monthlyDue.update({
+          where: { id: existingNext.id },
+          data: { amount: monthlyBaseAmount, currency: currencyForDues }
+        });
+      } else {
+        await tx.monthlyDue.create({
+          data: {
+            enrollmentId: enrollment.id,
+            userId: user.id,
+            courseId: course.id,
+            dueMonth: nextDueMonth,
+            dueDate: nextDue,
+            amount: monthlyBaseAmount,
+            currency: currencyForDues,
+            status: "PENDING",
+          }
+        });
+      }
     }
   }
 

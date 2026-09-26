@@ -157,7 +157,7 @@ function mapPriceOffer(offerPrice: number, originalPrice: number | null): PriceO
 
 export function mapCourseToPublicMarketingCourse(
   course: Course,
-  displayCurrency: "INR" | "USD" = "USD"
+  displayCurrency: "INR" | "USD" = "INR"
 ): PublicMarketingCourse {
   const description = course.description || "";
   const category = resolveMarketingCategory(course);
