@@ -483,7 +483,8 @@ export const createEnrollmentPaymentOrder = async (
         : course.joiningFeeINR ?? 1100;
 
     tiers = parseTiers(
-      course.bulkDiscountTiers
+      course.bulkDiscountTiers,
+      currency
     );
   }
 
@@ -539,7 +540,8 @@ export const createEnrollmentPaymentOrder = async (
         : batch.course.joiningFeeINR ?? 1100;
 
     tiers = parseTiers(
-      batch.course.bulkDiscountTiers
+      batch.course.bulkDiscountTiers,
+      currency
     );
 
     resolvedBatchId = batchId;
@@ -1113,7 +1115,8 @@ export const getPaymentPlan = async (
 
     const tiers =
       parseTiers(
-        course.bulkDiscountTiers
+        course.bulkDiscountTiers,
+        currency
       );
 
     const isRenewal =

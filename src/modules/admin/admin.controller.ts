@@ -4509,7 +4509,7 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
           ? Number(course.joiningFeeUSD ?? 0)
           : Number(course.joiningFeeINR ?? 1100);
 
-      tiers = parseTiers(course.bulkDiscountTiers);
+      tiers = parseTiers(course.bulkDiscountTiers, currency);
 
       resolvedBatchId = "";
     } else {
@@ -4557,7 +4557,7 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
           ? Number(batch.course.joiningFeeUSD ?? 0)
           : Number(batch.course.joiningFeeINR ?? 1100);
 
-      tiers = parseTiers(batch.course.bulkDiscountTiers);
+      tiers = parseTiers(batch.course.bulkDiscountTiers, currency);
 
       resolvedBatchId = batchId;
     }
@@ -5221,7 +5221,7 @@ export const previewRenewalPricing = async (
       return;
     }
 
-    const tiers = parseTiers(course.bulkDiscountTiers);
+    const tiers = parseTiers(course.bulkDiscountTiers, currency);
     const calc = calculateRenewalAmount(monthlyFee, requestedMonths, tiers);
 
     res.json({
@@ -5330,7 +5330,7 @@ export const renewStudentCash = async (
       return;
     }
 
-    const tiers = parseTiers(course.bulkDiscountTiers);
+    const tiers = parseTiers(course.bulkDiscountTiers, currency);
     const calc = calculateRenewalAmount(monthlyFee, requestedMonths, tiers);
     const expectedAmount = calc.total;
 
@@ -5525,7 +5525,7 @@ export const renewStudentOnline = async (
       return;
     }
 
-    const tiers = parseTiers(course.bulkDiscountTiers);
+    const tiers = parseTiers(course.bulkDiscountTiers, currency);
     const calc = calculateRenewalAmount(monthlyFee, requestedMonths, tiers);
     const expectedAmount = calc.total;
 
