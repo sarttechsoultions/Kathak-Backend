@@ -818,6 +818,11 @@ export const getStudentFinance = async (
           },
           include: {
             course: true,
+            monthlyDues: {
+              where: {
+                status: "PENDING",
+              },
+            },
           },
         },
 
@@ -854,18 +859,6 @@ export const getStudentFinance = async (
       course?.title ||
       "Kathak Dance Advanced";
 
-    // IMPORTANT:
-    // ONE_TO_ONE = monthly one-to-one fee
-    // GROUP = monthly group fee
-    const totalFee =
-      enrollmentType === "ONE_TO_ONE"
-        ? Number(
-            course?.oneToOneFeeINR || 0
-          )
-        : Number(
-            course?.groupFeeINR || 0
-          );
-
     const successfulPayments =
       user.payments.filter(
         (p) => p.status === "SUCCESS"
@@ -878,10 +871,14 @@ export const getStudentFinance = async (
         0
       );
 
-    const pendingAmount = Math.max(
-      0,
-      totalFee - paidAmount
-    );
+    const pendingAmount =
+      enrollment?.monthlyDues?.reduce(
+        (acc, md) =>
+          acc + Number(md.amount || 0),
+        0
+      ) || 0;
+
+    const totalFee = paidAmount + pendingAmount;
 
     res.json({
       status: "success",
