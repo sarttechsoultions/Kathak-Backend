@@ -617,7 +617,8 @@ export function nextCoverageDueDate(
  * Safely parses discount tiers coming from Prisma JSON.
  */
 export const parseTiers = (
-  raw: unknown
+  raw: unknown,
+  currency: string = "INR"
 ): BulkDiscountTier[] => {
   if (!Array.isArray(raw)) {
     return [];
@@ -629,30 +630,30 @@ export const parseTiers = (
         typeof tier === "object" &&
         tier !== null &&
         "months" in tier &&
-        "discountPercent" in tier
+        ("discountPercent" in tier || "discountINR" in tier || "discountUSD" in tier)
     )
-    .map(
-      (tier: any) => ({
-        months:
-          Number(
-            tier.months
-          ),
+    .map((tier: any) => {
+      let dp = 0;
+      if (currency === "USD" && "discountUSD" in tier) {
+        dp = Number(tier.discountUSD);
+      } else if (currency === "INR" && "discountINR" in tier) {
+        dp = Number(tier.discountINR);
+      } else if ("discountPercent" in tier) {
+        dp = Number(tier.discountPercent);
+      } else if ("discountINR" in tier) {
+        dp = Number(tier.discountINR);
+      }
 
-        discountPercent:
-          Number(
-            tier.discountPercent
-          ),
-      })
-    )
+      return {
+        months: Number(tier.months),
+        discountPercent: dp,
+      };
+    })
     .filter(
       (tier) =>
-        Number.isFinite(
-          tier.months
-        ) &&
+        Number.isFinite(tier.months) &&
         tier.months > 0 &&
-        Number.isFinite(
-          tier.discountPercent
-        ) &&
+        Number.isFinite(tier.discountPercent) &&
         tier.discountPercent >= 0 &&
         tier.discountPercent <= 100
     );
