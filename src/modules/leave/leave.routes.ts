@@ -4,6 +4,7 @@ import { authenticate, requireRole } from "../../middleware/auth.middleware";
 import {
   getAdminLeaveRequests,
   getTeacherStudentLeaveRequests,
+  reviewTeacherStudentLeaveRequest,
   reviewLeaveRequest,
 } from "./leave.controller";
 
@@ -12,5 +13,6 @@ const router = Router();
 router.get("/admin/leave-requests", authenticate, requireRole(Role.ADMIN), getAdminLeaveRequests);
 router.patch("/admin/leave-requests/:id", authenticate, requireRole(Role.ADMIN), reviewLeaveRequest);
 router.get("/teacher/leave-requests", authenticate, requireRole(Role.TEACHER, Role.ADMIN), getTeacherStudentLeaveRequests);
+router.patch("/teacher/leave-requests/:id", authenticate, requireRole(Role.TEACHER, Role.ADMIN), reviewTeacherStudentLeaveRequest);
 
 export default router;

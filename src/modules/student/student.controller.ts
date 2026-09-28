@@ -27,6 +27,7 @@ import { OtpError, sendEnrollmentOtp, verifyEnrollmentOtp, assertContactVerified
 import { getStudentAccessState } from "./access.service";
 import { createNotification, notifyAdmins } from "../notification/notification.controller";
 import { getDisplayCurrency } from "../../utils/currency";
+import { buildStudentPaymentReceiptHtml, generatePdfBuffer, InvoiceData } from "../../lib/invoice";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -906,6 +907,7 @@ export const getStudentFinance = async (
 
         transactions:
           user.payments.map((p) => ({
+            paymentId: p.id,
             id:
               p.transactionId ||
               `TRA-${p.id
@@ -953,6 +955,55 @@ export const getStudentFinance = async (
       message:
         "Failed to fetch student finance data.",
     });
+  }
+};
+
+/** Download the exact official receipt generated for the student's enrollment/payment email. */
+export const getStudentPaymentReceipt = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const paymentId = String(req.params.paymentId || "");
+    const payment = await prisma.payment.findFirst({
+      where: { id: paymentId, userId: req.user!.id, status: PaymentStatus.SUCCESS },
+      include: {
+        Invoice: true,
+        enrollment: { include: { course: true } },
+        user: { include: { batchMemberships: { include: { batch: true } } } },
+      },
+    });
+
+    if (!payment || !payment.Invoice) {
+      res.status(404).json({ status: "error", message: "Official receipt not found for this payment." });
+      return;
+    }
+
+    const invoice: InvoiceData = {
+      invoiceNumber: payment.Invoice.invoiceNumber,
+      issuedAt: payment.createdAt,
+      studentName: payment.user.fullName,
+      studentEmail: payment.user.email,
+      studentPhone: payment.user.phone || "",
+      studentAddress: payment.user.address,
+      courseTitle: payment.enrollment?.course?.title || "Kathak Course Enrollment",
+      batchName: payment.user.batchMemberships[0]?.batch?.name || payment.user.batchMemberships[0]?.batch?.code || null,
+      amount: payment.amount,
+      currency: String(payment.currency || "INR"),
+      gateway: payment.gateway,
+      paymentMethod: payment.gateway,
+      transactionId: payment.transactionId,
+      orderId: payment.orderId,
+      status: payment.status,
+      enrollmentId: payment.enrollmentId || undefined,
+      snapshot: payment.Invoice.snapshot,
+    };
+
+    const pdf = await generatePdfBuffer(buildStudentPaymentReceiptHtml(invoice));
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${invoice.invoiceNumber}-payment-receipt.pdf"`);
+    res.setHeader("Content-Length", pdf.length);
+    res.send(pdf);
+  } catch (error) {
+    console.error("Get student payment receipt error:", error);
+    res.status(500).json({ status: "error", message: "Failed to generate the official receipt." });
   }
 };
 
@@ -2324,6 +2375,32 @@ export const applyStudentLeave = async (req: Request, res: Response) => {
       return res.status(400).json({ status: "error", message: "Missing required fields" });
     }
 
+    const leaveStart = new Date(startDate);
+    const leaveEnd = new Date(endDate);
+    if (Number.isNaN(leaveStart.getTime()) || Number.isNaN(leaveEnd.getTime()) || leaveEnd < leaveStart) {
+      return res.status(400).json({ status: "error", message: "Please provide a valid leave date range." });
+    }
+
+    // A student must not have two pending/approved leave requests for the
+    // same day or an overlapping date range. Rejected requests remain
+    // re-applicable after the student addresses the rejection reason.
+    const existingRequest = await prisma.leaveRequest.findFirst({
+      where: {
+        userId: studentId,
+        status: { in: ["PENDING", "APPROVED"] },
+        startDate: { lte: leaveEnd },
+        endDate: { gte: leaveStart },
+      },
+      orderBy: { startDate: "asc" },
+    });
+    if (existingRequest) {
+      return res.status(409).json({
+        status: "error",
+        message: `You already have a ${existingRequest.status.toLowerCase()} leave application from ${existingRequest.startDate.toLocaleDateString("en-IN")} to ${existingRequest.endDate.toLocaleDateString("en-IN")} that overlaps these dates.`,
+        data: existingRequest,
+      });
+    }
+
     const user = await prisma.user.findUnique({ where: { id: studentId } });
     const studentName = user?.fullName || "Student";
 
@@ -2332,9 +2409,9 @@ export const applyStudentLeave = async (req: Request, res: Response) => {
         userId: studentId,
         userName: studentName,
         leaveType,
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
-        totalDays: Number(totalDays),
+        startDate: leaveStart,
+        endDate: leaveEnd,
+        totalDays: Math.floor((leaveEnd.getTime() - leaveStart.getTime()) / 86_400_000) + 1,
         reason,
         attachment
       }
@@ -2368,6 +2445,19 @@ export const applyStudentLeave = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error applying for leave:", error);
     return res.status(500).json({ status: "error", message: "Failed to submit leave application" });
+  }
+};
+
+export const getStudentLeaveRequests = async (req: Request, res: Response) => {
+  try {
+    const requests = await prisma.leaveRequest.findMany({
+      where: { userId: req.user!.id },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({ status: "success", data: requests });
+  } catch (error) {
+    console.error("Get student leave requests error:", error);
+    res.status(500).json({ status: "error", message: "Failed to load leave applications." });
   }
 };
 

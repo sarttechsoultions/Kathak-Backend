@@ -33,8 +33,13 @@ export const getAdminLeaveRequests = async (_req: Request, res: Response): Promi
 export const reviewLeaveRequest = async (req: Request, res: Response): Promise<void> => {
   try {
     const nextStatus = String(req.body?.status || "").toUpperCase();
+    const reviewReason = String(req.body?.reviewReason || "").trim().slice(0, 2000);
     if (nextStatus !== LeaveStatus.APPROVED && nextStatus !== LeaveStatus.REJECTED) {
       res.status(400).json({ status: "error", message: "Status must be APPROVED or REJECTED." });
+      return;
+    }
+    if (nextStatus === LeaveStatus.REJECTED && !reviewReason) {
+      res.status(400).json({ status: "error", message: "A reason is required before rejecting a leave request." });
       return;
     }
 
@@ -53,18 +58,20 @@ export const reviewLeaveRequest = async (req: Request, res: Response): Promise<v
 
     const updated = await prisma.leaveRequest.update({
       where: { id: leave.id },
-      data: { status: nextStatus },
+      data: { status: nextStatus, reviewReason: reviewReason || null },
       include: leaveInclude,
     });
 
     const decision = nextStatus === LeaveStatus.APPROVED ? "approved" : "denied";
     
+    // A notification failure must not undo or mask a completed leave decision.
+    try {
     // Notify the user who requested the leave
     await createNotification(
       leave.userId,
       "LEAVE_REQUEST",
       `Leave request ${decision}`,
-      `Your ${leave.leaveType} request from ${leave.startDate.toLocaleDateString("en-IN")} to ${leave.endDate.toLocaleDateString("en-IN")} has been ${decision} by the admin.`,
+      `Your ${leave.leaveType} request from ${leave.startDate.toLocaleDateString("en-IN")} to ${leave.endDate.toLocaleDateString("en-IN")} has been ${decision} by the admin.${reviewReason ? ` Reason: ${reviewReason}` : ""}`,
       leave.user.role === Role.TEACHER ? "/teacher/attendance" : "/student/attendance",
     );
 
@@ -83,6 +90,9 @@ export const reviewLeaveRequest = async (req: Request, res: Response): Promise<v
         `${leave.user.fullName}'s ${leave.leaveType} request has been ${decision} by the admin.`,
         "/teacher/attendance/leave-requests"
       )));
+    }
+    } catch (notificationError) {
+      console.error("Leave review notification error:", notificationError);
     }
 
     res.json({ status: "success", message: `Leave request ${decision}.`, data: updated });
@@ -114,5 +124,58 @@ export const getTeacherStudentLeaveRequests = async (req: Request, res: Response
   } catch (error) {
     console.error("Get teacher student leave requests error:", error);
     res.status(500).json({ status: "error", message: "Failed to load student leave requests." });
+  }
+};
+
+export const reviewTeacherStudentLeaveRequest = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const nextStatus = String(req.body?.status || "").toUpperCase();
+    const reviewReason = String(req.body?.reviewReason || "").trim().slice(0, 2000);
+    if (nextStatus !== LeaveStatus.APPROVED && nextStatus !== LeaveStatus.REJECTED) {
+      res.status(400).json({ status: "error", message: "Status must be APPROVED or REJECTED." });
+      return;
+    }
+    if (nextStatus === LeaveStatus.REJECTED && !reviewReason) {
+      res.status(400).json({ status: "error", message: "A reason is required before rejecting a leave request." });
+      return;
+    }
+
+    const leave = await prisma.leaveRequest.findUnique({ where: { id: String(req.params.id) } });
+    if (!leave) {
+      res.status(404).json({ status: "error", message: "Leave request not found." });
+      return;
+    }
+    if (leave.status !== LeaveStatus.PENDING) {
+      res.status(409).json({ status: "error", message: "This leave request has already been reviewed." });
+      return;
+    }
+
+    const teacherBatches = await prisma.batch.findMany({ where: { teacherId: req.user!.id }, select: { id: true } });
+    const isAssignedStudent = teacherBatches.length > 0 && await prisma.batchStudent.findFirst({
+      where: { studentId: leave.userId, batchId: { in: teacherBatches.map((batch) => batch.id) } },
+      select: { id: true },
+    });
+    if (!isAssignedStudent) {
+      res.status(403).json({ status: "error", message: "You can only review leave requests from your assigned students." });
+      return;
+    }
+
+    const updated = await prisma.leaveRequest.update({
+      where: { id: leave.id },
+      data: { status: nextStatus, reviewReason: reviewReason || null },
+      include: leaveInclude,
+    });
+    const decision = nextStatus === LeaveStatus.APPROVED ? "approved" : "denied";
+    await createNotification(
+      leave.userId,
+      "LEAVE_REQUEST",
+      `Leave request ${decision}`,
+      `Your ${leave.leaveType} request has been ${decision} by your teacher.${reviewReason ? ` Reason: ${reviewReason}` : ""}`,
+      "/student/attendance",
+    );
+    res.json({ status: "success", message: `Leave request ${decision}.`, data: updated });
+  } catch (error) {
+    console.error("Review teacher leave request error:", error);
+    res.status(500).json({ status: "error", message: "Failed to review leave request." });
   }
 };

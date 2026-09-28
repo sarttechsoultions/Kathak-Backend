@@ -20,6 +20,15 @@ const DEFAULT_PREFS: StudentSettingsPrefs = {
   theme: "light",
 };
 
+const hasStrongPassword = (password: string): boolean =>
+  password.length >= 6 &&
+  /[A-Z]/.test(password) &&
+  /\d/.test(password) &&
+  /[^A-Za-z0-9]/.test(password);
+
+const strongPasswordMessage =
+  "Password must be at least 6 characters and include one uppercase letter, one number, and one special character.";
+
 function parseStudentSettingsPrefs(raw: unknown): StudentSettingsPrefs {
   if (!raw) return DEFAULT_PREFS;
 
@@ -254,39 +263,44 @@ export const updateStudentSettingsNotifications = async (req: Request, res: Resp
 
 export const sendStudentForgotPasswordOtp = async (req: Request, res: Response): Promise<void> => {
   try {
-    const emailOrPhone = String(req.body.emailOrPhone || "").trim();
-    if (!emailOrPhone) {
-      res.status(400).json({ status: "error", message: "Email or mobile number is required." });
+    const email = String(req.body.email || req.body.emailOrPhone || "").trim().toLowerCase();
+    if (!email) {
+      res.status(400).json({ status: "error", message: "Email is required." });
+      return;
+    }
+    if (!email.includes("@")) {
+      res.status(400).json({ status: "error", message: "Please use your registered email address." });
       return;
     }
 
-    const student = await findActiveStudentByEmailOrPhone(emailOrPhone);
+    const student = await prisma.user.findFirst({
+      where: {
+        email,
+        role: Role.STUDENT,
+        isActive: true,
+      },
+    });
+
     if (!student) {
       res.status(404).json({
         status: "error",
-        message: "No active student account found for this email or mobile number.",
+        message: "No active student account found for this email address.",
       });
       return;
     }
 
-    const channel = emailOrPhone.includes("@") ? "EMAIL" : "MOBILE";
-    const data = await sendEnrollmentOtp({
-      channel,
-      email: channel === "EMAIL" ? student.email : undefined,
-      phone: channel === "MOBILE" ? student.phone : undefined,
-      countryCode: student.countryCode || "+91",
+    await sendEnrollmentOtp({
+      channel: "EMAIL",
+      email: student.email,
+      purpose: "PASSWORD_RESET",
     });
 
     res.json({
       status: "success",
-      message: data.message,
+      message: "OTP has been sent to your registered email address.",
       data: {
-        channel,
-        maskedTarget:
-          channel === "EMAIL"
-            ? student.email.replace(/(.{2}).+(@.+)/, "$1***$2")
-            : student.phone?.replace(/\d(?=\d{4})/g, "*") || "",
-        bypassCode: data.bypassCode,
+        channel: "EMAIL",
+        maskedTarget: student.email.replace(/(.{2}).+(@.+)/, "$1***$2"),
       },
     });
   } catch (error: unknown) {
@@ -301,35 +315,43 @@ export const sendStudentForgotPasswordOtp = async (req: Request, res: Response):
 
 export const resetStudentForgotPassword = async (req: Request, res: Response): Promise<void> => {
   try {
-    const emailOrPhone = String(req.body.emailOrPhone || "").trim();
+    const email = String(req.body.email || req.body.emailOrPhone || "").trim().toLowerCase();
     const code = String(req.body.code || "").trim();
     const newPassword = String(req.body.newPassword || "");
 
-    if (!emailOrPhone || !code || !newPassword) {
+    if (!email || !code || !newPassword) {
       res.status(400).json({
         status: "error",
-        message: "Email/mobile, OTP, and new password are required.",
+        message: "Email, OTP, and new password are required.",
       });
       return;
     }
-
-    if (newPassword.length < 6) {
-      res.status(400).json({ status: "error", message: "New password must be at least 6 characters." });
+    if (!email.includes("@")) {
+      res.status(400).json({ status: "error", message: "Please use your registered email address." });
       return;
     }
 
-    const student = await findActiveStudentByEmailOrPhone(emailOrPhone);
+    if (!hasStrongPassword(newPassword)) {
+      res.status(400).json({ status: "error", message: strongPasswordMessage });
+      return;
+    }
+
+    const student = await prisma.user.findFirst({
+      where: {
+        email,
+        role: Role.STUDENT,
+        isActive: true,
+      },
+    });
+
     if (!student) {
       res.status(404).json({ status: "error", message: "Student account not found." });
       return;
     }
 
-    const channel = emailOrPhone.includes("@") ? "EMAIL" : "MOBILE";
     await verifyEnrollmentOtp({
-      channel,
-      email: channel === "EMAIL" ? student.email : undefined,
-      phone: channel === "MOBILE" ? student.phone : undefined,
-      countryCode: student.countryCode || "+91",
+      channel: "EMAIL",
+      email: student.email,
       code,
     });
 

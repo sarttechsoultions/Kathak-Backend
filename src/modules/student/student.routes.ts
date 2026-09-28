@@ -14,6 +14,7 @@ import {
   changeStudentPassword,
   studentLogin,
   getStudentFinance,
+  getStudentPaymentReceipt,
   getStudentAssignments,
   submitStudentAssignment,
   getStudentExams,
@@ -25,6 +26,7 @@ import {
   getPublicMarketingCourseBySlug,
   getStudentAttendance,
   applyStudentLeave,
+  getStudentLeaveRequests,
   getStudentProgress,
   initiateUpgrade,
   verifyUpgrade,
@@ -67,6 +69,7 @@ router.get("/dashboard", ...studentOnly, getStudentDashboard);
 // Attendance, Progress & Leave
 router.get("/attendance", ...studentOnly, getStudentAttendance);
 router.post("/leave", ...studentOnly, requireActiveStudentAccess, applyStudentLeave);
+router.get("/leave", ...studentOnly, getStudentLeaveRequests);
 router.get("/progress", ...studentOnly, requireActiveStudentAccess, getStudentProgress);
 
 router.get("/profile", ...studentOnly, getStudentProfile);
@@ -76,6 +79,7 @@ router.get("/settings", ...studentOnly, getStudentSettings);
 router.put("/settings/profile", ...studentOnly, updateStudentSettingsProfile);
 router.put("/settings/notifications", ...studentOnly, updateStudentSettingsNotifications);
 router.get("/finance", ...studentOnly, getStudentFinance);
+router.get("/finance/payments/:paymentId/receipt", ...studentOnly, getStudentPaymentReceipt);
 router.get("/assignments", ...studentOnly, getStudentAssignments);
 router.post("/assignments/submit", ...studentOnly, requireActiveStudentAccess, submitStudentAssignment);
 
