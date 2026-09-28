@@ -5,6 +5,7 @@ import { DemoBookingStatus, DemoClassType, PaymentStatus } from "@prisma/client"
 import { env } from "../../config/env";
 import { prisma } from "../../lib/prisma";
 import { sendEmail } from "../../lib/mailer";
+import { getVisitorCountry } from "../../utils/currency";
 import {
   countedGroupBookings,
   COUNTED_DEMO_STATUSES,
@@ -245,7 +246,11 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
     const fullName = asString(req.body?.fullName, 120);
     const email = parseEmail(req.body?.email);
     const phone = parsePhone(req.body?.phone);
-    const currency = demoCurrencyFor(asString(req.body?.countryCode, 3) || "IN");
+    const headerCountry = getVisitorCountry(req);
+    const countryCode = headerCountry === "UNKNOWN"
+      ? asString(req.body?.countryCode, 3) || "IN"
+      : headerCountry;
+    const currency = demoCurrencyFor(countryCode);
     const course = asString(req.body?.course, 220);
     const message = asString(req.body?.message, 4000);
 
