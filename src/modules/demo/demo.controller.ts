@@ -59,6 +59,15 @@ function asPositiveInt(value: unknown, fallback: number, min = 1, max = 500): nu
   return rounded;
 }
 
+function demoCurrencyFor(countryCode: string): "INR" | "USD" {
+  return countryCode.toUpperCase() === "IN" ? "INR" : "USD";
+}
+
+function demoAmountForCurrency(inrAmount: number, currency: "INR" | "USD", exchangeRateINR: number): number {
+  if (currency === "INR") return inrAmount;
+  return Math.round(inrAmount / Math.max(exchangeRateINR, 1));
+}
+
 function parseEmail(value: unknown): string {
   const email = asString(value, 180).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -122,11 +131,16 @@ async function sendBookingEmail(booking: {
   course: string;
   classMode: string;
   amount: number;
+  currency: string;
   preferredDate: Date | null;
   preferredTime: string | null;
   session: { title: string; startsAt: Date } | null;
 }) {
   const isGroup = booking.type === DemoClassType.GROUP;
+  const isPaid = booking.amount > 0;
+  const amountLabel = booking.currency === "USD"
+    ? `$${Math.round(booking.amount).toLocaleString("en-US")}`
+    : `₹${booking.amount.toLocaleString("en-IN")}`;
   const when = isGroup && booking.session
     ? booking.session.startsAt.toLocaleString("en-IN", {
         timeZone: "Asia/Kolkata",
@@ -152,20 +166,16 @@ async function sendBookingEmail(booking: {
     to: booking.email,
     subject: isGroup ? "Group demo class booked" : "One-to-one demo class request received",
     html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-        <h2 style="color: #900C27;">Kathak by Harshita</h2>
-        <p>Hi ${booking.fullName},</p>
-        <p>Thank you for booking a ${isGroup ? "group" : "one-to-one"} demo class.</p>
-        <div style="background-color: #f9f9f9; border-left: 4px solid #900C27; padding: 15px; margin: 20px 0;">
-          <p style="margin: 0 0 8px;"><strong>Type:</strong> ${isGroup ? "Group (Free)" : "One-to-One (Paid)"}</p>
-          <p style="margin: 0 0 8px;"><strong>Course:</strong> ${booking.course}</p>
-          <p style="margin: 0 0 8px;"><strong>Class mode:</strong> ${booking.classMode}</p>
-          <p style="margin: 0 0 8px;"><strong>When:</strong> ${when}</p>
-          ${!isGroup ? `<p style="margin: 0;"><strong>Fee:</strong> ₹${booking.amount.toLocaleString("en-IN")}</p>` : ""}
-        </div>
-        <p>Our team will get in touch with you shortly with class details.</p>
-        <p>Best regards,<br /><strong>Kathak Academy Team</strong></p>
+      <p>Hi ${booking.fullName},</p>
+      <p>Thank you for booking a ${isGroup ? "group" : "one-to-one"} demo class.</p>
+      <div style="background:#fdf4f6; border-left:4px solid #900C27; border-radius:8px; padding:15px; margin:20px 0;">
+        <p style="margin:0 0 8px;"><strong>Type:</strong> ${isGroup ? "Group" : "One-to-One"} (${isPaid ? "Paid" : "Free"})</p>
+        <p style="margin:0 0 8px;"><strong>Course:</strong> ${booking.course}</p>
+        <p style="margin:0 0 8px;"><strong>Class mode:</strong> ${booking.classMode}</p>
+        <p style="margin:0 0 8px;"><strong>When:</strong> ${when}</p>
+        ${isPaid ? `<p style="margin:0;"><strong>Amount paid:</strong> ${amountLabel}</p>` : ""}
       </div>
+      <p><strong>Class-link update:</strong> You will receive a separate email with your class link within 24 hours.</p>
     `,
   });
 }
@@ -235,6 +245,7 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
     const fullName = asString(req.body?.fullName, 120);
     const email = parseEmail(req.body?.email);
     const phone = parsePhone(req.body?.phone);
+    const currency = demoCurrencyFor(asString(req.body?.countryCode, 3) || "IN");
     const course = asString(req.body?.course, 220);
     const message = asString(req.body?.message, 4000);
 
@@ -292,8 +303,16 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
       const groupCourse = session.course.title;
       const groupClassMode = session.classMode;
 
-      const amount =
-        session.isPaid && session.price ? Math.max(0, session.price) : 0;
+      const amountINR = session.isPaid && session.price ? Math.max(0, session.price) : 0;
+      const internationalAmountINR = session.isPaid && session.internationalPriceINR
+        ? Math.max(0, session.internationalPriceINR)
+        : 0;
+      if (session.isPaid && currency === "USD" && internationalAmountINR <= 0) {
+        throw new DemoError("The international INR fee for this group demo has not been set yet.", 409);
+      }
+      const amount = currency === "USD"
+        ? demoAmountForCurrency(internationalAmountINR, currency, settings.usdExchangeRateINR)
+        : amountINR;
 
       const isFree = amount <= 0;
 
@@ -316,6 +335,7 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
           message,
           sessionId: session.id,
           amount,
+          currency,
           paymentStatus: isFree
             ? PaymentStatus.SUCCESS
             : PaymentStatus.PENDING,
@@ -331,6 +351,7 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
           course: booking.course,
           classMode: booking.classMode,
           amount: booking.amount,
+          currency: booking.currency,
           preferredDate: booking.preferredDate,
           preferredTime: booking.preferredTime,
           session: booking.session,
@@ -371,7 +392,7 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
 
       const order = await razorpay.orders.create({
         amount: Math.round(amount * 100),
-        currency: "INR",
+        currency,
         receipt: `demo_${booking.id.replace(/-/g, "").slice(0, 20)}`,
         notes: {
           demoBookingId: booking.id,
@@ -438,7 +459,14 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
       throw new DemoError("Please choose a future date and time.");
     }
 
-    const amount = Math.max(0, settings.oneToOneFeeINR);
+    const amountINR = Math.max(0, settings.oneToOneFeeINR);
+    const internationalAmountINR = Math.max(0, settings.oneToOneInternationalFeeINR);
+    if (currency === "USD" && internationalAmountINR <= 0) {
+      throw new DemoError("The international INR fee for one-to-one demo classes has not been set yet.", 409);
+    }
+    const amount = currency === "USD"
+      ? demoAmountForCurrency(internationalAmountINR, currency, settings.usdExchangeRateINR)
+      : amountINR;
     const isFree = amount <= 0;
     const durationMins = settings.oneToOneDurationMins;
 
@@ -477,6 +505,7 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
           preferredDate,
           preferredTime,
           amount,
+          currency,
           paymentStatus: isFree
             ? PaymentStatus.SUCCESS
             : PaymentStatus.PENDING,
@@ -495,6 +524,7 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
         course: booking.course,
         classMode: booking.classMode,
         amount: booking.amount,
+        currency: booking.currency,
         preferredDate: booking.preferredDate,
         preferredTime: booking.preferredTime,
         session: booking.session,
@@ -535,7 +565,7 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
 
     const order = await razorpay.orders.create({
       amount: Math.round(amount * 100),
-      currency: "INR",
+      currency,
       receipt: `demo_${booking.id.replace(/-/g, "").slice(0, 20)}`,
       notes: {
         demoBookingId: booking.id,
@@ -612,6 +642,7 @@ async function markDemoPaid(
     course: updated.course,
     classMode: updated.classMode,
     amount: updated.amount,
+    currency: updated.currency,
     preferredDate: updated.preferredDate,
     preferredTime: updated.preferredTime,
     session: updated.session,
@@ -709,6 +740,14 @@ export const updateAdminDemoSettings = async (req: Request, res: Response): Prom
           req.body?.oneToOneFeeINR !== undefined
             ? asPositiveNumber(req.body.oneToOneFeeINR, 499)
             : undefined,
+        oneToOneInternationalFeeINR:
+          req.body?.oneToOneInternationalFeeINR !== undefined
+            ? asPositiveNumber(req.body.oneToOneInternationalFeeINR, 0)
+            : undefined,
+        usdExchangeRateINR:
+          req.body?.usdExchangeRateINR !== undefined
+            ? asPositiveNumber(req.body.usdExchangeRateINR, 85, 1000)
+            : undefined,
         oneToOneDurationMins:
           req.body?.oneToOneDurationMins !== undefined
             ? asPositiveInt(req.body.oneToOneDurationMins, 45, 15, 240)
@@ -801,6 +840,10 @@ function parseSessionBody(body: Record<string, unknown>, partial = false) {
     isPublished: body.isPublished !== undefined ? asBoolean(body.isPublished, true) : undefined,
     isPaid: body.isPaid !== undefined ? asBoolean(body.isPaid, false) : undefined,
     price: body.price !== undefined ? asPositiveNumber(body.price, 0) : undefined,
+    internationalPriceINR:
+      body.internationalPriceINR !== undefined
+        ? asPositiveNumber(body.internationalPriceINR, 0)
+        : undefined,
   };
 }
 
@@ -830,6 +873,7 @@ export const createAdminDemoSession = async (req: Request, res: Response): Promi
         isPublished: parsed.isPublished ?? true,
         isPaid: parsed.isPaid ?? false,
         price: parsed.price ?? 0,
+        internationalPriceINR: parsed.internationalPriceINR ?? 0,
       },
       include: {
         course: {
@@ -892,6 +936,7 @@ export const updateAdminDemoSession = async (req: Request, res: Response): Promi
         isPublished: parsed.isPublished,
         isPaid: parsed.isPaid,
         price: parsed.price,
+        internationalPriceINR: parsed.internationalPriceINR,
       },
       include: {
         course: {
@@ -993,14 +1038,10 @@ export const replyAdminDemoBooking = async (req: Request, res: Response): Promis
       to: booking.email,
       subject: "Your Kathak demo class",
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-          <h2 style="color: #900C27;">Kathak by Harshita</h2>
-          <p>Hi ${booking.fullName},</p>
-          <p>Here is an update about your demo class request.</p>
-          <div style="background-color: #f9f9f9; border-left: 4px solid #900C27; padding: 15px; margin: 20px 0;">
-            <p style="white-space: pre-wrap; margin: 0;">${message}</p>
-          </div>
-          <p>Best regards,<br /><strong>Kathak Academy Team</strong></p>
+        <p>Hi ${booking.fullName},</p>
+        <p>Here is an update about your demo class request.</p>
+        <div style="background:#fdf4f6; border-left:4px solid #900C27; border-radius:8px; padding:15px; margin:20px 0;">
+          <p style="white-space:pre-wrap; margin:0;">${message}</p>
         </div>
       `,
     });
@@ -1012,6 +1053,53 @@ export const replyAdminDemoBooking = async (req: Request, res: Response): Promis
     });
   } catch (error) {
     handleError(res, error, "Failed to send reply.");
+  }
+};
+
+/** Send one email to every confirmed participant of a group demo session. */
+export const messageGroupDemoBookings = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const sessionId = asString(req.body?.sessionId, 80);
+    const message = asString(req.body?.message, 4000);
+    if (!sessionId) throw new DemoError("Please select a group demo class.");
+    if (!message) throw new DemoError("Message is required.");
+
+    const session = await prisma.demoGroupSession.findUnique({
+      where: { id: sessionId },
+      select: { title: true, startsAt: true },
+    });
+    if (!session) throw new DemoError("Group demo class not found.", 404);
+
+    const recipients = await prisma.demoBooking.findMany({
+      where: {
+        sessionId,
+        type: DemoClassType.GROUP,
+        status: DemoBookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.SUCCESS,
+      },
+      select: { fullName: true, email: true },
+    });
+    if (recipients.length === 0) {
+      throw new DemoError("There are no confirmed participants to email.");
+    }
+
+    const results = await Promise.all(
+      recipients.map((recipient) =>
+        sendEmail({
+          to: recipient.email,
+          subject: `Update: ${session.title}`,
+          html: `<p>Hi ${recipient.fullName},</p><p><strong>${session.title}</strong></p><div style="background:#fdf4f6; border-left:4px solid #900C27; border-radius:8px; padding:15px; margin:20px 0;"><p style="white-space:pre-wrap; margin:0;">${message}</p></div>`,
+        })
+      )
+    );
+    const sent = results.filter(Boolean).length;
+    res.status(200).json({
+      status: "success",
+      message: `Email sent to ${sent} of ${recipients.length} confirmed participant${recipients.length === 1 ? "" : "s"}.`,
+      data: { sent, total: recipients.length },
+    });
+  } catch (error) {
+    handleError(res, error, "Failed to send group email.");
   }
 };
 

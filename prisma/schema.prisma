@@ -921,6 +921,8 @@ model LeadPopup {
 model DemoSettings {
   id                   String   @id @default("default")
   oneToOneFeeINR       Float    @default(499)
+  oneToOneInternationalFeeINR Float @default(0) @map("oneToOneFeeUSD")
+  usdExchangeRateINR    Float    @default(85)
   oneToOneDurationMins Int      @default(45)
   isOneToOneEnabled    Boolean  @default(true)
   isGroupEnabled       Boolean  @default(true)
@@ -939,6 +941,7 @@ model DemoGroupSession {
   isPublished  Boolean  @default(true)
   isPaid       Boolean  @default(false)
   price        Float?   @default(0)
+  internationalPriceINR Float? @default(0) @map("usdPrice")
 
   courseId String?
   course   Course? @relation(fields: [courseId], references: [id])
@@ -966,6 +969,7 @@ model DemoBooking {
   preferredTime     String?
   sessionId         String?
   amount            Float             @default(0)
+  currency          String            @default("INR")
   paymentStatus     PaymentStatus     @default(PENDING)
   razorpayOrderId   String?           @unique
   razorpayPaymentId String?

@@ -11,6 +11,7 @@ import {
   getAdminDemoSessions,
   getAdminDemoSettings,
   getPublicDemo,
+  messageGroupDemoBookings,
   replyAdminDemoBooking,
   updateAdminDemoBooking,
   updateAdminDemoSession,
@@ -37,4 +38,5 @@ adminDemoRouter.delete("/sessions/:id", deleteAdminDemoSession);
 adminDemoRouter.get("/bookings", getAdminDemoBookings);
 adminDemoRouter.patch("/bookings/:id", updateAdminDemoBooking);
 adminDemoRouter.post("/bookings/:id/reply", replyAdminDemoBooking);
+adminDemoRouter.post("/bookings/group-message", messageGroupDemoBookings);
 adminDemoRouter.delete("/bookings/:id", deleteAdminDemoBooking);

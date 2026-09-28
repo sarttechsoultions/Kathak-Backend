@@ -6,6 +6,8 @@ export const DEMO_SETTINGS_ID = "default";
 export const DEMO_SETTINGS_DEFAULTS = {
   id: DEMO_SETTINGS_ID,
   oneToOneFeeINR: 499,
+  oneToOneInternationalFeeINR: 0,
+  usdExchangeRateINR: 85,
   oneToOneDurationMins: 45,
   isOneToOneEnabled: true,
   isGroupEnabled: true,
@@ -63,6 +65,8 @@ export function istDateTimeToUtc(date: string, time: string): Date | null {
 export function serializeSettings(item: {
   id: string;
   oneToOneFeeINR: number;
+  oneToOneInternationalFeeINR: number;
+  usdExchangeRateINR: number;
   oneToOneDurationMins: number;
   isOneToOneEnabled: boolean;
   isGroupEnabled: boolean;
@@ -71,6 +75,8 @@ export function serializeSettings(item: {
   return {
     id: item.id,
     oneToOneFeeINR: item.oneToOneFeeINR,
+    oneToOneInternationalFeeINR: item.oneToOneInternationalFeeINR,
+    usdExchangeRateINR: item.usdExchangeRateINR,
     oneToOneDurationMins: item.oneToOneDurationMins,
     isOneToOneEnabled: item.isOneToOneEnabled,
     isGroupEnabled: item.isGroupEnabled,
@@ -91,6 +97,7 @@ export function serializeSession(
     isPublished: boolean;
     isPaid: boolean;
     price: number | null;
+    internationalPriceINR: number | null;
     createdAt: Date;
     updatedAt: Date;
   },
@@ -114,6 +121,7 @@ export function serializeSession(
     isPublished: session.isPublished,
     isPaid: session.isPaid,
     price: session.price,
+    internationalPriceINR: session.internationalPriceINR,
     createdAt: session.createdAt.toISOString(),
     updatedAt: session.updatedAt.toISOString(),
   };
@@ -133,6 +141,7 @@ export function serializeBooking(booking: {
   preferredTime: string | null;
   sessionId: string | null;
   amount: number;
+  currency: string;
   paymentStatus: string;
   razorpayOrderId: string | null;
   razorpayPaymentId: string | null;
@@ -163,6 +172,7 @@ export function serializeBooking(booking: {
     sessionTitle: booking.session?.title || null,
     sessionDateLabel: booking.session ? formatIstDateTime(booking.session.startsAt) : null,
     amount: booking.amount,
+    currency: booking.currency || "INR",
     paymentStatus: booking.paymentStatus,
     createdAt: booking.createdAt.toISOString(),
     updatedAt: booking.updatedAt.toISOString(),

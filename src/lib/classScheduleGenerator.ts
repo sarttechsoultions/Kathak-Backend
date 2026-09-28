@@ -14,6 +14,7 @@ export type ParsedBatchSchedule = {
   time: string;
   startDate: string;
   endDate: string;
+  dayTimes: Record<string, string>;
 };
 
 export type ClassSlot = {
@@ -22,7 +23,7 @@ export type ClassSlot = {
 };
 
 export const parseBatchSchedule = (rawSchedule?: string | null): ParsedBatchSchedule => {
-  const empty: ParsedBatchSchedule = { days: [], time: "", startDate: "", endDate: "" };
+  const empty: ParsedBatchSchedule = { days: [], time: "", startDate: "", endDate: "", dayTimes: {} };
   if (!rawSchedule || rawSchedule === "Not Scheduled") return empty;
 
   if (rawSchedule.includes("|")) {
@@ -35,6 +36,12 @@ export const parseBatchSchedule = (rawSchedule?: string | null): ParsedBatchSche
       time: (parts[1] || "").trim(),
       startDate: (parts[2] || "").trim(),
       endDate: (parts[3] || "").trim(),
+      dayTimes: (() => {
+        try {
+          const parsed = JSON.parse(parts[4] || "{}");
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        } catch { return {}; }
+      })(),
     };
   }
 
@@ -46,7 +53,7 @@ export const parseBatchSchedule = (rawSchedule?: string | null): ParsedBatchSche
     .map((d) => d.trim())
     .filter((d) => DAY_NAMES.includes(d as (typeof DAY_NAMES)[number]));
 
-  return { days, time, startDate: "", endDate: "" };
+  return { days, time, startDate: "", endDate: "", dayTimes: {} };
 };
 
 export const parseScheduleTime = (timeStr: string): { hours: number; minutes: number } => {
@@ -123,7 +130,6 @@ export const generateMonthlyClassSlots = (options: {
   );
   if (dayIndexes.size === 0) return [];
 
-  const { hours, minutes } = parseScheduleTime(parsed.time);
   const monthStart = buildISTDate(year, month, 1, 0, 0);
   const lastDay = new Date(year, month, 0).getDate();
 
@@ -134,10 +140,13 @@ export const generateMonthlyClassSlots = (options: {
   const slots: ClassSlot[] = [];
 
   for (let day = 1; day <= lastDay; day += 1) {
-    const slotStart = buildISTDate(year, month, day, hours, minutes);
-    const dayOfWeek = getISTDayIndex(slotStart);
+    const dayAtMidnight = buildISTDate(year, month, day, 0, 0);
+    const dayOfWeek = getISTDayIndex(dayAtMidnight);
 
     if (!dayIndexes.has(dayOfWeek)) continue;
+    const dayName = DAY_NAMES[dayOfWeek];
+    const { hours, minutes } = parseScheduleTime(parsed.dayTimes[dayName] || parsed.time);
+    const slotStart = buildISTDate(year, month, day, hours, minutes);
     if (rangeStart && slotStart < rangeStart) continue;
     if (rangeEnd) {
       const endOfDay = buildISTDate(year, month, day, 23, 59);
