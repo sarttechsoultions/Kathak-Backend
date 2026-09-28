@@ -2314,6 +2314,8 @@ export const getStudentAttendance = async (req: Request, res: Response) => {
       ...attendanceLogs.map((a) => ({
         id: a.id,
         date: a.date,
+        startDate: a.date,
+        endDate: a.date,
         type: "attendance",
         className: a.session || a.batchName || "Class Session",
         time: a.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -2322,9 +2324,10 @@ export const getStudentAttendance = async (req: Request, res: Response) => {
       ...leaveRequests.map((l) => ({
         id: l.id,
         date: l.startDate,
+        startDate: l.startDate,
+        endDate: l.endDate,
         type: "leave",
-        className: `${l.leaveType} Leave`,
-        time: "-",
+        className: l.leaveType,
         status: l.status === "APPROVED" ? "LEAVE" : (l.status === "PENDING" ? "PENDING" : "REJECTED"),
       }))
     ].sort((a, b) => b.date.getTime() - a.date.getTime());
