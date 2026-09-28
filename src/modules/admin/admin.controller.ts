@@ -59,12 +59,18 @@
       // ==========================================
       // 1. TOP OVERVIEW STATS
       // ==========================================
-      const [totalStudents, totalTeachers, activeCourses, liveClassesToday] = await Promise.all([
+      const [totalStudents, totalTeachers, activeCourses, liveClassesToday, studentsOnLeaveToday] = await Promise.all([
         prisma.user.count({ where: { role: Role.STUDENT } }),
         prisma.user.count({ where: { role: Role.TEACHER } }),
         prisma.course.count({ where: { published: true } }),
         prisma.liveClass.count({
           where: { scheduledStart: { gte: startOfDay, lte: endOfDay } }
+        }),
+        prisma.attendance.count({
+          where: {
+            status: "LEAVE",
+            date: { gte: startOfDay, lte: endOfDay }
+          }
         })
       ]);
 
@@ -292,6 +298,7 @@
             totalTeachers,
             activeCourses,
             liveClassesToday,
+            studentsOnLeaveToday,
             totalRevenue: platform.platformRevenue,
             courseRevenue: platform.courseRevenue,
             workshopRevenue: platform.workshopRevenue,
