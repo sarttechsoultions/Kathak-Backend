@@ -47,6 +47,7 @@ export const sendEnrollmentOtp = async (params: {
   email?: string;
   phone?: string;
   countryCode?: string;
+  purpose?: "ENROLLMENT" | "PASSWORD_RESET";
 }) => {
   const channel = params.channel;
   const raw = channel === "EMAIL" ? params.email : params.phone;
@@ -78,13 +79,18 @@ export const sendEnrollmentOtp = async (params: {
   });
 
   if (channel === "EMAIL") {
+    const isReset = params.purpose === "PASSWORD_RESET";
+    const subject = isReset ? "Kathak Academy Password Reset OTP" : "Kathak Academy Email Verification OTP";
+    const titleText = isReset ? "Reset your password" : "Verify your email";
+    const actionText = isReset ? "Use this OTP to reset your student password:" : "Use this OTP to continue student enrollment:";
+
     void sendEmail({
       to: target,
-      subject: "Kathak Academy Email Verification OTP",
+      subject,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #333;">
-          <h2 style="color:#900C27;">Verify your email</h2>
-          <p>Use this OTP to continue student enrollment:</p>
+          <h2 style="color:#900C27;">${titleText}</h2>
+          <p>${actionText}</p>
           <p style="font-size:28px; font-weight:800; letter-spacing:6px; color:#900C27;">${code}</p>
           <p>This code expires in 10 minutes. If you did not request this, you can ignore the email.</p>
         </div>
