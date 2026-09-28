@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
 import nodemailer from "nodemailer";
 import { env } from "../../config/env";
+import { buildKathakMasterEmail } from "../../lib/mailer";
 
 /**
  * Escape HTML characters before putting user input into email HTML.
@@ -433,7 +434,7 @@ export const createSupportTicket = async (
       to: adminSupportEmail,
       replyTo: userDetails.email,
       subject: `🎫 Support Ticket #${inquiry.id} - ${String(subject).trim()}`,
-      html: emailHtml,
+      html: buildKathakMasterEmail(emailHtml),
     });
 
     // --------------------------------------------------
@@ -458,7 +459,7 @@ export const createSupportTicket = async (
         to: developerEmail,
         replyTo: userDetails.email,
         subject: `🚨 TECHNICAL ISSUE #${inquiry.id}: ${String(subject).trim()}`,
-        html: emailHtml,
+        html: buildKathakMasterEmail(emailHtml),
       });
 
       console.log(
@@ -569,7 +570,7 @@ export const forwardToDeveloper = async (
       from: `"Kathak Support System" <${env.smtp.from || env.smtp.user}>`,
       to: developerEmail,
       subject: `🚨 SYSTEM BUG ESCALATION #${inquiry.id}: ${inquiry.subject}`,
-      html: `
+      html: buildKathakMasterEmail(`
         <div
           style="
             font-family:Arial,Helvetica,sans-serif;
@@ -669,7 +670,7 @@ export const forwardToDeveloper = async (
 
           </div>
         </div>
-      `,
+      `),
     };
 
     await transporter.sendMail(mailOptions);

@@ -108,12 +108,14 @@ export const getPublicGallery = async (req: Request, res: Response): Promise<voi
     const category = parseCategory(req.query.category);
     const homeOnly = asBoolean(req.query.home, false);
     const journeyOnly = asBoolean(req.query.journey, false);
+    const commercialOnly = asBoolean(req.query.commercial, false);
 
     const items = await prisma.galleryItem.findMany({
       where: {
         ...(category ? { category } : {}),
         ...(homeOnly ? { showOnHome: true } : {}),
         ...(journeyOnly ? { journeyCarousel: true, mediaType: "IMAGE" } : {}),
+        ...(commercialOnly ? { journeyCarousel: true, mediaType: "VIDEO" } : {}),
       },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     });

@@ -1457,9 +1457,12 @@ export const getStudentDashboard = async (
     });
 
     if (!student) {
-      res.status(404).json({
+      // A token can outlive a deleted student record. Treat it as an invalid
+      // session so the portal signs the visitor out instead of rendering a
+      // dashboard that can never load.
+      res.status(401).json({
         status: "error",
-        message: "Student profile not found.",
+        message: "Student session is no longer valid. Please log in again.",
       });
       return;
     }
@@ -1517,8 +1520,21 @@ export const getStudentDashboard = async (
     const totalLessons =
       primaryCourse?.lessons?.length || 0;
 
-    const completedSubmissions =
-      student.assignmentSubmissions?.length || 0;
+    // Progress belongs to the course of the student's currently assigned
+    // batch.  A batch transfer must not leave an old, unassigned course on
+    // the dashboard, nor should its submissions affect another course.
+    const courseAssignments = primaryCourse?.id
+      ? await prisma.assignment.findMany({
+          where: { batch: { is: { courseId: primaryCourse.id } } },
+          select: { id: true },
+        })
+      : [];
+    const completedAssignmentIds = new Set(
+      (student.assignmentSubmissions || []).map((submission: any) => submission.assignmentId)
+    );
+    const completedSubmissions = courseAssignments.filter((assignment) =>
+      completedAssignmentIds.has(assignment.id)
+    ).length;
 
     const progressPercent =
       totalLessons > 0
@@ -1658,51 +1674,13 @@ export const getStudentDashboard = async (
     // 11. COURSE PROGRESS
     // ============================================================
 
-    const courseProgressList =
-      (student.enrollments || []).map(
-        (enrollment: any) => {
-          const course =
-            enrollment.course;
-
-          const courseLessons =
-            course?.lessons?.length || 0;
-
-          const percent =
-            courseLessons > 0
-              ? Math.min(
-                  100,
-                  Math.round(
-                    (completedSubmissions /
-                      courseLessons) *
-                      100
-                  )
-                )
-              : 0;
-
-          const matchingBatch =
-            enrolledBatches.find(
-              (batch: any) =>
-                batch.course?.id ===
-                  course?.id ||
-                batch.courseId ===
-                  course?.id
-            );
-
-          return {
-            name:
-              course?.title ||
-              "Enrolled Course",
-
-            batchName:
-              matchingBatch?.name ||
-              matchingBatch?.courseName ||
-              matchingBatch?.code ||
-              "Batch not assigned",
-
-            percent,
-          };
-        }
-      );
+    const courseProgressList = primaryCourse && currentBatch
+      ? [{
+          name: primaryCourse.title || "Enrolled Course",
+          batchName: currentBatch.name || currentBatch.courseName || currentBatch.code || "Batch not assigned",
+          percent: progressPercent,
+        }]
+      : [];
 
     // ============================================================
     // 12. LIVE CLASS REMINDERS
