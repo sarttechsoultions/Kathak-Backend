@@ -2329,6 +2329,10 @@ export const getStudentAttendance = async (req: Request, res: Response) => {
         type: "leave",
         className: l.leaveType,
         status: l.status === "APPROVED" ? "LEAVE" : (l.status === "PENDING" ? "PENDING" : "REJECTED"),
+        leaveStatus: l.status,
+        reason: l.reason,
+        reviewReason: l.reviewReason,
+        attachment: l.attachment,
       }))
     ].sort((a, b) => b.date.getTime() - a.date.getTime());
 

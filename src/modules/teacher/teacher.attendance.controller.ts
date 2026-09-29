@@ -107,6 +107,29 @@ export const applyTeacherLeave = async (req: Request, res: Response) => {
       return res.status(400).json({ status: "error", message: "Missing required fields" });
     }
 
+    const leaveStart = new Date(startDate);
+    const leaveEnd = new Date(endDate);
+    if (Number.isNaN(leaveStart.getTime()) || Number.isNaN(leaveEnd.getTime()) || leaveEnd < leaveStart) {
+      return res.status(400).json({ status: "error", message: "Please provide a valid leave date range." });
+    }
+
+    // Do not allow duplicate or overlapping pending/approved leave requests.
+    const existingRequest = await prisma.leaveRequest.findFirst({
+      where: {
+        userId: teacherId,
+        status: { in: ["PENDING", "APPROVED"] },
+        startDate: { lte: leaveEnd },
+        endDate: { gte: leaveStart },
+      },
+      orderBy: { startDate: "asc" },
+    });
+    if (existingRequest) {
+      return res.status(409).json({
+        status: "error",
+        message: `You already have a ${existingRequest.status.toLowerCase()} leave application from ${existingRequest.startDate.toLocaleDateString("en-IN")} to ${existingRequest.endDate.toLocaleDateString("en-IN")} that overlaps these dates.`,
+      });
+    }
+
     const user = await prisma.user.findUnique({ where: { id: teacherId } });
     const teacherName = user?.fullName || "Teacher";
 
@@ -119,9 +142,9 @@ export const applyTeacherLeave = async (req: Request, res: Response) => {
         userId: teacherId,
         userName: teacherName,
         leaveType,
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
-        totalDays: Number(totalDays),
+        startDate: leaveStart,
+        endDate: leaveEnd,
+        totalDays: Math.floor((leaveEnd.getTime() - leaveStart.getTime()) / 86_400_000) + 1,
         reason: combinedReason,
         attachment,
       },
