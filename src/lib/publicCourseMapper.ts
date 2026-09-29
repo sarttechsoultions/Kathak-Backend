@@ -176,7 +176,9 @@ export function mapCourseToPublicMarketingCourse(
     (about.length > 180 ? `${about.slice(0, 177).trim()}...` : about) ||
     `Learn ${course.title} with Kathak by Harshita.`;
 
-  const durationNote = durationRaw || course.groupClassesCount || "Flexible schedule";
+  const durationNote = course.courseDurationMonths
+    ? `${course.courseDurationMonths} months`
+    : durationRaw || course.groupClassesCount || "Flexible schedule";
   const eligibilityNote = eligibilityRaw || "Open to interested learners";
 
   const indiaGroupPrice =
@@ -202,7 +204,7 @@ export function mapCourseToPublicMarketingCourse(
     includes,
     learn,
     benefits: learn,
-    durationTitle: durationRaw ? "Course Duration" : "Ongoing monthly batch",
+    durationTitle: course.courseDurationMonths || durationRaw ? "Course Duration" : "Ongoing monthly batch",
     durationNote,
     courseDurationMonths: course.courseDurationMonths || 0,
     eligibilityTitle: eligibilityRaw ? "Eligibility" : "Who can join",

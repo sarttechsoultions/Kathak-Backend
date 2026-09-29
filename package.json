@@ -5,6 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "npm run prisma:generate && ts-node-dev --respawn --transpile-only src/server.ts",
+    "postinstall": "npx puppeteer browsers install chrome-headless-shell",
     "build": "npx tsc",
     "start": "node dist/server.js",
     "prisma:generate": "npx prisma generate",
