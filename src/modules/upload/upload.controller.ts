@@ -49,8 +49,10 @@ export const uploadImage = async (req: Request, res: Response): Promise<void> =>
             const stream = cloudinary.uploader.upload_stream(
               {
                 folder: "kathak_courses",
-                resource_type: isPdf ? "image" : "auto",
-                format: isPdf ? "pdf" : undefined,
+                // A study-material PDF is a document, not an image. Storing it
+                // as an image produces an /image/upload URL that Cloudinary
+                // cannot reliably serve as a browser-readable PDF in production.
+                resource_type: isPdf ? "raw" : "auto",
               },
               (error, result) => {
                 if (error) {

@@ -5,6 +5,7 @@ import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 import {
   getAllContentAdmin,
   getStudentContent,
+  downloadStudentContent,
   createContentResource,
   deleteContentResource
 } from "./content.controller";
@@ -19,5 +20,6 @@ router.delete("/:id", authenticate, requireRole(Role.ADMIN, Role.TEACHER), delet
 
 // Student routes
 router.get("/student", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, getStudentContent);
+router.get("/student/:id/download", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, downloadStudentContent);
 
 export default router;

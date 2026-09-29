@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import axios from "axios";
 import { prisma } from "../../lib/prisma";
 import { createNotifications } from "../notification/notification.controller";
 
@@ -57,6 +58,74 @@ export const getStudentContent = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("Error fetching student content:", error);
     res.status(500).json({ status: "error", message: "Failed to fetch content" });
+  }
+};
+
+// Download one resource only after applying the same global, batch, and course
+// visibility rules that the student content library uses.
+export const downloadStudentContent = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const studentId = req.user!.id;
+    const resourceId = String(req.params.id);
+    const [resource, batchStudents, enrollments] = await Promise.all([
+      prisma.contentResource.findUnique({ where: { id: resourceId } }),
+      prisma.batchStudent.findMany({
+        where: { studentId },
+        select: { batchId: true, batch: { select: { courseId: true } } },
+      }),
+      prisma.enrollment.findMany({
+        where: { userId: studentId, active: true },
+        select: { courseId: true },
+      }),
+    ]);
+
+    if (!resource) {
+      res.status(404).json({ status: "error", message: "Study material not found." });
+      return;
+    }
+
+    const batchIds = new Set(batchStudents.map((membership) => membership.batchId));
+    const courseIds = new Set([
+      ...enrollments.map((enrollment) => enrollment.courseId),
+      ...batchStudents.map((membership) => membership.batch.courseId).filter(Boolean),
+    ]);
+    const canAccess = resource.isGlobal ||
+      (resource.batchId !== null && batchIds.has(resource.batchId)) ||
+      (resource.courseId !== null && courseIds.has(resource.courseId));
+
+    if (!canAccess) {
+      res.status(403).json({ status: "error", message: "You do not have access to download this study material." });
+      return;
+    }
+
+    let source: URL;
+    try {
+      source = new URL(resource.fileUrl);
+      if (source.protocol !== "https:" && source.protocol !== "http:") throw new Error("Invalid protocol");
+    } catch {
+      res.status(422).json({ status: "error", message: "The study material file URL is invalid." });
+      return;
+    }
+
+    const file = await axios.get<ArrayBuffer>(source.toString(), {
+      responseType: "arraybuffer",
+      timeout: 30_000,
+      maxContentLength: 100 * 1024 * 1024,
+      maxBodyLength: 100 * 1024 * 1024,
+    });
+    const extension = /\.([a-z0-9]{1,8})(?:$|\?)/i.exec(source.pathname)?.[1] || "file";
+    const safeTitle = resource.title.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "study-material";
+    const contentType = String(file.headers["content-type"] || "application/octet-stream").split(";")[0];
+
+    res.status(200).set({
+      "Content-Type": contentType,
+      "Content-Disposition": `attachment; filename="${safeTitle}.${extension}"`,
+      "Content-Length": String(file.data.byteLength),
+      "Cache-Control": "private, no-store",
+    }).send(Buffer.from(file.data));
+  } catch (error) {
+    console.error("Content download error:", error);
+    res.status(502).json({ status: "error", message: "Could not download this study material. Please try again." });
   }
 };
 

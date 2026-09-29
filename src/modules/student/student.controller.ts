@@ -929,6 +929,10 @@ export const getStudentFinance = async (
             description:
               `${courseTitle} - Registration Fee`,
 
+            paymentMethod:
+              p.gateway ||
+              "Online",
+
             amount:
               `₹${Number(
                 p.amount || 0

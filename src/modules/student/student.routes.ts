@@ -4,6 +4,7 @@ import { authenticate, requireRole } from "../../middleware/auth.middleware";
 import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 import { logoutUser } from "../auth/auth.controller";
 import { studentCertificateRouter } from "../certificate/certificate.routes";
+import { createSupportTicket } from "../support/support.controller";
 import {
   enrollStudent,
   enrollStudentBypass,
@@ -82,6 +83,10 @@ router.get("/finance", ...studentOnly, getStudentFinance);
 router.get("/finance/payments/:paymentId/receipt", ...studentOnly, getStudentPaymentReceipt);
 router.get("/assignments", ...studentOnly, getStudentAssignments);
 router.post("/assignments/submit", ...studentOnly, requireActiveStudentAccess, submitStudentAssignment);
+
+// Mobile and web student clients can submit a support query without supplying
+// a student ID; the authenticated token determines the ticket owner.
+router.post("/support/query", ...studentOnly, createSupportTicket);
 
 // Legacy exam routes removed to prevent shadowing studentExamRoutes in app.ts
 
