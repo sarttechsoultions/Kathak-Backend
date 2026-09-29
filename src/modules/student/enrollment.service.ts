@@ -2025,7 +2025,7 @@ export const sendEnrollmentWelcomeEmail =
         }
       }
 
-      return await sendEmail({
+      const studentEmailSent = await sendEmail({
         to: user.email,
 
         subject: invoice
@@ -2097,6 +2097,27 @@ export const sendEnrollmentWelcomeEmail =
 
         attachments,
       });
+
+      // Keep the academy informed without making a successful enrollment
+      // depend on a second, operational email being delivered.
+      void sendEmail({
+        to: "kathakbyharshita@gmail.com",
+        subject: `New student enrollment: ${user.fullName}`,
+        html: `
+          <h2>New student enrollment</h2>
+          <p>A student has successfully enrolled and paid.</p>
+          <p><strong>Name:</strong> ${user.fullName}</p>
+          <p><strong>Email:</strong> ${user.email}</p>
+          <p><strong>Phone:</strong> ${user.phone || "Not provided"}</p>
+          <p><strong>Course:</strong> ${invoice?.courseTitle || "Kathak Course Enrollment"}</p>
+          <p><strong>Batch:</strong> ${invoice?.batchName || "To be assigned"}</p>
+          <p><strong>Amount:</strong> ${invoice ? `${invoice.currency} ${invoice.amount}` : "Not available"}</p>
+        `,
+      }).catch((adminEmailError) => {
+        console.error(`[ENROLLMENT_ADMIN_EMAIL_FAILURE] Failed to notify the academy about ${user.email}:`, adminEmailError);
+      });
+
+      return studentEmailSent;
     } catch (emailErr) {
       console.error(
         `[WELCOME_EMAIL_FAILURE] Failed to send registration welcome email to ${user.email}:`,

@@ -128,6 +128,7 @@ function handleError(res: Response, error: unknown, fallback: string) {
 async function sendBookingEmail(booking: {
   fullName: string;
   email: string;
+  phone: string;
   type: DemoClassType;
   course: string;
   classMode: string;
@@ -163,7 +164,7 @@ async function sendBookingEmail(booking: {
         })}${booking.preferredTime ? ` at ${booking.preferredTime}` : ""}`
       : "to be confirmed";
 
-  await sendEmail({
+  const studentEmailSent = await sendEmail({
     to: booking.email,
     subject: isGroup ? "Group demo class booked" : "One-to-one demo class request received",
     html: `
@@ -179,6 +180,29 @@ async function sendBookingEmail(booking: {
       <p><strong>Class-link update:</strong> You will receive a separate email with your class link within 24 hours.</p>
     `,
   });
+
+  // An academy notification is sent for confirmed free demos and for paid
+  // demos after payment confirmation. It is deliberately non-blocking for
+  // the student's booking response.
+  void sendEmail({
+    to: "kathakbyharshita@gmail.com",
+    subject: `New ${isGroup ? "group" : "one-to-one"} demo booking: ${booking.fullName}`,
+    html: `
+      <h2>New demo booking</h2>
+      <p><strong>Name:</strong> ${booking.fullName}</p>
+      <p><strong>Email:</strong> ${booking.email}</p>
+      <p><strong>Phone:</strong> ${booking.phone}</p>
+      <p><strong>Type:</strong> ${isGroup ? "Group" : "One-to-One"}</p>
+      <p><strong>Course:</strong> ${booking.course}</p>
+      <p><strong>Class mode:</strong> ${booking.classMode}</p>
+      <p><strong>When:</strong> ${when}</p>
+      <p><strong>Payment:</strong> ${isPaid ? `${amountLabel} paid` : "Free demo"}</p>
+    `,
+  }).catch((adminEmailError) => {
+    console.error(`[DEMO_ADMIN_EMAIL_FAILURE] Failed to notify the academy about ${booking.email}:`, adminEmailError);
+  });
+
+  return studentEmailSent;
 }
 
 function bookingInclude() {
@@ -352,6 +376,7 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
         void sendBookingEmail({
           fullName: booking.fullName,
           email: booking.email,
+          phone: booking.phone,
           type: booking.type,
           course: booking.course,
           classMode: booking.classMode,
@@ -525,6 +550,7 @@ export const createPublicDemoBooking = async (req: Request, res: Response): Prom
       void sendBookingEmail({
         fullName: booking.fullName,
         email: booking.email,
+        phone: booking.phone,
         type: booking.type,
         course: booking.course,
         classMode: booking.classMode,
@@ -643,6 +669,7 @@ async function markDemoPaid(
   void sendBookingEmail({
     fullName: updated.fullName,
     email: updated.email,
+    phone: updated.phone,
     type: updated.type,
     course: updated.course,
     classMode: updated.classMode,
