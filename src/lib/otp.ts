@@ -80,7 +80,7 @@ export const sendEnrollmentOtp = async (params: {
 
   if (channel === "EMAIL") {
     const isReset = params.purpose === "PASSWORD_RESET";
-    const subject = isReset ? "Kathak Academy Password Reset OTP" : "Kathak Academy Email Verification OTP";
+    const subject = isReset ? "Kathak Academy Password Reset OTP" : "Kathak By Harshita Academy Email Verification OTP";
     const titleText = isReset ? "Reset your password" : "Verify your email";
     const actionText = isReset ? "Use this OTP to reset your student password:" : "Use this OTP to continue student enrollment:";
 
