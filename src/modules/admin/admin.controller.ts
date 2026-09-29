@@ -788,7 +788,7 @@
   export const assignStudentBatch = async (req: Request, res: Response): Promise<void> => {
     try {
       const id = req.params.id as string;
-      const { batchId } = req.body;
+      const { batchId, courseId } = req.body;
       const targetBatchId = String(batchId);
 
       if (!batchId) {
@@ -797,6 +797,16 @@
       }
 
       await prisma.$transaction(async (tx) => {
+        const student = await tx.user.findFirst({ where: { id, role: Role.STUDENT } });
+        if (!student) throw new Error("Student not found.");
+
+        const targetBatch = await tx.batch.findUnique({ where: { id: targetBatchId } });
+        if (!targetBatch) throw new Error("Selected batch was not found.");
+        if (!targetBatch.courseId) throw new Error("Selected batch is not linked to a course.");
+        if (courseId && String(courseId) !== targetBatch.courseId) {
+          throw new Error("Please select a batch from the selected course.");
+        }
+
         const oldMemberships = await tx.batchStudent.findMany({ where: { studentId: id } });
         for (const old of oldMemberships) {
           if (old.batchId !== targetBatchId) {
@@ -821,12 +831,27 @@
             data: { totalStudents: { increment: 1 } }
           });
         }
+
+        const activeEnrollment = await tx.enrollment.findFirst({
+          where: { userId: id, active: true },
+          orderBy: { createdAt: "desc" },
+        });
+        if (activeEnrollment) {
+          await tx.enrollment.update({
+            where: { id: activeEnrollment.id },
+            data: { courseId: targetBatch.courseId },
+          });
+        } else {
+          await tx.enrollment.create({
+            data: { userId: id, courseId: targetBatch.courseId, type: "GROUP" },
+          });
+        }
       });
 
-      res.json({ status: "success", message: "Batch assigned to student successfully." });
+      res.json({ status: "success", message: "Student course and batch updated successfully." });
     } catch (error) {
       console.error("Assign Student Batch Error:", error);
-      res.status(500).json({ status: "error", message: "Failed to assign batch." });
+      res.status(400).json({ status: "error", message: error instanceof Error ? error.message : "Failed to update the student's course and batch." });
     }
   };
 
@@ -4366,6 +4391,33 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
       allowExistingUser: true,
     });
 
+    // A new account must always receive a usable password. Existing students
+    // may be enrolled again without changing the password they already use.
+    // Without this check, an admin could complete a new enrollment with an
+    // empty hash and send a welcome email containing credentials that can
+    // never work.
+    const matchingAccount = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: validated.normalizedEmail },
+          { phone: validated.e164Phone },
+        ],
+      },
+      select: { id: true, role: true },
+    });
+
+    if (!matchingAccount && !validated.passwordHash) {
+      throw new EnrollmentError(
+        "A password of at least 6 characters is required for a new student account."
+      );
+    }
+
+    if (matchingAccount && matchingAccount.role !== Role.STUDENT) {
+      throw new EnrollmentError(
+        "This email or phone number is already linked to a non-student account."
+      );
+    }
+
     if (String(req.body.paymentMethod || "").trim().toUpperCase() !== "CASH") {
       res.status(400).json({
         status: "error",
@@ -4628,7 +4680,7 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
     }
 
     // =========================================================
-    // 8. CASH AMOUNT MUST MATCH EXACTLY
+    // 8. CASH AMOUNT / ADMIN DISCOUNT
     // =========================================================
     const amountReceived = Number(req.body.amountReceived);
 
@@ -4652,13 +4704,20 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
     const expectedAmountMinor = Math.round(amount * 100);
     const receivedAmountMinor = Math.round(amountReceived * 100);
 
-    if (expectedAmountMinor !== receivedAmountMinor) {
+    if (receivedAmountMinor > expectedAmountMinor) {
       res.status(400).json({
         status: "error",
-        message: `Amount received (${amountReceived}) does not match expected amount (${amount}).`,
+        message: `Amount received (${amountReceived}) cannot exceed the calculated amount (${amount}).`,
       });
       return;
     }
+
+    // A lower cash amount is an explicit admin discount. Persist the actual
+    // collected amount as the enrollment/payment amount and retain the
+    // original calculation in the pending payload for auditability.
+    const calculatedAmount = amount;
+    const adminDiscountAmount = Math.max(0, calculatedAmount - amountReceived);
+    amount = amountReceived;
 
     // =========================================================
     // 9. DURABLE IDEMPOTENCY FINGERPRINT
@@ -4762,6 +4821,8 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
 
               // Keep the original amount separately for audit.
               amountReceived,
+              calculatedAmount,
+              adminDiscountAmount,
             },
 
             batchId: resolvedBatchId,

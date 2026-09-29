@@ -358,14 +358,25 @@ export const generatePdfBuffer = async (html: string): Promise<Buffer> => {
       : undefined,
   ].filter((path): path is string => Boolean(path && fs.existsSync(path)));
 
+  const linuxChromePaths = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+  ].filter((path): path is string => Boolean(path && fs.existsSync(path)));
+
+  let execPath = undefined;
+  if (process.platform === "win32") {
+    execPath = windowsChromePaths[0];
+  } else if (process.platform === "linux") {
+    execPath = linuxChromePaths[0];
+  }
+
   const browser = await puppeteer.launch({
-    headless: true,
-    // Puppeteer's downloaded Chrome can fail to start on some Windows setups.
-    // Prefer an explicitly configured browser or the locally installed Chrome.
-    executablePath: process.platform === "win32" ? windowsChromePaths[0] : undefined,
-    // These flags are required by some Linux containers, but can prevent a
-    // normal Windows Chrome launch. Windows uses its default sandbox instead.
-    args: process.platform === "linux" ? ["--no-sandbox", "--disable-setuid-sandbox"] : [],
+    headless: "shell",
+    executablePath: execPath,
+    args: process.platform === "linux" ? ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] : [],
   });
 
   try {
