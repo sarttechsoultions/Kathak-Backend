@@ -35,7 +35,7 @@ export const buildKathakMasterEmail = (content: string): string => `
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f7f4f2; margin:0; padding:0; width:100%;">
       <tr><td align="center" style="padding:24px 12px;">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:640px; background:#ffffff; border:1px solid #eadde0; border-radius:16px; overflow:hidden;">
-          <tr><td style="background:#900C27; padding:26px 28px; text-align:center;">
+          <tr><td style="background:#F0F0F0FF; padding:26px 28px; text-align:center;">
             <img src="https://www.kathakbyharshita.com/logo.png" alt="Kathak by Harshita Academy" width="112" style="display:block; max-width:112px; height:auto; margin:0 auto 10px; border:0;" />
             <div style="color:#ffffff; font-size:22px; font-weight:700; line-height:1.25;">Kathak by Harshita Academy</div>
             <div style="color:#ffe8ed; font-size:12px; letter-spacing:.08em; margin-top:7px; text-transform:uppercase;">Preserving Tradition &bull; Inspiring Generations</div>

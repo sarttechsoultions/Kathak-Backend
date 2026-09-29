@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { Permission, Role } from "@prisma/client";
 import { authenticate, requirePermission, requireRole } from "../../middleware/auth.middleware";
-import { getStudentCertificates, issueCertificate, listCertificates, revokeCertificate, verifyCertificate } from "./certificate.controller";
+import { downloadStudentCertificate, getStudentCertificates, issueCertificate, listCertificates, revokeCertificate, verifyCertificate } from "./certificate.controller";
 
 export const publicCertificateRouter = Router();
 publicCertificateRouter.get("/:code", verifyCertificate);
@@ -15,3 +15,4 @@ adminCertificateRouter.post("/:id/revoke", revokeCertificate);
 export const studentCertificateRouter = Router();
 studentCertificateRouter.use(authenticate, requireRole(Role.STUDENT));
 studentCertificateRouter.get("/", getStudentCertificates);
+studentCertificateRouter.get("/:id/download", downloadStudentCertificate);
