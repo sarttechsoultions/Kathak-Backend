@@ -36,11 +36,15 @@ function describeActivity(req: Request, portal: "Student" | "Teacher"): string {
 export function notifyAdminOfPortalActivity(req: Request, res: Response, next: NextFunction): void {
   res.on("finish", () => {
     const user = req.user;
+    const activityPath = `${req.baseUrl}${req.path}`.replace(/\/+$/, "").toLowerCase();
     if (
       !user ||
       !MUTATING_METHODS.has(req.method) ||
       res.statusCode < 200 ||
       res.statusCode >= 300 ||
+      // New reschedule requests send a detailed, awaited academy email from
+      // the controller. Skip the generic background email to avoid duplicates.
+      (req.method === "POST" && activityPath === "/api/v1/reschedule") ||
       (user.role !== Role.STUDENT && user.role !== Role.TEACHER)
     ) {
       return;

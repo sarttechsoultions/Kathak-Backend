@@ -153,7 +153,7 @@
             scheduledStart: { gte: startOfDay, lte: endOfDay },
             status: { not: "CANCELLED" },
           },
-          select: { batchId: true },
+          select: { batchId: true, scheduledStart: true, status: true },
         }),
         prisma.attendance.findMany({
           where: {
@@ -165,8 +165,17 @@
         }),
       ]);
 
+      // A future class should not make the dashboard report students as
+      // "Not marked" before attendance can reasonably be taken.
+      const attendanceEligibleClasses = todayClasses.filter(
+        (liveClass) =>
+          liveClass.status === "LIVE" ||
+          liveClass.status === "COMPLETED" ||
+          liveClass.scheduledStart.getTime() <= Date.now()
+      );
+
       const relevantBatchIds = [...new Set([
-        ...todayClasses.map((liveClass) => liveClass.batchId),
+        ...attendanceEligibleClasses.map((liveClass) => liveClass.batchId),
         ...todayAttendanceRows.flatMap((record) => record.batchId ? [record.batchId] : []),
       ])];
 
@@ -248,30 +257,33 @@
       });
 
       // ==========================================
-      // 5. RECENT STUDENTS (With Today's Attendance)
+      // 5. RECENT STUDENTS (Latest unique course enrollments)
       // ==========================================
-      const recentStudentsRaw = await prisma.user.findMany({
-        where: { role: Role.STUDENT },
+      const recentEnrollments = await prisma.enrollment.findMany({
+        where: { user: { role: Role.STUDENT } },
         take: 5,
         orderBy: { createdAt: "desc" },
+        distinct: ["userId"],
         select: {
-          id: true,
-          fullName: true,
-          avatarUrl: true,
-          attendances: {
-            where: { date: { gte: startOfDay, lte: endOfDay } },
-            select: { status: true },
-            take: 1
-          }
+          createdAt: true,
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              avatarUrl: true,
+            },
+          },
+          course: { select: { title: true } },
         }
       });
 
-      const recentStudents = recentStudentsRaw.map(s => ({
-        id: s.id,
-        name: s.fullName,
-        avatar: s.avatarUrl,
-        // Default to "Present" visually if no attendance marked yet for new students
-        status: s.attendances.length > 0 ? s.attendances[0].status : "PRESENT"
+      const recentStudents = recentEnrollments.map((enrollment) => ({
+        id: enrollment.user.id,
+        name: enrollment.user.fullName,
+        avatar: enrollment.user.avatarUrl,
+        courseName: enrollment.course.title,
+        enrolledAt: enrollment.createdAt,
+        status: "ENROLLED",
       }));
 
       // ==========================================
@@ -2555,7 +2567,7 @@
         return;
       }
 
-      const batchCode = code || `KTH-${Date.now().toString().slice(-4).toUpperCase()}`;
+      const batchCode = code || `KBH-${Date.now().toString().slice(-4).toUpperCase()}`;
 
       const newBatch = await prisma.$transaction(async (tx) => {
         // 1. Fetch exact details to maintain data integrity

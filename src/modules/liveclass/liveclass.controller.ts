@@ -266,10 +266,15 @@ export const setLiveClassStatus = async (req: Request, res: Response) => {
 
 export const generateMonthLiveClasses = async (req: Request, res: Response) => {
   const { batchId, year, month, durationMinutes, titlePrefix, skipExisting = true } = req.body;
-  const monthsToGenerate = Math.min(
-    12,
-    Math.max(1, parseInt(String(req.body.months || 1), 10) || 1)
-  );
+  const requestedMonths = parseInt(String(req.body.months || 1), 10) || 1;
+  if (![1, 3, 12].includes(requestedMonths)) {
+    res.status(400).json({
+      status: "error",
+      message: "Schedule generation supports 1 month, 3 months, or 12 months.",
+    });
+    return;
+  }
+  const monthsToGenerate = requestedMonths;
 
   if (!batchId || !year || !month) {
     res.status(400).json({ status: "error", message: "Batch, year, and starting month are required." });
