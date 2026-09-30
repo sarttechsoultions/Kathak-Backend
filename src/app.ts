@@ -52,6 +52,7 @@ import {
 import { env } from "./config/env";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware";
 import { authenticate } from "./middleware/auth.middleware";
+import { notifyAdminOfPortalActivity } from "./middleware/activityEmail.middleware";
 import { publicFormRateLimiter } from "./middleware/rateLimit.middleware";
 import { createPublicInquiry } from "./modules/inquiries/inquiries.controller";
 
@@ -108,6 +109,7 @@ app.use(express.json({
   },
 }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(notifyAdminOfPortalActivity);
 
 const uploadsDir = path.join(__dirname, "../uploads");
 if (!fs.existsSync(uploadsDir)) {

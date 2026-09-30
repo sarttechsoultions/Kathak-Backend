@@ -1393,6 +1393,7 @@ if (!enrollment) {
 
   let assignedBatchId =
     payload.batchId;
+  let batchFeeStartDate: Date | null = null;
 
   if (
     enrollmentType === "ONE_TO_ONE"
@@ -1414,6 +1415,7 @@ if (!enrollment) {
         where: { id: assignedBatchId },
         select: {
           courseId: true,
+          schedule: true,
           status: true,
           isEnrollmentVisible: true,
           capacity: true,
@@ -1421,8 +1423,18 @@ if (!enrollment) {
         },
       });
 
-      if (!targetBatch || targetBatch.courseId !== payload.courseId || !targetBatch.isEnrollmentVisible || String(targetBatch.status).toUpperCase() !== "ACTIVE") {
+      const batchStatus = String(targetBatch?.status || "").toUpperCase();
+      if (!targetBatch || targetBatch.courseId !== payload.courseId || !targetBatch.isEnrollmentVisible || !["ACTIVE", "UPCOMING"].includes(batchStatus)) {
         throw new EnrollmentError("This batch is no longer open for enrollment.", 409);
+      }
+
+      // Batch schedules are stored as: days|time|startDate|endDate.
+      // If a student pays before the batch begins, charge coverage from the
+      // batch start month—not from the early payment date.
+      const scheduledStart = targetBatch.schedule?.split("|")[2];
+      if (scheduledStart && /^\d{4}-\d{2}-\d{2}$/.test(scheduledStart)) {
+        const parsedStart = new Date(`${scheduledStart}T00:00:00`);
+        if (!Number.isNaN(parsedStart.getTime())) batchFeeStartDate = parsedStart;
       }
 
       if (targetBatch.capacity !== null && targetBatch._count.students >= targetBatch.capacity) {
@@ -1478,6 +1490,9 @@ if (!enrollment) {
   let coverageStartDate = paymentDate;
   if (existingNextDueDate && existingNextDueDate > paymentDate) {
     coverageStartDate = existingNextDueDate;
+  }
+  if (batchFeeStartDate && batchFeeStartDate > coverageStartDate) {
+    coverageStartDate = batchFeeStartDate;
   }
   
   const isBulk = monthsPaid > 1;

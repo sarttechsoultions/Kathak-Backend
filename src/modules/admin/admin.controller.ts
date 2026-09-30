@@ -28,6 +28,27 @@
   import { loadPlatformPayments, summarizePlatformPayments, isSuccessfulStatus } from "../../lib/platform-payments";
   import { getTeacherBatchIds } from "../../lib/batchHelpers";
 
+  const sendTeacherAssignmentEmail = async (teacherId: string, batch: { name: string; courseName: string; schedule?: string | null }) => {
+    const teacher = await prisma.user.findFirst({
+      where: { id: teacherId, role: Role.TEACHER },
+      select: { fullName: true, email: true },
+    });
+    if (!teacher) return;
+
+    await sendEmail({
+      to: teacher.email,
+      subject: `New teaching assignment: ${batch.name}`,
+      html: `
+        <h2 style="margin:0 0 12px; color:#900C27;">A batch has been assigned to you</h2>
+        <p>Namaste ${teacher.fullName},</p>
+        <p>You have been assigned to teach the following batch:</p>
+        <p><strong>Batch:</strong> ${batch.name}<br />
+        <strong>Course:</strong> ${batch.courseName}${batch.schedule ? `<br /><strong>Schedule:</strong> ${batch.schedule}` : ""}</p>
+        <p>Please sign in to the teacher portal for the latest class and student details.</p>
+      `,
+    });
+  };
+
 
   const mapCategoryToEnum = (cat?: string): CourseCategory => {
     if (!cat) return CourseCategory.BASIC;
@@ -1097,7 +1118,21 @@
         country, 
         assignedBatches = [],
         bankAccounts = [],
-        documents = []
+        documents = [],
+        avatarUrl,
+        address,
+        dob,
+        gender,
+        joiningDate,
+        emergencyContact,
+        maritalStatus,
+        nationality,
+        languagesKnown,
+        idProofType,
+        idProofUrl,
+        designation,
+        primaryExpertise,
+        salaryRate,
         // permissions destructure hataya
       } = req.body;
 
@@ -1136,8 +1171,24 @@
           passwordHash,
           role: Role.TEACHER,
           country: country || "India",
+          avatarUrl: avatarUrl || null,
+          address: address || null,
+          dob: dob ? new Date(dob) : null,
+          gender: gender || null,
+          joiningDate: joiningDate ? new Date(joiningDate) : null,
+          emergencyContact: Array.isArray(emergencyContact)
+            ? (emergencyContact[0] ? String(emergencyContact[0]) : null)
+            : emergencyContact || null,
+          maritalStatus: maritalStatus || null,
+          nationality: nationality || "Indian",
+          languagesKnown: languagesKnown || null,
           bankAccounts: Array.isArray(bankAccounts) ? bankAccounts : [],
-          documents: Array.isArray(documents) ? documents : []
+          documents: Array.isArray(documents) ? documents : [],
+          idProofType: idProofType || null,
+          idProofUrl: idProofUrl || null,
+          designation: designation || null,
+          primaryExpertise: primaryExpertise || null,
+          salaryRate: salaryRate || null,
           // permissions create block hataya
         }
       });
@@ -2548,6 +2599,10 @@
         return created;
       });
 
+      if (newBatch.teacherId) {
+        await sendTeacherAssignmentEmail(newBatch.teacherId, newBatch);
+      }
+
       res.status(201).json({ status: "success", message: "Batch created successfully.", data: newBatch });
     } catch (error) {
       console.error("Create Batch Error:", error);
@@ -2625,6 +2680,10 @@
           }
         });
       });
+
+      if (updated.teacherId && updated.teacherId !== existingBatch.teacherId) {
+        await sendTeacherAssignmentEmail(updated.teacherId, updated);
+      }
 
       res.json({ status: "success", message: "Batch updated successfully.", data: updated });
     } catch (error) {

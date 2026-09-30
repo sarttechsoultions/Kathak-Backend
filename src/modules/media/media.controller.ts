@@ -3,7 +3,7 @@ import axios from "axios";
 import fs from "fs";
 import path from "path";
 import { env } from "../../config/env";
-import { resolveCloudinaryDownloadCandidates } from "../../lib/cloudinaryUrl";
+import { parseCloudinaryUrl, resolveCloudinaryDownloadCandidates } from "../../lib/cloudinaryUrl";
 
 function isAllowedMediaUrl(url: string): boolean {
   try {
@@ -39,7 +39,7 @@ function resolveLocalUploadPath(url: string): string | null {
   }
 }
 
-async function streamRemotePdf(fetchUrl: string, res: Response): Promise<void> {
+async function streamRemotePdf(fetchUrl: string, res: Response, forcePdf = false): Promise<void> {
   const response = await axios.get(fetchUrl, {
     responseType: "stream",
     timeout: 45000,
@@ -53,7 +53,9 @@ async function streamRemotePdf(fetchUrl: string, res: Response): Promise<void> {
       : Array.isArray(rawContentType)
         ? rawContentType[0] || "application/pdf"
         : "application/pdf";
-  res.setHeader("Content-Type", contentType.includes("pdf") ? contentType : "application/pdf");
+  // Cloudinary raw PDF delivery often reports application/octet-stream.
+  // Send the known PDF type so browsers render it inline instead of downloading it.
+  res.setHeader("Content-Type", forcePdf ? "application/pdf" : contentType);
   res.setHeader("Content-Disposition", "inline");
   res.setHeader("Cache-Control", "private, max-age=300");
 
@@ -86,6 +88,7 @@ export const previewMediaResource = async (req: Request, res: Response): Promise
       return;
     }
 
+    const cloudinaryAsset = parseCloudinaryUrl(sourceUrl);
     const candidates = sourceUrl.includes("res.cloudinary.com")
       ? await resolveCloudinaryDownloadCandidates(sourceUrl)
       : [sourceUrl];
@@ -93,7 +96,7 @@ export const previewMediaResource = async (req: Request, res: Response): Promise
     for (const candidate of candidates) {
       if (!isAllowedMediaUrl(candidate)) continue;
       try {
-        await streamRemotePdf(candidate, res);
+        await streamRemotePdf(candidate, res, cloudinaryAsset?.format === "pdf" || sourceUrl.toLowerCase().includes(".pdf"));
         return;
       } catch (error) {
         if (res.headersSent) return;
