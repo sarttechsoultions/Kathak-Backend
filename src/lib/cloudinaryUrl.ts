@@ -94,6 +94,20 @@ export async function resolveCloudinaryDownloadCandidates(sourceUrl: string): Pr
   const signedUrls = buildSignedCloudinaryUrls(parsed, sourceUrl);
   const resourceType = parsed.resourceType as "image" | "raw" | "video";
 
+  // Cloudinary may block direct PDF delivery (401) even though the asset exists.
+  // Generate one signed download URL for the *actual* resource type only.  Do
+  // not guess image/video/raw types here: guessed types create noisy 404s.
+  try {
+    apiUrls.push(cloudinary.utils.private_download_url(parsed.publicId, parsed.format || "pdf", {
+      resource_type: resourceType,
+      type: "upload",
+      attachment: false,
+      expires_at: Math.floor(Date.now() / 1000) + 300,
+    }));
+  } catch (error) {
+    console.warn("Could not create Cloudinary signed download URL:", error instanceof Error ? error.message : error);
+  }
+
   try {
     const info = (await cloudinary.api.resource(parsed.publicId, { resource_type: resourceType })) as {
         public_id: string;

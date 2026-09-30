@@ -2,6 +2,75 @@ import { Request, Response } from "express";
 import axios from "axios";
 import { prisma } from "../../lib/prisma";
 import { createNotifications } from "../notification/notification.controller";
+import { parseCloudinaryUrl, resolveCloudinaryDownloadCandidates } from "../../lib/cloudinaryUrl";
+
+async function canAccessContentResource(userId: string, role: string, resource: { isGlobal: boolean; batchId: string | null; courseId: string | null; uploadedById: string }): Promise<boolean> {
+  if (role === "ADMIN") return true;
+  if (role === "TEACHER") {
+    if (resource.uploadedById === userId) return true;
+    return Boolean(await prisma.batch.findFirst({
+      where: { teacherId: userId, OR: [{ id: resource.batchId || "" }, { courseId: resource.courseId || "" }] },
+      select: { id: true },
+    }));
+  }
+
+  const [memberships, enrollments] = await Promise.all([
+    prisma.batchStudent.findMany({ where: { studentId: userId }, select: { batchId: true, batch: { select: { courseId: true } } } }),
+    prisma.enrollment.findMany({ where: { userId, active: true }, select: { courseId: true } }),
+  ]);
+  const batchIds = new Set(memberships.map((membership) => membership.batchId));
+  const courseIds = new Set([...enrollments.map((enrollment) => enrollment.courseId), ...memberships.map((membership) => membership.batch.courseId).filter(Boolean)]);
+  return resource.isGlobal || (resource.batchId !== null && batchIds.has(resource.batchId)) || (resource.courseId !== null && courseIds.has(resource.courseId));
+}
+
+/** Streams a resource through our authenticated API so protected Cloudinary PDFs
+ * never need to be opened with a public Cloudinary URL. */
+export const serveContentResource = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const resource = await prisma.contentResource.findUnique({ where: { id: String(req.params.id) } });
+    if (!resource) {
+      res.status(404).json({ status: "error", message: "Study material not found." });
+      return;
+    }
+    if (!await canAccessContentResource(req.user!.id, req.user!.role, resource)) {
+      res.status(403).json({ status: "error", message: "You do not have access to this study material." });
+      return;
+    }
+
+    const isDownload = req.path.endsWith("/download");
+    const isPdf = resource.type.toUpperCase() === "PDF" || /\.pdf(?:$|\?)/i.test(resource.fileUrl);
+    const candidates = parseCloudinaryUrl(resource.fileUrl)
+      ? await resolveCloudinaryDownloadCandidates(resource.fileUrl)
+      : [resource.fileUrl];
+    let file: Awaited<ReturnType<typeof axios.get<ArrayBuffer>>> | null = null;
+    for (const candidate of candidates) {
+      try {
+        file = await axios.get<ArrayBuffer>(candidate, {
+          responseType: "arraybuffer", timeout: 45_000, maxContentLength: 100 * 1024 * 1024, maxBodyLength: 100 * 1024 * 1024,
+          validateStatus: (status) => status >= 200 && status < 400,
+        });
+        break;
+      } catch {
+        // Try the next correctly signed Cloudinary candidate.
+      }
+    }
+    if (!file) {
+      res.status(502).json({ status: "error", message: "Could not load this study material. Please try again." });
+      return;
+    }
+    const safeTitle = resource.title.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "study-material";
+    const extension = isPdf ? "pdf" : /\.([a-z0-9]{1,8})(?:$|\?)/i.exec(resource.fileUrl)?.[1] || "file";
+    const responseType = String(file.headers["content-type"] || "application/octet-stream").split(";")[0];
+    res.status(200).set({
+      "Content-Type": isPdf ? "application/pdf" : responseType,
+      "Content-Disposition": `${isDownload ? "attachment" : "inline"}; filename="${safeTitle}.${extension}"`,
+      "Content-Length": String(file.data.byteLength), "Cache-Control": "private, no-store",
+    }).send(Buffer.from(file.data));
+  } catch (error) {
+    console.error("Content preview error:", error);
+    if (!res.headersSent) res.status(502).json({ status: "error", message: "Could not load this study material. Please try again." });
+  }
+};
 
 // Get all content for Admin
 export const getAllContentAdmin = async (req: Request, res: Response) => {
