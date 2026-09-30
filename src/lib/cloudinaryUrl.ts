@@ -90,30 +90,12 @@ export async function resolveCloudinaryDownloadCandidates(sourceUrl: string): Pr
   const parsed = parseCloudinaryUrl(sourceUrl);
   if (!parsed) return [sourceUrl];
 
-  const privateUrls: string[] = [];
   const apiUrls: string[] = [];
   const signedUrls = buildSignedCloudinaryUrls(parsed, sourceUrl);
-  const resourceTypes: Array<"image" | "raw" | "video"> = ["image", "raw", "video"];
-  const expiresAt = Math.round(Date.now() / 1000) + 3600;
+  const resourceType = parsed.resourceType as "image" | "raw" | "video";
 
-  for (const resourceType of resourceTypes) {
-    try {
-      privateUrls.push(
-        cloudinary.utils.private_download_url(parsed.publicId, parsed.format || "pdf", {
-          resource_type: resourceType,
-          type: "upload",
-          expires_at: expiresAt,
-          attachment: false,
-        })
-      );
-    } catch {
-      // Ignore invalid combinations for private download URLs.
-    }
-  }
-
-  for (const resourceType of resourceTypes) {
-    try {
-      const info = (await cloudinary.api.resource(parsed.publicId, { resource_type: resourceType })) as {
+  try {
+    const info = (await cloudinary.api.resource(parsed.publicId, { resource_type: resourceType })) as {
         public_id: string;
         resource_type: string;
         type?: string;
@@ -136,17 +118,16 @@ export async function resolveCloudinaryDownloadCandidates(sourceUrl: string): Pr
       if (info.secure_url) {
         apiUrls.push(info.secure_url);
       }
-    } catch (error: unknown) {
-      const httpCode = (error as { http_code?: number })?.http_code;
-      if (httpCode !== 404) {
-        console.warn(
-          "Cloudinary resource lookup failed:",
-          resourceType,
-          error instanceof Error ? error.message : error
-        );
-      }
+  } catch (error: unknown) {
+    const httpCode = (error as { http_code?: number })?.http_code;
+    if (httpCode !== 404) {
+      console.warn(
+        "Cloudinary resource lookup failed:",
+        resourceType,
+        error instanceof Error ? error.message : error
+      );
     }
   }
 
-  return [...new Set([...privateUrls, ...apiUrls, ...signedUrls, sourceUrl])];
+  return [...new Set([...apiUrls, ...signedUrls, sourceUrl])];
 }

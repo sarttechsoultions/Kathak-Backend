@@ -11,7 +11,8 @@
     "prisma:generate": "npx prisma generate",
     "prisma:push": "npx prisma db push",
     "prisma:studio": "npx prisma studio",
-    "prisma:seed": "npx ts-node --transpile-only prisma/seed.ts"
+    "prisma:seed": "npx ts-node --transpile-only prisma/seed.ts",
+    "billing:align-batch-start": "npx ts-node --transpile-only scripts/align-early-enrollment-dues.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
