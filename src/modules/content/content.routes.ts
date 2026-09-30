@@ -6,6 +6,7 @@ import {
   getAllContentAdmin,
   getStudentContent,
   downloadStudentContent,
+  serveContentResource,
   createContentResource,
   deleteContentResource
 } from "./content.controller";
@@ -16,6 +17,8 @@ const router = Router();
 router.get("/admin", authenticate, requireRole(Role.ADMIN), getAllContentAdmin);
 router.get("/teacher", authenticate, requireRole(Role.TEACHER), getAllContentAdmin);
 router.post("/", authenticate, requireRole(Role.ADMIN, Role.TEACHER), createContentResource);
+router.get("/:id/preview", authenticate, requireRole(Role.ADMIN, Role.TEACHER, Role.STUDENT), requireActiveStudentAccess, serveContentResource);
+router.get("/:id/download", authenticate, requireRole(Role.ADMIN, Role.TEACHER, Role.STUDENT), requireActiveStudentAccess, serveContentResource);
 router.delete("/:id", authenticate, requireRole(Role.ADMIN, Role.TEACHER), deleteContentResource);
 
 // Student routes

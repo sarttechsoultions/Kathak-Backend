@@ -1591,19 +1591,29 @@ export const getStudentDashboard = async (
       completedAssignmentIds.has(assignment.id)
     ).length;
 
-    const progressPercent =
-      totalLessons > 0
-        ? Math.min(
-            100,
-            Math.round(
-              (completedSubmissions /
-                totalLessons) *
-                100
-            )
-          )
-        : completedSubmissions > 0
-          ? 100
-          : 0;
+    // Course progress follows the scheduled course duration, not assignment
+    // count. Submitting work before a future batch begins must not show 100%.
+    const scheduleDates = currentBatch?.schedule?.split("|") || [];
+    const scheduledStart = scheduleDates[2] ? new Date(`${scheduleDates[2]}T00:00:00`) : null;
+    const scheduledEnd = scheduleDates[3] ? new Date(`${scheduleDates[3]}T23:59:59`) : null;
+    const courseDurationMonths = Number(primaryCourse?.courseDurationMonths || 0);
+    const durationStart = scheduledStart && !Number.isNaN(scheduledStart.getTime()) ? scheduledStart : null;
+    let durationEnd = scheduledEnd && !Number.isNaN(scheduledEnd.getTime()) ? scheduledEnd : null;
+
+    if (durationStart && courseDurationMonths > 0) {
+      durationEnd = new Date(durationStart);
+      durationEnd.setMonth(durationEnd.getMonth() + courseDurationMonths);
+    }
+
+    const nowForProgress = new Date();
+    const progressPercent = durationStart && durationEnd && durationEnd > durationStart
+      ? Math.max(0, Math.min(100, Math.round(((nowForProgress.getTime() - durationStart.getTime()) / (durationEnd.getTime() - durationStart.getTime())) * 100)))
+      : 0;
+    const durationProgressLabel = courseDurationMonths > 0
+      ? `${courseDurationMonths}-month course`
+      : durationStart && durationEnd
+        ? "Course duration"
+        : "Course schedule pending";
 
     // ============================================================
     // 5. CURRENT BATCH IDS
@@ -1734,6 +1744,7 @@ export const getStudentDashboard = async (
           name: primaryCourse.title || "Enrolled Course",
           batchName: currentBatch.name || currentBatch.courseName || currentBatch.code || "Batch not assigned",
           percent: progressPercent,
+          durationProgressLabel,
         }]
       : [];
 
@@ -1932,6 +1943,7 @@ export const getStudentDashboard = async (
 
             progressPercent:
               progressPercent,
+            durationProgressLabel,
           }
         : null,
 
