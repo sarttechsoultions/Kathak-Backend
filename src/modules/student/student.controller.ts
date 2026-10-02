@@ -69,6 +69,60 @@ const normalizeForLookup = (input: unknown): string[] => {
   return Array.from(candidates);
 };
 
+/**
+ * Registers the current student's mobile device for Firebase push notifications.
+ * The token is intentionally associated with the authenticated user rather than
+ * accepting a student ID from the request body.
+ */
+export const registerStudentDeviceToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const fcmToken = typeof req.body?.fcmToken === "string" ? req.body.fcmToken.trim() : "";
+    const platform = typeof req.body?.platform === "string" ? req.body.platform.trim().toLowerCase() : "";
+
+    if (!fcmToken) {
+      res.status(400).json({ status: "error", message: "FCM token is required." });
+      return;
+    }
+
+    if (fcmToken.length > 4096) {
+      res.status(400).json({ status: "error", message: "FCM token is invalid." });
+      return;
+    }
+
+    if (!['android', 'ios'].includes(platform)) {
+      res.status(400).json({ status: "error", message: "Platform must be android or ios." });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: { fcmTokens: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ status: "error", message: "Student not found." });
+      return;
+    }
+
+    const tokenAlreadyRegistered = user.fcmTokens.includes(fcmToken);
+    if (!tokenAlreadyRegistered) {
+      await prisma.user.update({
+        where: { id: req.user!.id },
+        data: { fcmTokens: { push: fcmToken } },
+      });
+    }
+
+    res.status(200).json({
+      status: "success",
+      message: "Device registered for push notifications.",
+      data: { platform, tokenRegistered: true, tokenAlreadyRegistered },
+    });
+  } catch (error) {
+    console.error("Error registering student FCM token:", error);
+    res.status(500).json({ status: "error", message: "Failed to register device for push notifications." });
+  }
+};
+
 export const enrollStudent = async (req: Request, res: Response): Promise<void> => {
   try {
     const {

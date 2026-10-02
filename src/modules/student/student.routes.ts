@@ -31,6 +31,7 @@ import {
   getStudentProgress,
   initiateUpgrade,
   verifyUpgrade,
+  registerStudentDeviceToken,
 } from "./student.controller";
 import {
   getStudentSettings,
@@ -60,6 +61,7 @@ const studentOnly = [authenticate, requireRole(Role.STUDENT)];
 router.use("/certificates", studentCertificateRouter);
 
 router.post("/logout", ...studentOnly, logoutUser);
+router.post("/device-token", ...studentOnly, registerStudentDeviceToken);
 
 router.post("/upgrade/initiate", ...studentOnly, initiateUpgrade);
 router.post("/upgrade/verify", ...studentOnly, verifyUpgrade);
