@@ -49,6 +49,7 @@ model User {
   primaryExpertise            String?
   salaryRate                  String?
   isActive                    Boolean                  @default(true)
+  canUploadStudyMaterial      Boolean                  @default(false)
   createdAt                   DateTime                 @default(now())
   updatedAt                   DateTime                 @updatedAt
   assignmentSubmissions       AssignmentSubmission[]

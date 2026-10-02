@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
 import axios from "axios";
+import fs from "fs";
+import path from "path";
 import { prisma } from "../../lib/prisma";
 import { createNotifications } from "../notification/notification.controller";
 import { parseCloudinaryUrl, resolveCloudinaryDownloadCandidates } from "../../lib/cloudinaryUrl";
@@ -39,6 +41,33 @@ export const serveContentResource = async (req: Request, res: Response): Promise
 
     const isDownload = req.path.endsWith("/download");
     const isPdf = resource.type.toUpperCase() === "PDF" || /\.pdf(?:$|\?)/i.test(resource.fileUrl);
+    const safeTitle = resource.title.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "study-material";
+    const extension = isPdf ? "pdf" : /\.([a-z0-9]{1,8})(?:$|\?)/i.exec(resource.fileUrl)?.[1] || "file";
+
+    // Development fallback uploads live in backend/uploads. Their URL can still
+    // contain PUBLIC_BACKEND_URL (for example the production hostname), which
+    // makes a local preview incorrectly try the remote server. If the matching
+    // local file exists, serve it directly through this authenticated endpoint.
+    try {
+      const pathname = new URL(resource.fileUrl).pathname;
+      if (pathname.startsWith("/uploads/")) {
+        const uploadsRoot = path.resolve(process.cwd(), "uploads");
+        const localFile = path.resolve(process.cwd(), `.${pathname}`);
+        if (localFile.startsWith(`${uploadsRoot}${path.sep}`) && fs.existsSync(localFile)) {
+          const data = fs.readFileSync(localFile);
+          const contentType = isPdf ? "application/pdf" : resource.type.toUpperCase() === "IMAGE" ? "image/*" : "application/octet-stream";
+          res.status(200).set({
+            "Content-Type": contentType,
+            "Content-Disposition": `${isDownload ? "attachment" : "inline"}; filename="${safeTitle}.${extension}"`,
+            "Content-Length": String(data.byteLength), "Cache-Control": "private, no-store",
+          }).send(data);
+          return;
+        }
+      }
+    } catch {
+      // Not a valid URL or not a local fallback upload; use the normal source below.
+    }
+
     const candidates = parseCloudinaryUrl(resource.fileUrl)
       ? await resolveCloudinaryDownloadCandidates(resource.fileUrl)
       : [resource.fileUrl];
@@ -58,8 +87,6 @@ export const serveContentResource = async (req: Request, res: Response): Promise
       res.status(502).json({ status: "error", message: "Could not load this study material. Please try again." });
       return;
     }
-    const safeTitle = resource.title.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "study-material";
-    const extension = isPdf ? "pdf" : /\.([a-z0-9]{1,8})(?:$|\?)/i.exec(resource.fileUrl)?.[1] || "file";
     const responseType = String(file.headers["content-type"] || "application/octet-stream").split(";")[0];
     res.status(200).set({
       "Content-Type": isPdf ? "application/pdf" : responseType,
@@ -77,13 +104,15 @@ export const getAllContentAdmin = async (req: Request, res: Response) => {
   try {
     const isTeacher = req.user?.role === "TEACHER";
     const teacherBatches = isTeacher
-      ? await prisma.batch.findMany({ where: { teacherId: req.user!.id }, select: { id: true } })
+      ? await prisma.batch.findMany({ where: { teacherId: req.user!.id }, select: { id: true, courseId: true } })
       : [];
     const batchIds = teacherBatches.map((batch) => batch.id);
+    const courseIds = [...new Set(teacherBatches.map((batch) => batch.courseId).filter(Boolean))] as string[];
     const content = await prisma.contentResource.findMany({
-      where: isTeacher ? { OR: [{ uploadedById: req.user!.id }, { batchId: { in: batchIds } }] } : undefined,
+      where: isTeacher ? { OR: [{ uploadedById: req.user!.id }, { batchId: { in: batchIds } }, { courseId: { in: courseIds } }] } : undefined,
       include: {
         batch: { select: { id: true, name: true } },
+        course: { select: { id: true, title: true } },
         uploadedBy: { select: { id: true, fullName: true } }
       },
       orderBy: { createdAt: "desc" }
@@ -213,6 +242,10 @@ export const createContentResource = async (req: Request, res: Response) => {
       return res.status(400).json({ status: "error", message: "Teachers must select one of their batches or courses." });
     }
     if (isTeacher) {
+      const teacher = await prisma.user.findUnique({ where: { id: uploaderId }, select: { canUploadStudyMaterial: true } });
+      if (!teacher?.canUploadStudyMaterial) {
+        return res.status(403).json({ status: "error", message: "Study-material uploads are locked. Please ask an administrator to enable this access." });
+      }
       const ownedBatch = await prisma.batch.findFirst({ where: { teacherId: uploaderId, OR: [{ id: String(batchId || "") }, { courseId: String(courseId || "") }] }, select: { id: true } });
       if (!ownedBatch) {
         return res.status(403).json({ status: "error", message: "You can upload material only for your own batches or courses." });

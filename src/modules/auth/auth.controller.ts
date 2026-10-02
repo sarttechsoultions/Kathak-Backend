@@ -94,6 +94,9 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
           countryCode: user.countryCode,
           role: user.role,
           avatarUrl: user.avatarUrl,
+          // Teacher portal uses this live profile value to enable/disable
+          // the Notes & Syllabus upload action after admin changes it.
+          canUploadStudyMaterial: user.canUploadStudyMaterial,
           permissions: permissionList,
           displayRole: roleDisplayName(user.role),
         },
@@ -170,6 +173,7 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
           phone: user.phone,
           role: user.role,
           avatarUrl: user.avatarUrl,
+          canUploadStudyMaterial: user.canUploadStudyMaterial,
           permissions: permissionList,
         },
       },

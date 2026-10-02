@@ -1051,6 +1051,7 @@
           avatar: teacher.avatarUrl,
           country: teacher.country,
           isActive: teacher.isActive,
+          canUploadStudyMaterial: teacher.canUploadStudyMaterial,
           status: teacher.isActive ? "Active" : "Disabled",
           role: teacher.role,
           expertise: "Kathak Instructor",
@@ -1275,6 +1276,7 @@
         phone,
         country,
         isActive,
+        canUploadStudyMaterial,
         password,
         assignedBatches = [],
         avatarUrl,
@@ -1321,6 +1323,7 @@
           phone: phone ?? undefined,
           country: country ?? undefined,
           isActive: typeof isActive === "boolean" ? isActive : undefined,
+          canUploadStudyMaterial: typeof canUploadStudyMaterial === "boolean" ? canUploadStudyMaterial : undefined,
           avatarUrl: avatarUrl ?? undefined,
           address: address ?? undefined,
           gender: gender ?? undefined,
@@ -1374,6 +1377,40 @@
           }
         }
       });
+
+      // Teachers should always know when an administrator changes their account.
+      // This is intentionally after the transaction so a failed notification/email
+      // can never roll back a valid profile update.
+      await createNotification(
+        teacher.id,
+        "TEACHER_PROFILE_UPDATED",
+        "Your teacher profile was updated",
+        "An administrator updated your teacher account details. Please review your profile if needed.",
+        "/teacher/settings"
+      );
+
+      // Only notify by email when access changes from locked to enabled. Re-saving
+      // the profile while it is already enabled must not send duplicate emails.
+      if (canUploadStudyMaterial === true && !teacher.canUploadStudyMaterial) {
+        await createNotification(
+          teacher.id,
+          "STUDY_MATERIAL_UPLOAD_ENABLED",
+          "Study material uploads are enabled",
+          "You can now upload notes and syllabus for your assigned batches and courses.",
+          "/teacher/syllabus"
+        );
+        void sendEmail({
+          to: teacher.email,
+          subject: "Study material upload access enabled",
+          html: `
+            <h2 style="margin:0 0 12px; color:#900C27;">Study material uploads are enabled</h2>
+            <p>Namaste ${teacher.fullName},</p>
+            <p>An administrator has enabled your access to upload notes and syllabus.</p>
+            <p>You can upload material only for the batches and courses assigned to you.</p>
+            <p>Please sign in to the teacher portal and open <strong>Notes &amp; Syllabus</strong> to get started.</p>
+          `,
+        }).catch((error) => console.error("Failed to send study-material access email:", error));
+      }
 
       res.json({
         status: "success",
