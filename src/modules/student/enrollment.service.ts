@@ -316,13 +316,6 @@ const createOneToOneBatch = async (
   const teacher =
     await findDefaultOneToOneTeacher(tx);
 
-  if (!teacher) {
-    throw new EnrollmentError(
-      "No teacher is available to assign this 1-to-1 batch. Please contact the academy.",
-      500
-    );
-  }
-
   const preferredDate =
     String(payload.preferredDate || "");
 
@@ -357,9 +350,11 @@ const createOneToOneBatch = async (
 
       courseName: course.title,
 
-      teacherId: teacher.id,
+      // A teacher can be assigned later from the admin panel. Do not make a
+      // successful payment depend on the default teacher account existing.
+      teacherId: teacher?.id ?? null,
 
-      teacherName: teacher.fullName,
+      teacherName: teacher?.fullName ?? "Unassigned",
 
       schedule:
         `${weekday}|${classTime}|${preferredDate}|`,
@@ -3049,13 +3044,6 @@ export async function completeEnrollmentUpgrade(
               tx
             );
 
-          if (!teacher) {
-            throw new EnrollmentError(
-              "No teacher is available to assign this 1-to-1 batch. Please contact the academy.",
-              500
-            );
-          }
-
           const weekday =
             weekdayFromIsoDate(
               pending.preferredDate
@@ -3090,11 +3078,13 @@ export async function completeEnrollmentUpgrade(
                 courseName:
                   targetCourse.title,
 
+                // Keep the upgrade completion independent of teacher
+                // availability, just like a new 1-to-1 enrollment.
                 teacherId:
-                  teacher.id,
+                  teacher?.id ?? null,
 
                 teacherName:
-                  teacher.fullName,
+                  teacher?.fullName ?? "Unassigned",
 
                 schedule:
                   `${weekday}|${pending.preferredTime}|${pending.preferredDate}|`,
