@@ -66,6 +66,8 @@ import {
   enrollStudentOnline,
   grantTemporaryAccessUnlock,
   revokeTemporaryAccessUnlock,
+  lockStudentAccess,
+  releaseStudentAccess,
   getStudentAccessDetails,
   renewStudentCash,
   renewStudentOnline,
@@ -110,6 +112,8 @@ router.post("/students/:id/batches", requirePermission(Permission.MANAGE_STUDENT
 router.delete("/students/:id/batches/:batchId", requirePermission(Permission.MANAGE_STUDENTS), removeStudentBatch);
 router.post("/students/:id/access-unlock", requirePermission(Permission.MANAGE_STUDENTS), grantTemporaryAccessUnlock);
 router.delete("/students/:id/access-unlock", requirePermission(Permission.MANAGE_STUDENTS), revokeTemporaryAccessUnlock);
+router.post("/students/:id/access-lock", requirePermission(Permission.MANAGE_STUDENTS), lockStudentAccess);
+router.delete("/students/:id/access-lock", requirePermission(Permission.MANAGE_STUDENTS), releaseStudentAccess);
 router.get("/students/:id/access-status", requirePermission(Permission.MANAGE_STUDENTS), getStudentAccessDetails);
 
 // 3. Teacher Management

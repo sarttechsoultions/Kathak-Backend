@@ -15,6 +15,7 @@ import {
   changeStudentPassword,
   studentLogin,
   getStudentFinance,
+  initiateStudentRenewal,
   getStudentPaymentReceipt,
   getStudentAssignments,
   submitStudentAssignment,
@@ -58,10 +59,20 @@ router.get("/public/courses", getPublicCourses);
 // Protected student routes
 const studentOnly = [authenticate, requireRole(Role.STUDENT)];
 
-router.use("/certificates", studentCertificateRouter);
-
 router.post("/logout", ...studentOnly, logoutUser);
 router.post("/device-token", ...studentOnly, registerStudentDeviceToken);
+
+// Locked students may view the dashboard only to see the payment message, and
+// may use Fee Management to renew. Every other student portal route is blocked
+// at the API boundary, not merely hidden in the web interface.
+router.use(...studentOnly);
+router.use((req, res, next) => {
+  const isFinanceRoute = req.path === "/finance" || req.path === "/finance/renewal/initiate" || /^\/finance\/payments\/[^/]+\/receipt$/.test(req.path);
+  if (req.path === "/dashboard" || isFinanceRoute) return next();
+  return requireActiveStudentAccess(req, res, next);
+});
+
+router.use("/certificates", studentCertificateRouter);
 
 router.post("/upgrade/initiate", ...studentOnly, initiateUpgrade);
 router.post("/upgrade/verify", ...studentOnly, verifyUpgrade);
@@ -82,6 +93,7 @@ router.get("/settings", ...studentOnly, getStudentSettings);
 router.put("/settings/profile", ...studentOnly, updateStudentSettingsProfile);
 router.put("/settings/notifications", ...studentOnly, updateStudentSettingsNotifications);
 router.get("/finance", ...studentOnly, getStudentFinance);
+router.post("/finance/renewal/initiate", ...studentOnly, initiateStudentRenewal);
 router.get("/finance/payments/:paymentId/receipt", ...studentOnly, getStudentPaymentReceipt);
 router.get("/assignments", ...studentOnly, getStudentAssignments);
 router.post("/assignments/submit", ...studentOnly, requireActiveStudentAccess, submitStudentAssignment);

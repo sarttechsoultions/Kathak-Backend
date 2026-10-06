@@ -5303,6 +5303,61 @@ export const revokeTemporaryAccessUnlock = async (
   }
 };
 
+/** Immediately lock a student's learning portal until payment or an admin release. */
+export const lockStudentAccess = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const studentId = String(req.params.id);
+    const adminId = req.user!.id;
+    const reason = typeof req.body?.reason === "string" && req.body.reason.trim()
+      ? req.body.reason.trim().slice(0, 500)
+      : "Access locked by admin.";
+
+    const student = await prisma.user.findFirst({ where: { id: studentId, role: Role.STUDENT } });
+    if (!student) {
+      res.status(404).json({ error: "Student not found." });
+      return;
+    }
+
+    const now = new Date();
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: studentId },
+        data: { manualAccessLockedAt: now, manualAccessLockReason: reason, manualAccessLockedByAdminId: adminId },
+      }),
+      prisma.temporaryAccessUnlock.updateMany({
+        where: { studentId, revokedAt: null, unlockUntil: { gt: now } },
+        data: { revokedAt: now },
+      }),
+    ]);
+
+    res.json({ status: "success", message: "Student access locked.", data: await getStudentAccessState(studentId) });
+  } catch (error) {
+    console.error("Failed to lock student access:", error);
+    res.status(500).json({ error: "Unable to lock student access." });
+  }
+};
+
+/** Releases an admin-applied manual lock. */
+export const releaseStudentAccess = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const studentId = String(req.params.id);
+    const student = await prisma.user.findFirst({ where: { id: studentId, role: Role.STUDENT } });
+    if (!student) {
+      res.status(404).json({ error: "Student not found." });
+      return;
+    }
+
+    await prisma.user.update({
+      where: { id: studentId },
+      data: { manualAccessLockedAt: null, manualAccessLockReason: null, manualAccessLockedByAdminId: null },
+    });
+    res.json({ status: "success", message: "Student access released.", data: await getStudentAccessState(studentId) });
+  } catch (error) {
+    console.error("Failed to release student access:", error);
+    res.status(500).json({ error: "Unable to release student access." });
+  }
+};
+
 export const getStudentAccessDetails = async (
   req: Request,
   res: Response

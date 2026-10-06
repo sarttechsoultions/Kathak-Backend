@@ -23,7 +23,7 @@ router.patch(
 
 router.get("/teacher/classes", authenticate, requireRole(Role.TEACHER, Role.ADMIN), listTeacherLiveClasses);
 router.patch("/teacher/classes/:id/status", authenticate, requireRole(Role.TEACHER, Role.ADMIN), setLiveClassStatus);
-router.get("/student/classes", authenticate, requireRole(Role.STUDENT), listStudentLiveClasses);
+router.get("/student/classes", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, listStudentLiveClasses);
 
 router.get(
   "/classes/:id/join-token",

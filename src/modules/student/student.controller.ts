@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { PaymentStatus, Role } from "@prisma/client";
+import { PaymentStatus, PendingEnrollmentStatus, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt, { SignOptions } from "jsonwebtoken";
@@ -28,6 +28,8 @@ import { getStudentAccessState } from "./access.service";
 import { createNotification, notifyAdmins } from "../notification/notification.controller";
 import { getDisplayCurrency } from "../../utils/currency";
 import { buildStudentPaymentReceiptHtml, generatePdfBuffer, InvoiceData } from "../../lib/invoice";
+import { resolveCurrency } from "../../lib/currency";
+import { calculateRenewalAmount, parseTiers, validateEnrollmentMonths } from "../../lib/fees";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -849,6 +851,129 @@ export const studentLogin = async (req: Request, res: Response): Promise<void> =
   } catch (error) {
     console.error("Student Login Error:", error);
     res.status(500).json({ status: "error", message: "Login failed." });
+  }
+};
+
+/**
+ * Creates a Razorpay order for the authenticated student's next course payment.
+ * The amount is calculated from the current enrollment on the server so a client
+ * cannot alter it, and renewals deliberately never include a joining fee.
+ */
+export const initiateStudentRenewal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const rawMonths = Number(req.body?.months ?? 1);
+    let months: 1 | 3 | 6 | 12;
+
+    try {
+      months = validateEnrollmentMonths(rawMonths);
+    } catch {
+      res.status(400).json({ status: "error", message: "Choose 1, 3, 6, or 12 months." });
+      return;
+    }
+
+    const student = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        enrollments: {
+          where: { active: true },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          include: { course: true },
+        },
+      },
+    });
+    const enrollment = student?.enrollments[0];
+    if (!student || !enrollment) {
+      res.status(404).json({ status: "error", message: "No active course enrollment was found." });
+      return;
+    }
+
+    const currency = resolveCurrency(student.countryCode || student.country || "IN");
+    const monthlyFee = currency === "USD"
+      ? (enrollment.type === "ONE_TO_ONE" ? Number(enrollment.course.oneToOneFeeUSD || 0) : Number(enrollment.course.groupFeeUSD || 0))
+      : (enrollment.type === "ONE_TO_ONE" ? Number(enrollment.course.oneToOneFeeINR || 0) : Number(enrollment.course.groupFeeINR || 0));
+    if (!Number.isFinite(monthlyFee) || monthlyFee <= 0) {
+      res.status(400).json({ status: "error", message: `A valid ${currency} renewal fee is not configured for this course.` });
+      return;
+    }
+
+    const pricing = calculateRenewalAmount(
+      monthlyFee,
+      months,
+      parseTiers(enrollment.course.bulkDiscountTiers, currency),
+    );
+    if (pricing.total <= 0) {
+      res.status(400).json({ status: "error", message: "The renewal amount is invalid." });
+      return;
+    }
+
+    const razorpay = getRazorpay();
+    if (!razorpay) {
+      res.status(503).json({ status: "error", message: "Payment service is temporarily unavailable. Please try again later." });
+      return;
+    }
+
+    const idempotencyKey = `student-renewal-${userId}-${enrollment.id}-${months}-${Date.now()}`;
+    const order = await razorpay.orders.create({
+      amount: Math.round(pricing.total * 100),
+      currency,
+      receipt: `renew_${Date.now().toString(36)}`,
+      notes: { userId, courseId: enrollment.courseId, months, operationType: "RENEWAL", idempotencyKey },
+    });
+
+    const pending = await prisma.pendingEnrollment.create({
+      data: {
+        idempotencyKey,
+        passwordHash: "",
+        batchId: "",
+        email: student.email,
+        phone: student.phone,
+        courseId: enrollment.courseId,
+        razorpayOrderId: order.id,
+        status: PendingEnrollmentStatus.PENDING,
+        payload: {
+          fullName: student.fullName,
+          email: student.email,
+          phone: student.phone,
+          country: student.country || "India",
+          countryCode: student.countryCode || "+91",
+          address: student.address || "Address",
+          courseId: enrollment.courseId,
+          batchId: "",
+          enrollmentType: enrollment.type,
+          paymentMethod: "RAZORPAY",
+          paymentMode: months === 1 ? "MONTHLY" : "FULL_COURSE",
+          operationType: "RENEWAL",
+          months,
+          monthlyBaseAmount: monthlyFee,
+          expectedAmount: pricing.total,
+          expectedCurrency: currency,
+          joiningFeeApplied: 0,
+          gateway: "RAZORPAY",
+        },
+      },
+    });
+
+    res.json({
+      status: "success",
+      data: {
+        pendingId: pending.id,
+        orderId: order.id,
+        keyId: process.env.RAZORPAY_KEY_ID,
+        amount: Math.round(pricing.total * 100),
+        currency,
+        months,
+        monthlyFee,
+        joiningFee: 0,
+        discountPercent: pricing.discountPercent,
+        discountAmount: pricing.discountAmount,
+        expectedAmount: pricing.total,
+      },
+    });
+  } catch (error) {
+    console.error("Initiate student renewal error:", error);
+    res.status(500).json({ status: "error", message: "Unable to start your renewal payment." });
   }
 };
 
