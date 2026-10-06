@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/auth.middleware";
+import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 import {
   getMyExams,
   getExamToAttempt,
@@ -11,6 +12,7 @@ const router = Router();
 
 // Sabhi student exam routes ko authenticate karein
 router.use(authenticate);
+router.use(requireActiveStudentAccess);
 
 // Student Exam Routes
 router.get("/", getMyExams);                           // Get list of exams

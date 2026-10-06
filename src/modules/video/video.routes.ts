@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authenticate, requireRole } from "../../middleware/auth.middleware";
+import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 import {
   getDirectory,
   getStudentHistory,
@@ -14,6 +15,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(requireActiveStudentAccess);
 
 router.get("/directory", getDirectory);
 router.get("/tasks", getVideoTasks);

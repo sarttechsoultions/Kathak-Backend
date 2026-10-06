@@ -11,10 +11,12 @@ import {
 } from "./student.event.controller";
 
 import { authenticate, requireRole } from "../../middleware/auth.middleware";
+import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 
 const router = Router();
 
 router.use(authenticate, requireRole(Role.STUDENT));
+router.use(requireActiveStudentAccess);
 
 // Hero banner
 router.get("/featured", getFeaturedEvent);

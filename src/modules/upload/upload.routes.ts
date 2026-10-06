@@ -3,6 +3,7 @@ import multer from "multer";
 import { Permission, Role } from "@prisma/client";
 import { uploadImage, uploadLetterheadTemplate, uploadVideoToBunny } from "./upload.controller";
 import { authenticate, requireAnyPermission, requireRole } from "../../middleware/auth.middleware";
+import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 import { publicUploadRateLimiter } from "../../middleware/rateLimit.middleware";
 
 const storage = multer.memoryStorage();
@@ -106,8 +107,8 @@ router.post("/letterhead-template", authenticate, requireRole(Role.ADMIN), handl
 router.post("/video", authenticate, protectedUpload, handleMulterUpload, uploadVideoToBunny);
 
 // Student assignment submissions
-router.post("/student/image", authenticate, requireRole(Role.STUDENT), handleMulterUpload, uploadImage);
-router.post("/student/video", authenticate, requireRole(Role.STUDENT), handleMulterUpload, uploadVideoToBunny);
+router.post("/student/image", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, handleMulterUpload, uploadImage);
+router.post("/student/video", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, handleMulterUpload, uploadVideoToBunny);
 
 // Supporting documents for leave requests. Both portal roles are allowed;
 // admins use their own review workflow and never need to upload an attachment.

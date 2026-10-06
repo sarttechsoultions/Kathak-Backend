@@ -27,6 +27,8 @@ export interface StudentAccessStateResult {
   unlockUntil: Date | null;
   daysOverdue: number;
   activeUnlock: ActiveUnlockInfo | null;
+  isManuallyLocked: boolean;
+  manualLockReason: string | null;
   enrollmentId: string | null;
   courseId: string | null;
   courseTitle: string | null;
@@ -56,6 +58,8 @@ export async function getStudentAccessState(
     select: {
       id: true,
       country: true,
+      manualAccessLockedAt: true,
+      manualAccessLockReason: true,
       enrollments: {
         where: { active: true },
         orderBy: { createdAt: "desc" },
@@ -92,9 +96,9 @@ export async function getStudentAccessState(
 
   if (!activeEnrollment) {
     return {
-      accessState: activeUnlock ? "TEMPORARILY_UNLOCKED" : "LOCKED",
-      isLocked: !activeUnlock,
-      isTemporarilyUnlocked: Boolean(activeUnlock),
+      accessState: student?.manualAccessLockedAt ? "LOCKED" : activeUnlock ? "TEMPORARILY_UNLOCKED" : "LOCKED",
+      isLocked: Boolean(student?.manualAccessLockedAt) || !activeUnlock,
+      isTemporarilyUnlocked: !student?.manualAccessLockedAt && Boolean(activeUnlock),
       amountDue: 0,
       currency,
       dueMonth: null,
@@ -102,6 +106,8 @@ export async function getStudentAccessState(
       unlockUntil: activeUnlock?.unlockUntil || null,
       daysOverdue: 0,
       activeUnlock,
+      isManuallyLocked: Boolean(student?.manualAccessLockedAt),
+      manualLockReason: student?.manualAccessLockReason || null,
       enrollmentId: null,
       courseId: null,
       courseTitle: null,
@@ -137,9 +143,9 @@ export async function getStudentAccessState(
 
   if (!dueDate) {
     return {
-      accessState: activeUnlock ? "TEMPORARILY_UNLOCKED" : "ACTIVE",
-      isLocked: false,
-      isTemporarilyUnlocked: Boolean(activeUnlock),
+      accessState: student?.manualAccessLockedAt ? "LOCKED" : activeUnlock ? "TEMPORARILY_UNLOCKED" : "ACTIVE",
+      isLocked: Boolean(student?.manualAccessLockedAt),
+      isTemporarilyUnlocked: !student?.manualAccessLockedAt && Boolean(activeUnlock),
       amountDue: 0,
       currency,
       dueMonth: null,
@@ -147,6 +153,8 @@ export async function getStudentAccessState(
       unlockUntil: activeUnlock?.unlockUntil || null,
       daysOverdue: 0,
       activeUnlock,
+      isManuallyLocked: Boolean(student?.manualAccessLockedAt),
+      manualLockReason: student?.manualAccessLockReason || null,
       enrollmentId: activeEnrollment.id,
       courseId: course.id,
       courseTitle: course.title,
@@ -173,10 +181,14 @@ export async function getStudentAccessState(
     baseState = "LOCKED";
   }
 
-  // Active admin unlock overrides LOCKED and GRACE_PERIOD
-  const finalState: AccessState = activeUnlock
-    ? "TEMPORARILY_UNLOCKED"
-    : baseState;
+  // A direct admin lock always takes priority. A temporary unlock cannot
+  // accidentally reopen a student whom an admin has explicitly locked.
+  const isManuallyLocked = Boolean(student?.manualAccessLockedAt);
+  const finalState: AccessState = isManuallyLocked
+    ? "LOCKED"
+    : activeUnlock
+      ? "TEMPORARILY_UNLOCKED"
+      : baseState;
 
   const isLocked = finalState === "LOCKED";
   const isTemporarilyUnlocked = finalState === "TEMPORARILY_UNLOCKED";
@@ -192,6 +204,8 @@ export async function getStudentAccessState(
     unlockUntil: activeUnlock?.unlockUntil || null,
     daysOverdue,
     activeUnlock,
+    isManuallyLocked,
+    manualLockReason: student?.manualAccessLockReason || null,
     enrollmentId: activeEnrollment.id,
     courseId: course.id,
     courseTitle: course.title,

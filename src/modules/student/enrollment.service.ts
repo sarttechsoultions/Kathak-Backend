@@ -1468,6 +1468,20 @@ if (!enrollment) {
     }
   }
 
+  // A successful renewal settles the restriction that was placed for a due.
+  // New enrollment is intentionally excluded: only a paid renewal restores a
+  // manually locked student's learning access automatically.
+  if (operationType === "RENEWAL" && user.manualAccessLockedAt) {
+    user = await tx.user.update({
+      where: { id: user.id },
+      data: {
+        manualAccessLockedAt: null,
+        manualAccessLockReason: null,
+        manualAccessLockedByAdminId: null,
+      },
+    });
+  }
+
   await tx.pendingEnrollment.update({
     where: {
       id: pending.id,
