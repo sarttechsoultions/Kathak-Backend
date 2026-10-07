@@ -575,7 +575,7 @@ export function billingDateForMonth(
   const { day } = toISTParts(anchorDate);
 
   // Clamp 29/30/31 safely for shorter months.
-  const lastDayOfMonth = new Date(
+   const lastDayOfMonth = new Date(
     Date.UTC(year, month + 1, 0)
   ).getUTCDate();
 
@@ -600,7 +600,12 @@ export function dueMonthFromDate(date: Date): string {
 /**
  * Returns the due date after the covered period while preserving
  * the student's original enrollment billing day.
- */
+ *
+ * Example:
+ * 29 Sep + 1 month => 29 Oct
+ * 31 Jan + 1 month => 28/29 Feb
+ * 31 Jan + 2 months => 31 Mar 
+  */
 export function nextCoverageDueDate(
   startDate: Date,
   count: number,
@@ -622,13 +627,10 @@ export function nextCoverageDueDate(
 
   const nextYear =
     year +
-    Math.floor(
-      total / 12
-    );
+    Math.floor(total / 12);
 
   const nextMonth =
-    ((total % 12) + 12) %
-    12;
+    ((total % 12) + 12) % 12;
 
   return billingDateForMonth(
     nextYear,
