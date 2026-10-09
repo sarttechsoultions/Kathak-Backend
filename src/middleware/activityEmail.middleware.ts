@@ -6,6 +6,17 @@ import { prisma } from "../lib/prisma";
 const ADMIN_ACTIVITY_EMAIL = "kathakbyharshita@gmail.com";
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+// Authentication requests must never create an academy-activity email. This
+// remains true even if a browser includes a previous session cookie while it
+// is signing in again.
+function isAuthenticationRequest(path: string): boolean {
+  return (
+    path.startsWith("/api/v1/auth/") ||
+    path === "/api/v1/student/login" ||
+    path.startsWith("/api/v1/mobile/auth/")
+  );
+}
+
 function describeActivity(req: Request, portal: "Student" | "Teacher"): string {
   const path = `${req.baseUrl}${req.path}`.toLowerCase();
   const verb = req.method === "DELETE" ? "removed" : req.method === "POST" ? "submitted" : "updated";
@@ -42,6 +53,7 @@ export function notifyAdminOfPortalActivity(req: Request, res: Response, next: N
       !MUTATING_METHODS.has(req.method) ||
       res.statusCode < 200 ||
       res.statusCode >= 300 ||
+      isAuthenticationRequest(activityPath) ||
       // New reschedule requests send a detailed, awaited academy email from
       // the controller. Skip the generic background email to avoid duplicates.
       (req.method === "POST" && activityPath === "/api/v1/reschedule") ||
