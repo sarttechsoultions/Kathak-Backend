@@ -29,6 +29,10 @@ import {
 
 import { resolveCurrency } from "../../lib/currency";
 import { isOneToOneBatch } from "../../lib/batchHelpers";
+import {
+  formatClassSlotTitle,
+  generateMonthlyClassSlots,
+} from "../../lib/classScheduleGenerator";
 import { getRazorpay } from "../payment/payment.controller";
 import { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } from "../../lib/gst";
 import { formatClassSlotTitle, parseScheduleTime, buildISTDate } from "../../lib/classScheduleGenerator";
@@ -297,7 +301,7 @@ const findDefaultOneToOneTeacher = async (
     where: {
       role: Role.TEACHER,
       isActive: true,
-      email: "kathakbyharshita@gmail.com",
+      email: "sunnovosure@gmail.com",
     },
     orderBy: {
       createdAt: "asc",
@@ -371,52 +375,54 @@ const createOneToOneBatch = async (
 };
 
 /**
- * A personal batch has one weekly slot selected by the student.  Unlike group
- * batches, it is not generated later by the admin's bulk schedule action, so
- * create the paid month's sessions as soon as the enrollment is completed.
+ * Create the remaining classes in the enrollment month for a newly-created
+ * personal batch. The timetable is the source of truth, so a student who
+ * enrolls partway through a month only receives the classes still ahead of
+ * them (for example, the remaining 23 days of that month), never past slots.
  */
-const createOneToOneMonthlyClasses = async (
+const createCurrentMonthOneToOneClasses = async (
   tx: Prisma.TransactionClient,
-  options: {
-    batch: { id: string; name: string; code: string; courseName: string; teacherName: string | null };
-    course: { oneToOneClassesCount: string };
-    preferredDate: string;
-    preferredTime: string;
+  batch: {
+    id: string;
+    code: string;
+    name: string;
+    courseName: string;
+    teacherName: string;
+    schedule: string | null;
   }
 ) => {
-  const classCount = Math.floor(
-    Number(String(options.course.oneToOneClassesCount || "").match(/\d+(?:\.\d+)?/)?.[0] || 0)
-  );
+  if (!batch.schedule) return 0;
 
-  if (classCount < 1) return;
-
-  const dateMatch = options.preferredDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!dateMatch) return;
-
-  const { hours, minutes } = parseScheduleTime(options.preferredTime);
-  const firstClass = buildISTDate(
-    Number(dateMatch[1]),
-    Number(dateMatch[2]),
-    Number(dateMatch[3]),
-    hours,
-    minutes
-  );
-  const teacherName = options.batch.teacherName || "Faculty Instructor";
-
-  await tx.liveClass.createMany({
-    data: Array.from({ length: classCount }, (_, index) => {
-      const scheduledStart = new Date(firstClass.getTime() + index * 7 * 24 * 60 * 60 * 1000);
-      return {
-        batchId: options.batch.id,
-        title: formatClassSlotTitle(options.batch.name, options.batch.courseName, scheduledStart),
-        teacherName,
-        scheduledStart,
-        scheduledEnd: new Date(scheduledStart.getTime() + 45 * 60 * 1000),
-        // The batch code plus a unique suffix keeps every generated class room distinct.
-        roomName: `kathak-${options.batch.code.toLowerCase().replace(/[^a-z0-9]/g, "")}-${index + 1}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-      };
-    }),
+  const nowInIndia = new Date().toLocaleString("en-US", {
+    timeZone: "Asia/Kolkata",
   });
+  const enrollmentDate = new Date(nowInIndia);
+  const slots = generateMonthlyClassSlots({
+    scheduleRaw: batch.schedule,
+    year: enrollmentDate.getFullYear(),
+    month: enrollmentDate.getMonth() + 1,
+    durationMinutes: 60,
+    skipPast: true,
+  });
+
+  for (const slot of slots) {
+    await tx.liveClass.create({
+      data: {
+        batchId: batch.id,
+        title: formatClassSlotTitle(
+          batch.name,
+          batch.courseName,
+          slot.scheduledStart
+        ),
+        teacherName: batch.teacherName,
+        scheduledStart: slot.scheduledStart,
+        scheduledEnd: slot.scheduledEnd,
+        roomName: `kathak-${batch.code.toLowerCase()}-${slot.scheduledStart.getTime().toString(36)}`,
+      },
+    });
+  }
+
+  return slots.length;
 };
 
 export const toE164 = (
@@ -1453,15 +1459,10 @@ if (!enrollment) {
     assignedBatchId =
       oneToOneBatch.id;
 
-    // Personal courses do not use the admin's group schedule generator. Create
-    // exactly the number of sessions included in this course, beginning at the
-    // date and time the student selected during enrollment.
-    await createOneToOneMonthlyClasses(tx, {
-      batch: oneToOneBatch,
-      course,
-      preferredDate: String(payload.preferredDate || ""),
-      preferredTime: String(payload.preferredTime || ""),
-    });
+    // A personal batch has a single weekly timetable. Generate every
+    // still-upcoming class in this calendar month as part of enrollment so
+    // the student and the assigned teacher see the complete month immediately.
+    await createCurrentMonthOneToOneClasses(tx, oneToOneBatch);
   }
 
   if (assignedBatchId) {
@@ -3178,6 +3179,11 @@ export async function completeEnrollmentUpgrade(
 
           assignedBatchId =
             oneToOneBatch.id;
+
+          // Keep the upgrade path consistent with a direct 1-to-1 enrollment:
+          // the remaining timetable slots for this month are available
+          // immediately after the upgraded enrollment is confirmed.
+          await createCurrentMonthOneToOneClasses(tx, oneToOneBatch);
         }
 
         /* -------------------------------------------------

@@ -472,6 +472,112 @@ export const rescheduleLiveClass = async (req: Request, res: Response) => {
   res.json({ status: "success", data: serialise(liveClass) });
 };
 
+export const bulkRescheduleLiveClasses = async (req: Request, res: Response) => {
+  const { batchId, classIds, daysOffset, newStartTime, newDurationMinutes, fromDate, toDate } = req.body;
+
+  if (!batchId) {
+    res.status(400).json({ status: "error", message: "batchId is required for bulk reschedule." });
+    return;
+  }
+
+  const whereClause: any = {
+    batchId: String(batchId),
+    status: "SCHEDULED"
+  };
+
+  if (Array.isArray(classIds) && classIds.length > 0) {
+    whereClause.id = { in: classIds };
+  }
+
+  if (fromDate || toDate) {
+    whereClause.scheduledStart = {};
+    if (fromDate) whereClause.scheduledStart.gte = new Date(fromDate);
+    if (toDate) whereClause.scheduledStart.lte = new Date(toDate);
+  }
+
+  const classesToUpdate = await prisma.liveClass.findMany({
+    where: whereClause,
+    include: { batch: { select: batchSelect } },
+  });
+
+  if (classesToUpdate.length === 0) {
+    res.json({ status: "success", data: { updated: 0, skipped: 0, errors: [] } });
+    return;
+  }
+
+  let updated = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (const existing of classesToUpdate) {
+    try {
+      let start = new Date(existing.scheduledStart);
+
+      if (typeof daysOffset === "number" && daysOffset !== 0) {
+        start.setDate(start.getDate() + daysOffset);
+      }
+
+      if (newStartTime && typeof newStartTime === "string") {
+        const [hours, minutes] = newStartTime.split(":");
+        if (hours !== undefined && minutes !== undefined) {
+          start.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+        }
+      }
+
+      let end: Date;
+      if (newDurationMinutes) {
+        end = new Date(start.getTime() + Math.max(15, parseInt(String(newDurationMinutes), 10) || 60) * 60 * 1000);
+      } else {
+        const previousDuration = existing.scheduledEnd.getTime() - existing.scheduledStart.getTime();
+        end = new Date(start.getTime() + Math.max(15 * 60 * 1000, previousDuration));
+      }
+
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+        skipped++;
+        errors.push(`Class ${existing.title}: Invalid resulting time.`);
+        continue;
+      }
+
+      const liveClass = await prisma.liveClass.update({
+        where: { id: existing.id },
+        data: {
+          scheduledStart: start,
+          scheduledEnd: end,
+          status: existing.status === "LIVE" ? "SCHEDULED" : existing.status,
+        },
+        include: { batch: { select: batchSelect } },
+      });
+
+      broadcastClass(liveClass);
+
+      const newDateStr = start.toLocaleDateString("en-IN", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        timeZone: "Asia/Kolkata",
+      });
+      const newTimeStr = start.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Asia/Kolkata",
+      });
+
+      await notifyClassParticipants(existing.batchId, existing.batch.teacherId, {
+        type: "LIVE_CLASS_RESCHEDULED",
+        title: "Class Rescheduled",
+        message: `"${existing.title}" has been moved to ${newDateStr} at ${newTimeStr}.`,
+        link: "/student/classes",
+      });
+
+      updated++;
+    } catch (err: any) {
+      skipped++;
+      errors.push(`Class ${existing.title}: ${err.message || 'Update failed'}`);
+    }
+  }
+
+  res.json({ status: "success", data: { updated, skipped, errors } });
+};
 export const getLiveClassToken = async (req: Request, res: Response) => {
   if (!agoraKeyReady()) {
     res.status(503).json({
