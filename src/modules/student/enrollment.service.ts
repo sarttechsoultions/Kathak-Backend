@@ -29,10 +29,7 @@ import {
 
 import { resolveCurrency } from "../../lib/currency";
 import { isOneToOneBatch } from "../../lib/batchHelpers";
-import {
-  formatClassSlotTitle,
-  generateMonthlyClassSlots,
-} from "../../lib/classScheduleGenerator";
+
 import { getRazorpay } from "../payment/payment.controller";
 import { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } from "../../lib/gst";
 import { formatClassSlotTitle, parseScheduleTime, buildISTDate } from "../../lib/classScheduleGenerator";
