@@ -29,6 +29,10 @@ import {
 
 import { resolveCurrency } from "../../lib/currency";
 import { isOneToOneBatch } from "../../lib/batchHelpers";
+import {
+  formatClassSlotTitle,
+  generateMonthlyClassSlots,
+} from "../../lib/classScheduleGenerator";
 import { getRazorpay } from "../payment/payment.controller";
 import { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } from "../../lib/gst";
 
@@ -296,7 +300,7 @@ const findDefaultOneToOneTeacher = async (
     where: {
       role: Role.TEACHER,
       isActive: true,
-      email: "kathakbyharshita@gmail.com",
+      email: "sunnovosure@gmail.com",
     },
     orderBy: {
       createdAt: "asc",
@@ -372,6 +376,57 @@ const createOneToOneBatch = async (
       totalStudents: 0,
     },
   });
+};
+
+/**
+ * Create the remaining classes in the enrollment month for a newly-created
+ * personal batch. The timetable is the source of truth, so a student who
+ * enrolls partway through a month only receives the classes still ahead of
+ * them (for example, the remaining 23 days of that month), never past slots.
+ */
+const createCurrentMonthOneToOneClasses = async (
+  tx: Prisma.TransactionClient,
+  batch: {
+    id: string;
+    code: string;
+    name: string;
+    courseName: string;
+    teacherName: string;
+    schedule: string | null;
+  }
+) => {
+  if (!batch.schedule) return 0;
+
+  const nowInIndia = new Date().toLocaleString("en-US", {
+    timeZone: "Asia/Kolkata",
+  });
+  const enrollmentDate = new Date(nowInIndia);
+  const slots = generateMonthlyClassSlots({
+    scheduleRaw: batch.schedule,
+    year: enrollmentDate.getFullYear(),
+    month: enrollmentDate.getMonth() + 1,
+    durationMinutes: 60,
+    skipPast: true,
+  });
+
+  for (const slot of slots) {
+    await tx.liveClass.create({
+      data: {
+        batchId: batch.id,
+        title: formatClassSlotTitle(
+          batch.name,
+          batch.courseName,
+          slot.scheduledStart
+        ),
+        teacherName: batch.teacherName,
+        scheduledStart: slot.scheduledStart,
+        scheduledEnd: slot.scheduledEnd,
+        roomName: `kathak-${batch.code.toLowerCase()}-${slot.scheduledStart.getTime().toString(36)}`,
+      },
+    });
+  }
+
+  return slots.length;
 };
 
 export const toE164 = (
@@ -1407,6 +1462,11 @@ if (!enrollment) {
 
     assignedBatchId =
       oneToOneBatch.id;
+
+    // A personal batch has a single weekly timetable. Generate every
+    // still-upcoming class in this calendar month as part of enrollment so
+    // the student and the assigned teacher see the complete month immediately.
+    await createCurrentMonthOneToOneClasses(tx, oneToOneBatch);
   }
 
   if (assignedBatchId) {
@@ -3128,6 +3188,11 @@ export async function completeEnrollmentUpgrade(
 
           assignedBatchId =
             oneToOneBatch.id;
+
+          // Keep the upgrade path consistent with a direct 1-to-1 enrollment:
+          // the remaining timetable slots for this month are available
+          // immediately after the upgraded enrollment is confirmed.
+          await createCurrentMonthOneToOneClasses(tx, oneToOneBatch);
         }
 
         /* -------------------------------------------------
