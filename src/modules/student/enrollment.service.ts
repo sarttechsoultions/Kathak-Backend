@@ -21,6 +21,8 @@ import {
   calculateEnrollmentAmount,
   calculateRenewalAmount,
   generateCoverageMonths,
+  billingDateForMonth,
+  dueMonthFromDate,
   nextCoverageDueDate,
   nextMonthDueDate,
   parseTiers,
@@ -32,7 +34,12 @@ import { isOneToOneBatch } from "../../lib/batchHelpers";
 
 import { getRazorpay } from "../payment/payment.controller";
 import { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } from "../../lib/gst";
-import { formatClassSlotTitle, parseScheduleTime, buildISTDate } from "../../lib/classScheduleGenerator";
+import {
+  formatClassSlotTitle,
+  generateMonthlyClassSlots,
+  parseScheduleTime,
+  buildISTDate,
+} from "../../lib/classScheduleGenerator";
 
 export class EnrollmentError extends Error {
   statusCode: number;
@@ -1554,13 +1561,12 @@ if (!enrollment) {
 
   // Setup MonthlyDues inside the transaction
   const paymentDate = new Date(); // authoritative timestamp
-  let coverageStartDate = paymentDate;
-  if (existingNextDueDate && existingNextDueDate > paymentDate) {
-    coverageStartDate = existingNextDueDate;
-  }
-  if (batchFeeStartDate && batchFeeStartDate > coverageStartDate) {
-    coverageStartDate = batchFeeStartDate;
-  }
+  // Keep the student's original billing cycle even when a renewal is paid late.
+  // New enrollment starts from payment date; renewal continues from its scheduled due date.
+  let coverageStartDate = existingNextDueDate ?? paymentDate;
+  // Billing cycle is anchored to the student's enrollment/payment date.
+  // Batch start date must not move the monthly billing day.
+  void batchFeeStartDate;
   
   const isBulk = monthsPaid > 1;
   const monthlyBaseAmount = anyPayload.monthlyBaseAmount 
@@ -1581,7 +1587,7 @@ if (!enrollment) {
     // Create paid dues for the bulk period
     for (const dueMonth of generatedMonths) {
       const [yyyy, mm] = dueMonth.split("-").map(Number);
-      const dueDate = new Date(yyyy, mm - 1, 1);
+      const dueDate = billingDateForMonth(yyyy, mm - 1, enrollment.createdAt);
       
       const existingDue = await tx.monthlyDue.findUnique({
         where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth } }
@@ -1610,11 +1616,10 @@ if (!enrollment) {
     }
     
     // Create pending due for the next month after bulk
-    nextDue = nextCoverageDueDate(coverageStartDate, monthsPaid);
+    nextDue = nextCoverageDueDate(coverageStartDate, monthsPaid, enrollment.createdAt);
     
     if (enrollment.paymentMode !== "FULL_COURSE") {
-      const mm = String(nextDue.getMonth() + 1).padStart(2, "0");
-      const nextDueMonth = `${nextDue.getFullYear()}-${mm}`;
+      const nextDueMonth = dueMonthFromDate(nextDue);
       
       const existingNext = await tx.monthlyDue.findUnique({
         where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: nextDueMonth } }
@@ -1648,7 +1653,7 @@ if (!enrollment) {
     );
     const currentMonth = generatedMonths[0];
     const [yyyy, mm] = currentMonth.split("-").map(Number);
-    const currentDueDate = new Date(yyyy, mm - 1, 1);
+    const currentDueDate = billingDateForMonth(yyyy, mm - 1, enrollment.createdAt);
 
     const existingCurrent = await tx.monthlyDue.findUnique({
       where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: currentMonth } }
@@ -1675,11 +1680,10 @@ if (!enrollment) {
       });
     }
     
-    nextDue = nextCoverageDueDate(coverageStartDate, 1);
+    nextDue = nextCoverageDueDate(coverageStartDate, 1, enrollment.createdAt);
     
     if (enrollment.paymentMode !== "FULL_COURSE") {
-      const nextMm = String(nextDue.getMonth() + 1).padStart(2, "0");
-      const nextDueMonth = `${nextDue.getFullYear()}-${nextMm}`;
+      const nextDueMonth = dueMonthFromDate(nextDue);
       
       const existingNext = await tx.monthlyDue.findUnique({
         where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: nextDueMonth } }
