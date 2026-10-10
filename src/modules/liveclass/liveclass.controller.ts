@@ -480,9 +480,11 @@ export const bulkRescheduleLiveClasses = async (req: Request, res: Response) => 
     return;
   }
 
+  const now = new Date();
   const whereClause: any = {
     batchId: String(batchId),
-    status: "SCHEDULED"
+    status: "SCHEDULED",
+    scheduledStart: { gt: now },
   };
 
   if (Array.isArray(classIds) && classIds.length > 0) {
@@ -490,8 +492,12 @@ export const bulkRescheduleLiveClasses = async (req: Request, res: Response) => 
   }
 
   if (fromDate || toDate) {
-    whereClause.scheduledStart = {};
-    if (fromDate) whereClause.scheduledStart.gte = new Date(fromDate);
+    if (fromDate) {
+      const requestedStart = new Date(fromDate);
+      if (!Number.isNaN(requestedStart.getTime())) {
+        whereClause.scheduledStart = { gte: new Date(Math.max(now.getTime() + 1, requestedStart.getTime())) };
+      }
+    }
     if (toDate) whereClause.scheduledStart.lte = new Date(toDate);
   }
 
