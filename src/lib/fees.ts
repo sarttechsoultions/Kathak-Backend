@@ -567,9 +567,44 @@ export function generateCoverageMonths(
  * Next due:
  * December 1, 2026 00:00 IST
  */
+export function billingDateForMonth(
+  year: number,
+  month: number,
+  anchorDate: Date
+): Date {
+  const { day } = toISTParts(anchorDate);
+
+  // Clamp 29/30/31 safely for shorter months.
+  const lastDayOfMonth = new Date(
+    Date.UTC(year, month + 1, 0)
+  ).getUTCDate();
+
+  const billingDay = Math.min(day, lastDayOfMonth);
+
+  const istMidnightUtcMs =
+    Date.UTC(year, month, billingDay, 0, 0, 0) - IST_OFFSET_MS;
+
+  return new Date(istMidnightUtcMs);
+}
+
+/**
+ * Returns YYYY-MM using the IST calendar date.
+ * Never use Date.getMonth()/getFullYear() for IST-midnight billing dates.
+ */
+export function dueMonthFromDate(date: Date): string {
+  const { year, month } = toISTParts(date);
+
+  return `${year}-${String(month + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Returns the due date after the covered period while preserving
+ * the student's original enrollment billing day.
+ */
 export function nextCoverageDueDate(
   startDate: Date,
-  count: number
+  count: number,
+  billingAnchorDate: Date = startDate
 ): Date {
   const safeCount =
     Number.isFinite(count) &&
@@ -595,19 +630,10 @@ export function nextCoverageDueDate(
     ((total % 12) + 12) %
     12;
 
-  const nextMonthIstMidnightUtcMs =
-    Date.UTC(
-      nextYear,
-      nextMonth,
-      1,
-      0,
-      0,
-      0
-    ) -
-    IST_OFFSET_MS;
-
-  return new Date(
-    nextMonthIstMidnightUtcMs
+  return billingDateForMonth(
+    nextYear,
+    nextMonth,
+    billingAnchorDate
   );
 }
 
