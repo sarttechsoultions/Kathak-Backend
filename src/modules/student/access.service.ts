@@ -137,7 +137,10 @@ export async function getStudentAccessState(
     orderBy: { dueDate: "asc" },
   });
 
-  const dueDate = activeEnrollment.nextDueDate || pendingDue?.dueDate || null;
+  // The payable due record is authoritative when present. Retain the
+  // enrollment-level date as a fallback so a missing MonthlyDue cannot
+  // accidentally grant unrestricted access to an overdue student.
+  const dueDate = pendingDue?.dueDate || activeEnrollment.nextDueDate || null;
   const dueMonth = pendingDue?.dueMonth || null;
   const amountDue = pendingDue?.amount || monthlyBaseAmount;
 
