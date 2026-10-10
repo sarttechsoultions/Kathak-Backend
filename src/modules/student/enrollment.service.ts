@@ -32,7 +32,12 @@ import { isOneToOneBatch } from "../../lib/batchHelpers";
 
 import { getRazorpay } from "../payment/payment.controller";
 import { calculateGstFromInclusiveTotal, getInvoiceSacCode, getInvoiceSacDescription } from "../../lib/gst";
-import { formatClassSlotTitle, parseScheduleTime, buildISTDate } from "../../lib/classScheduleGenerator";
+import {
+  formatClassSlotTitle,
+  generateMonthlyClassSlots,
+  parseScheduleTime,
+  buildISTDate,
+} from "../../lib/classScheduleGenerator";
 
 export class EnrollmentError extends Error {
   statusCode: number;
