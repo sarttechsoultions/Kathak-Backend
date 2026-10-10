@@ -27,6 +27,38 @@
   import { resolveCurrency } from "../../lib/currency";
   import { loadPlatformPayments, summarizePlatformPayments, isSuccessfulStatus } from "../../lib/platform-payments";
   import { getTeacherBatchIds } from "../../lib/batchHelpers";
+  import { formatClassSlotTitle, generateMonthlyClassSlots } from "../../lib/classScheduleGenerator";
+
+  const getISTYearMonth = (date: Date): { year: number; month: number } => {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "numeric",
+    }).formatToParts(date);
+    const value = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+    return { year: value("year"), month: value("month") };
+  };
+
+  /** Updates existing future class rows only; it never creates, deletes, or edits past/live classes. */
+  const buildFutureBatchSlots = (scheduleRaw: string, count: number, durationMinutes: number) => {
+    const slots = [] as ReturnType<typeof generateMonthlyClassSlots>;
+    const cursor = getISTYearMonth(new Date());
+
+    for (let offset = 0; offset < 60 && slots.length < count; offset += 1) {
+      const absoluteMonth = cursor.month - 1 + offset;
+      const year = cursor.year + Math.floor(absoluteMonth / 12);
+      const month = (absoluteMonth % 12) + 1;
+      slots.push(...generateMonthlyClassSlots({
+        scheduleRaw,
+        year,
+        month,
+        durationMinutes,
+        skipPast: true,
+      }));
+    }
+
+    return slots.slice(0, count);
+  };
 
   const sendTeacherAssignmentEmail = async (teacherId: string, batch: { name: string; courseName: string; schedule?: string | null }) => {
     const teacher = await prisma.user.findFirst({
@@ -2662,7 +2694,10 @@
   export const updateBatch = async (req: Request, res: Response): Promise<void> => {
     try {
       const id = req.params.id as string;
-      const { name, code, courseId, teacherId, schedule, level, status, studentIds, capacity, isEnrollmentVisible } = req.body;
+      const {
+        name, code, courseId, teacherId, schedule, level, status, studentIds, capacity,
+        isEnrollmentVisible, syncUpcomingClasses = true, classDurationMinutes,
+      } = req.body;
       const normalizedCapacity = capacity === undefined
         ? undefined
         : capacity === null || capacity === ""
@@ -2678,6 +2713,35 @@
       const existingBatch = await prisma.batch.findUnique({ where: { id } });
       if (!existingBatch) {
         res.status(404).json({ status: "error", message: "Batch not found." });
+        return;
+      }
+
+      const hasDurationChange = classDurationMinutes !== undefined && classDurationMinutes !== null && classDurationMinutes !== "";
+      const normalizedDuration = hasDurationChange ? Number(classDurationMinutes) : undefined;
+      if (normalizedDuration !== undefined &&
+        (!Number.isInteger(normalizedDuration) || normalizedDuration < 15 || normalizedDuration > 360)) {
+        res.status(400).json({ status: "error", message: "Class duration must be between 15 and 360 minutes." });
+        return;
+      }
+
+      const scheduleChanged = typeof schedule === "string" && schedule !== existingBatch.schedule;
+      const shouldSyncUpcoming = syncUpcomingClasses !== false && (scheduleChanged || normalizedDuration !== undefined);
+      const futureClasses = shouldSyncUpcoming
+        ? await prisma.liveClass.findMany({
+            where: { batchId: id, status: "SCHEDULED", scheduledStart: { gt: new Date() } },
+            orderBy: { scheduledStart: "asc" },
+          })
+        : [];
+      const slotDuration = normalizedDuration ?? 60;
+      const replacementSlots = scheduleChanged && futureClasses.length > 0
+        ? buildFutureBatchSlots(schedule, futureClasses.length, slotDuration)
+        : [];
+
+      if (scheduleChanged && replacementSlots.length !== futureClasses.length) {
+        res.status(400).json({
+          status: "error",
+          message: "The new schedule does not contain enough future class slots to safely update all scheduled classes.",
+        });
         return;
       }
 
@@ -2711,7 +2775,7 @@
           if (t) newTeacherName = t.fullName;
         }
 
-        return await tx.batch.update({
+        const updatedBatch = await tx.batch.update({
           where: { id },
           data: {
             name: name ?? undefined,
@@ -2728,13 +2792,43 @@
             totalStudents: totalCount
           }
         });
+
+        if (shouldSyncUpcoming && futureClasses.length > 0) {
+          await Promise.all(futureClasses.map((liveClass, index) => {
+            const slot = replacementSlots[index];
+            const scheduledStart = slot?.scheduledStart ?? liveClass.scheduledStart;
+            const existingDurationMs = liveClass.scheduledEnd.getTime() - liveClass.scheduledStart.getTime();
+            const scheduledEnd = new Date(scheduledStart.getTime() + (normalizedDuration !== undefined
+              ? normalizedDuration * 60 * 1000
+              : existingDurationMs));
+
+            return tx.liveClass.update({
+              where: { id: liveClass.id },
+              data: {
+                scheduledStart,
+                scheduledEnd,
+                title: formatClassSlotTitle(updatedBatch.name, updatedBatch.courseName, scheduledStart),
+                teacherName: updatedBatch.teacherName,
+              },
+            });
+          }));
+        }
+
+        return updatedBatch;
       });
 
       if (updated.teacherId && updated.teacherId !== existingBatch.teacherId) {
         await sendTeacherAssignmentEmail(updated.teacherId, updated);
       }
 
-      res.json({ status: "success", message: "Batch updated successfully.", data: updated });
+      res.json({
+        status: "success",
+        message: shouldSyncUpcoming && futureClasses.length > 0
+          ? `Batch updated and ${futureClasses.length} upcoming classes synchronized.`
+          : "Batch updated successfully.",
+        data: updated,
+        synchronizedClasses: shouldSyncUpcoming ? futureClasses.length : 0,
+      });
     } catch (error) {
       console.error("Update Batch Error:", error);
       res.status(500).json({ status: "error", message: "Failed to update batch." });
