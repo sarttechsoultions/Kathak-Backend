@@ -85,6 +85,13 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
       status: "success",
       message: "Login successful",
       data: {
+        // Web portals use the HttpOnly cookie above. Mobile clients cannot
+        // reliably read that cookie, so return the same signed token too.
+        accessToken: token,
+        // Kept as a compatibility alias for existing mobile integrations.
+        token,
+        tokenType: "Bearer",
+        expiresIn: Math.floor(expiresInMs / 1000),
         user: {
           id: user.id,
           fullName: user.fullName,

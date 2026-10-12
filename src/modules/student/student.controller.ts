@@ -977,6 +977,103 @@ export const initiateStudentRenewal = async (req: Request, res: Response): Promi
   }
 };
 
+/**
+ * Finalizes a renewal after Razorpay returns a successful checkout response.
+ * This is deliberately authenticated: a renewal must belong to the student
+ * who is signed in, unlike a first-time enrollment which has no session yet.
+ */
+export const verifyStudentRenewalPayment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      pendingId,
+      razorpay_order_id: razorpayOrderId,
+      razorpay_payment_id: razorpayPaymentId,
+      razorpay_signature: razorpaySignature,
+    } = req.body ?? {};
+
+    if (!pendingId || !razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+      res.status(400).json({ status: "error", message: "Payment verification failed. Missing payment details." });
+      return;
+    }
+
+    if (!env.razorpayKeySecret) {
+      res.status(503).json({ status: "error", message: "Payment service is temporarily unavailable. Please try again later." });
+      return;
+    }
+
+    const pending = await prisma.pendingEnrollment.findUnique({
+      where: { id: String(pendingId) },
+      select: { email: true, razorpayOrderId: true, payload: true },
+    });
+
+    if (!pending) {
+      res.status(404).json({ status: "error", message: "Renewal payment request was not found." });
+      return;
+    }
+
+    if (pending.email.trim().toLowerCase() !== req.user!.email.trim().toLowerCase()) {
+      res.status(403).json({ status: "error", message: "This renewal payment does not belong to your account." });
+      return;
+    }
+
+    const operationType = String((pending.payload as Record<string, unknown>)?.operationType ?? "").toUpperCase();
+    if (operationType !== "RENEWAL") {
+      res.status(409).json({ status: "error", message: "This payment is not a course renewal." });
+      return;
+    }
+
+    if (pending.razorpayOrderId !== String(razorpayOrderId)) {
+      res.status(400).json({ status: "error", message: "Payment order does not match this renewal." });
+      return;
+    }
+
+    const expectedSignature = crypto
+      .createHmac("sha256", env.razorpayKeySecret)
+      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+      .digest("hex");
+
+    if (expectedSignature !== String(razorpaySignature)) {
+      res.status(400).json({ status: "error", message: "Payment verification failed. Invalid signature." });
+      return;
+    }
+
+    const result = await completePendingEnrollment({
+      pendingId: String(pendingId),
+      razorpayOrderId: String(razorpayOrderId),
+      razorpayPaymentId: String(razorpayPaymentId),
+    });
+
+    let emailSent = true;
+    if (!result.alreadyCompleted) {
+      try {
+        emailSent = await sendEnrollmentWelcomeEmail(result.user, undefined, "RENEWAL");
+      } catch (emailError) {
+        console.error(`Renewal receipt email failed for user ${result.user.email}:`, emailError);
+        emailSent = false;
+      }
+    }
+
+    res.status(200).json({
+      status: "success",
+      message: result.alreadyCompleted
+        ? "Renewal payment was already recorded."
+        : emailSent
+          ? "Renewal payment recorded successfully."
+          : "Renewal payment recorded, but the receipt email could not be sent.",
+      emailSent,
+      data: { enrollment: result.enrollment },
+    });
+  } catch (error: unknown) {
+    if (error instanceof EnrollmentError) {
+      res.status(error.statusCode).json({ status: "error", message: error.message });
+      return;
+    }
+
+    console.error("Verify student renewal error:", error);
+    res.status(500).json({ status: "error", message: "Payment was received but could not be recorded. Please contact support with your payment ID." });
+  }
+};
+
 export const getStudentFinance = async (
   req: Request,
   res: Response
@@ -1009,6 +1106,9 @@ export const getStudentFinance = async (
         payments: {
           orderBy: {
             createdAt: "desc",
+          },
+          include: {
+            Invoice: true,
           },
         },
       },
@@ -1105,8 +1205,15 @@ export const getStudentFinance = async (
                 }
               ),
 
-            description:
-              `${courseTitle} - Registration Fee`,
+            description: (() => {
+              const snapshot = p.Invoice?.snapshot as Record<string, unknown> | null;
+              const paidMonths = Number(snapshot?.months || 1);
+              const isRenewal = String(snapshot?.operationType || "").toUpperCase() === "RENEWAL";
+              const paymentLabel = isRenewal
+                ? `Course Renewal — ${paidMonths} month${paidMonths === 1 ? "" : "s"}`
+                : "Registration Fee";
+              return `${snapshot?.courseTitle || courseTitle} - ${paymentLabel}`;
+            })(),
 
             paymentMethod:
               p.gateway ||
@@ -1428,6 +1535,25 @@ export const submitStudentAssignment = async (req: Request, res: Response): Prom
       const teacherLink = "/teacher/dashboard";
       await createNotification(teacherId, "ASSIGNMENT_SUBMITTED", notificationTitle, notificationMessage, teacherLink);
     }
+
+    // Deliver an email copy to all admins and the assignment's responsible teacher.
+    // Notification/email failures must not make a valid student submission fail.
+    void (async () => {
+      const reviewers = await prisma.user.findMany({
+        where: {
+          OR: [
+            { role: Role.ADMIN, isActive: true },
+            ...(teacherId ? [{ id: teacherId, role: Role.TEACHER, isActive: true }] : []),
+          ],
+        },
+        select: { email: true, fullName: true, role: true },
+      });
+      await Promise.allSettled(reviewers.map((reviewer) => sendEmail({
+        to: reviewer.email,
+        subject: `Assignment submitted — ${student?.fullName || "Student"}`,
+        html: `<h2>Assignment submitted</h2><p><strong>${student?.fullName || "A student"}</strong> submitted “${assignment.title}”.</p><p>Please sign in to the ${reviewer.role === Role.ADMIN ? "admin portal" : "teacher portal"} to review and grade it.</p>`,
+      })));
+    })().catch((emailError) => console.error("Assignment submission reviewer email failed:", emailError));
 
     res.status(200).json({ status: "success", message: "Assignment submitted successfully.", data: submission });
   } catch (error) {

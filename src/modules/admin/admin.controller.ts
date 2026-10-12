@@ -26,7 +26,7 @@
   import { calculateMonthlyEnrollmentAmount } from "../../lib/fees";
   import { resolveCurrency } from "../../lib/currency";
   import { loadPlatformPayments, summarizePlatformPayments, isSuccessfulStatus } from "../../lib/platform-payments";
-  import { getTeacherBatchIds } from "../../lib/batchHelpers";
+  import { getTeacherBatchIds, isOneToOneBatch } from "../../lib/batchHelpers";
   import { formatClassSlotTitle, generateMonthlyClassSlots } from "../../lib/classScheduleGenerator";
 
   const getISTYearMonth = (date: Date): { year: number; month: number } => {
@@ -79,6 +79,71 @@
         <p>Please sign in to the teacher portal for the latest class and student details.</p>
       `,
     });
+  };
+
+  type PushNotificationScope = "BATCH" | "COURSE" | "ALL_STUDENTS";
+
+  const resolvePushNotificationRecipients = async (
+    scope: PushNotificationScope,
+    batchId?: string,
+    courseId?: string,
+  ): Promise<{ recipientIds: string[]; audienceLabel: string }> => {
+    if (scope === "ALL_STUDENTS") {
+      const students = await prisma.user.findMany({
+        where: { role: Role.STUDENT, isActive: true },
+        select: { id: true },
+      });
+      return { recipientIds: students.map((student) => student.id), audienceLabel: "all active students" };
+    }
+
+    if (scope === "BATCH") {
+      if (!batchId) throw new Error("Select a batch.");
+      const batch = await prisma.batch.findUnique({
+        where: { id: batchId },
+        select: {
+          id: true,
+          name: true,
+          teacherId: true,
+          students: { where: { student: { role: Role.STUDENT, isActive: true } }, select: { studentId: true } },
+        },
+      });
+      if (!batch) throw new Error("Selected batch was not found.");
+      const teacher = batch.teacherId
+        ? await prisma.user.findFirst({ where: { id: batch.teacherId, role: Role.TEACHER, isActive: true }, select: { id: true } })
+        : null;
+      return {
+        recipientIds: [...new Set([
+          ...batch.students.map((membership) => membership.studentId),
+          ...(teacher ? [teacher.id] : []),
+        ])],
+        audienceLabel: `batch ${batch.name}`,
+      };
+    }
+
+    if (!courseId) throw new Error("Select a course.");
+    const course = await prisma.course.findUnique({ where: { id: courseId }, select: { id: true, title: true } });
+    if (!course) throw new Error("Selected course was not found.");
+    const batches = await prisma.batch.findMany({
+      where: {
+        courseId,
+        status: { in: ["Active", "Upcoming", "ACTIVE", "UPCOMING"] },
+      },
+      select: {
+        teacherId: true,
+        students: { where: { student: { role: Role.STUDENT, isActive: true } }, select: { studentId: true } },
+      },
+    });
+    const teacherIds = batches.map((batch) => batch.teacherId).filter((id): id is string => Boolean(id));
+    const activeTeachers = teacherIds.length > 0
+      ? await prisma.user.findMany({ where: { id: { in: teacherIds }, role: Role.TEACHER, isActive: true }, select: { id: true } })
+      : [];
+    return {
+      recipientIds: [...new Set([
+        ...batches.flatMap((batch) => batch.students.map((membership) => membership.studentId)),
+        ...activeTeachers.map((teacher) => teacher.id),
+      ])],
+      audienceLabel: `all active batches of ${course.title}`,
+    };
   };
 
 
@@ -872,6 +937,18 @@
           throw new Error("Please select a batch from the selected course.");
         }
 
+        // A personal 1-to-1 batch is deliberately limited to its one assigned student.
+        // Check the actual memberships rather than the cached counter before moving anyone.
+        const alreadyInTarget = await tx.batchStudent.findUnique({
+          where: { batchId_studentId: { batchId: targetBatchId, studentId: id } },
+        });
+        if (isOneToOneBatch(targetBatch.name, targetBatch.code) && !alreadyInTarget) {
+          const targetStudentCount = await tx.batchStudent.count({ where: { batchId: targetBatchId } });
+          if (targetStudentCount >= 1) {
+            throw new Error("This 1-to-1 batch is already assigned to another student.");
+          }
+        }
+
         const oldMemberships = await tx.batchStudent.findMany({ where: { studentId: id } });
         for (const old of oldMemberships) {
           if (old.batchId !== targetBatchId) {
@@ -885,9 +962,7 @@
           }
         }
 
-        const exists = await tx.batchStudent.findUnique({
-          where: { batchId_studentId: { batchId: targetBatchId, studentId: id } }
-        });
+        const exists = alreadyInTarget;
 
         if (!exists) {
           await tx.batchStudent.create({ data: { batchId: targetBatchId, studentId: id } });
@@ -2588,6 +2663,74 @@
     }
   };
 
+  export const previewPushNotificationAudience = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { scope, batchId, courseId } = req.body;
+      if (!["BATCH", "COURSE", "ALL_STUDENTS"].includes(scope)) {
+        res.status(400).json({ status: "error", message: "Choose a valid notification audience." });
+        return;
+      }
+
+      const audience = await resolvePushNotificationRecipients(scope, batchId, courseId);
+      res.json({
+        status: "success",
+        data: { recipientCount: audience.recipientIds.length, audienceLabel: audience.audienceLabel },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not calculate notification recipients.";
+      res.status(400).json({ status: "error", message });
+    }
+  };
+
+  export const sendAdminPushNotification = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { scope, batchId, courseId, title, message, link } = req.body;
+      const cleanTitle = typeof title === "string" ? title.trim() : "";
+      const cleanMessage = typeof message === "string" ? message.trim() : "";
+      const cleanLink = typeof link === "string" ? link.trim() : "";
+
+      if (!["BATCH", "COURSE", "ALL_STUDENTS"].includes(scope)) {
+        res.status(400).json({ status: "error", message: "Choose a valid notification audience." });
+        return;
+      }
+      if (!cleanTitle || cleanTitle.length > 120) {
+        res.status(400).json({ status: "error", message: "Title is required and must be 120 characters or fewer." });
+        return;
+      }
+      if (!cleanMessage || cleanMessage.length > 500) {
+        res.status(400).json({ status: "error", message: "Message is required and must be 500 characters or fewer." });
+        return;
+      }
+      if (cleanLink && !cleanLink.startsWith("/") && !cleanLink.startsWith("https://kathakbyharshita.com/")) {
+        res.status(400).json({ status: "error", message: "Link must be an in-app path or a Kathak website URL." });
+        return;
+      }
+
+      const audience = await resolvePushNotificationRecipients(scope, batchId, courseId);
+      if (audience.recipientIds.length === 0) {
+        res.status(400).json({ status: "error", message: "No active students or teachers match this audience." });
+        return;
+      }
+
+      await createNotifications(audience.recipientIds.map((userId) => ({
+        userId,
+        type: "ANNOUNCEMENT",
+        title: cleanTitle,
+        message: cleanMessage,
+        link: cleanLink || "/student/notifications",
+      })));
+
+      res.json({
+        status: "success",
+        message: `Notification sent to ${audience.recipientIds.length} recipients in ${audience.audienceLabel}.`,
+        data: { recipientCount: audience.recipientIds.length, audienceLabel: audience.audienceLabel },
+      });
+    } catch (error) {
+      console.error("Send Admin Push Notification Error:", error);
+      res.status(500).json({ status: "error", message: "Notification could not be sent. Please try again." });
+    }
+  };
+
   // 🔥 NEW: Controller to fetch a specific batch by ID
   export const getBatchById = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -3140,6 +3283,20 @@
               message: `“${assignment.title}” has been posted for one of your batches.`,
               link: "/teacher/dashboard",
             })));
+
+            // The batch teacher gets an email as well, so an assignment posted
+            // by an admin is not missed outside the portal.
+            void (async () => {
+              const teachers = await prisma.user.findMany({
+                where: { id: { in: teacherIds }, role: Role.TEACHER, isActive: true },
+                select: { email: true, fullName: true },
+              });
+              await Promise.allSettled(teachers.map((teacher) => sendEmail({
+                to: teacher.email,
+                subject: `New assignment for your batch — ${assignment.title}`,
+                html: `<h2>New assignment posted</h2><p>Namaste ${teacher.fullName},</p><p>An administrator posted “<strong>${assignment.title}</strong>” for one of your assigned batches.</p><p>Please sign in to your teacher portal to review the assignment and student submissions.</p>`,
+              })));
+            })().catch((emailError) => console.error("Assignment teacher email failed:", emailError));
           }
         } else {
           // Broadcast to all active students if no batch specified
@@ -4087,6 +4244,13 @@
 
         return updatedDue;
       });
+
+      // The invoice is committed at this point. Email failures must never undo
+      // a successfully recorded monthly fee payment.
+      void prisma.user.findUnique({ where: { id: due.userId } }).then((student) => {
+        if (student) return sendEnrollmentWelcomeEmail(student, undefined, "MONTHLY_DUE");
+        return false;
+      }).catch((emailError) => console.error("Monthly fee receipt email failed:", emailError));
 
       res.json({ status: "success", message: "Monthly due payment recorded.", data: updated });
     } catch (error) {
@@ -5745,6 +5909,12 @@ export const renewStudentCash = async (
       razorpayOrderId: null,
       razorpayPaymentId: cashTxId,
     });
+
+    if (!completed.alreadyCompleted) {
+      void sendEnrollmentWelcomeEmail(completed.user, undefined, "RENEWAL").catch((emailError) => {
+        console.error("Cash renewal receipt email failed:", emailError);
+      });
+    }
 
     res.json({
       status: "success",

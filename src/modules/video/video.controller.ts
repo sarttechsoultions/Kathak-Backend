@@ -9,6 +9,7 @@ import {
   resolveStudentBatchForAssignment,
 } from "../../lib/batchHelpers";
 import { createNotification, notifyAdmins } from "../notification/notification.controller";
+import { sendEmail } from "../../lib/mailer";
 
 // The academy schedule is set in India time, regardless of where a student
 // opens the portal. Store the date separately, then calculate the precise IST
@@ -629,6 +630,20 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
     await Promise.all([...teacherIds].map((teacherId) =>
       createNotification(teacherId, "VIDEO_SUBMITTED", notificationTitle, notificationMessage, "/teacher/video")
     ));
+
+    // Email is an operational backup for reviewers who are not currently in the app.
+    // It never blocks a student's successful submission.
+    void (async () => {
+      const reviewers = await prisma.user.findMany({
+        where: { OR: [{ role: "ADMIN", isActive: true }, { id: { in: [...teacherIds] }, role: "TEACHER", isActive: true }] },
+        select: { email: true, fullName: true, role: true },
+      });
+      await Promise.allSettled(reviewers.map((reviewer) => sendEmail({
+        to: reviewer.email,
+        subject: `Practice video submitted — ${studentUser?.fullName || "Student"}`,
+        html: `<h2>Practice video submitted</h2><p><strong>${studentUser?.fullName || "A student"}</strong> submitted “${videoTitle}”${isLate ? " after the deadline" : ""}.</p><p><strong>Batch:</strong> ${studentBatch || "Unassigned"}</p><p>Please sign in to the ${reviewer.role === "ADMIN" ? "admin video review" : "teacher portal"} to review it.</p>`,
+      })));
+    })().catch((emailError) => console.error("Video submission reviewer email failed:", emailError));
 
     res.status(201).json({
       status: "success",

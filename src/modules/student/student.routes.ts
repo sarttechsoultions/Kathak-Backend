@@ -16,6 +16,7 @@ import {
   studentLogin,
   getStudentFinance,
   initiateStudentRenewal,
+  verifyStudentRenewalPayment,
   getStudentPaymentReceipt,
   getStudentAssignments,
   submitStudentAssignment,
@@ -67,7 +68,7 @@ router.post("/device-token", ...studentOnly, registerStudentDeviceToken);
 // at the API boundary, not merely hidden in the web interface.
 router.use(...studentOnly);
 router.use((req, res, next) => {
-  const isFinanceRoute = req.path === "/finance" || req.path === "/finance/renewal/initiate" || /^\/finance\/payments\/[^/]+\/receipt$/.test(req.path);
+  const isFinanceRoute = req.path === "/finance" || req.path === "/finance/renewal/initiate" || req.path === "/finance/renewal/verify" || /^\/finance\/payments\/[^/]+\/receipt$/.test(req.path);
   if (req.path === "/dashboard" || isFinanceRoute) return next();
   return requireActiveStudentAccess(req, res, next);
 });
@@ -94,6 +95,7 @@ router.put("/settings/profile", ...studentOnly, updateStudentSettingsProfile);
 router.put("/settings/notifications", ...studentOnly, updateStudentSettingsNotifications);
 router.get("/finance", ...studentOnly, getStudentFinance);
 router.post("/finance/renewal/initiate", ...studentOnly, initiateStudentRenewal);
+router.post("/finance/renewal/verify", ...studentOnly, verifyStudentRenewalPayment);
 router.get("/finance/payments/:paymentId/receipt", ...studentOnly, getStudentPaymentReceipt);
 router.get("/assignments", ...studentOnly, getStudentAssignments);
 router.post("/assignments/submit", ...studentOnly, requireActiveStudentAccess, submitStudentAssignment);
