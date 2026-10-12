@@ -58,7 +58,7 @@ import { createPublicInquiry } from "./modules/inquiries/inquiries.controller";
 
 const app = express();
 
-app.set("trust proxy", true);
+app.set("trust proxy", 1);
 
 app.use(helmet());
 const allowedOrigins = [
