@@ -37,6 +37,7 @@ import {
   evaluateExamResult,
   getExamStudents,
 } from "../admin/exam.controller";
+import { saveFcmToken } from "../notification/notification.controller";
 
 const router = Router();
 
@@ -126,6 +127,13 @@ router.put(
 router.put(
   "/settings/notifications",
   updateNotificationPrefs
+);
+
+// Mobile teachers register their own device token; a batch announcement can
+// then reach them through FCM as well as the in-app notification centre.
+router.post(
+  "/device-token",
+  saveFcmToken
 );
 
 /* -------------------------------------------------------------------------- */

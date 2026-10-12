@@ -222,3 +222,153 @@ export const updateAdminBanner = async (req: Request, res: Response): Promise<vo
     res.status(500).json({ status: "error", message: "Failed to update banner." });
   }
 };
+
+function mobileBannerPayload(body: Record<string, unknown>) {
+  const title = asString(body.title);
+  const imageUrl = asString(body.imageUrl);
+  if (!title || title.length > 120) throw new Error("Title is required and must be 120 characters or less.");
+  if (!imageUrl) throw new Error("A banner image is required.");
+
+  const displayOrder = Number(body.displayOrder ?? 0);
+  if (!Number.isInteger(displayOrder) || displayOrder < 0 || displayOrder > 999) {
+    throw new Error("Display order must be a number between 0 and 999.");
+  }
+
+  const startsAt = body.startsAt ? new Date(asString(body.startsAt)) : null;
+  const endsAt = body.endsAt ? new Date(asString(body.endsAt)) : null;
+  if ((startsAt && Number.isNaN(startsAt.getTime())) || (endsAt && Number.isNaN(endsAt.getTime()))) {
+    throw new Error("Use a valid start or end date.");
+  }
+  if (startsAt && endsAt && startsAt >= endsAt) throw new Error("End date must be after start date.");
+
+  const linkedType = asString(body.linkedType || "NONE").toUpperCase();
+  if (!(["NONE", "COURSE", "EVENT"] as string[]).includes(linkedType)) {
+    throw new Error("Linked item must be a course, event, or none.");
+  }
+  const linkedId = asOptionalString(body.linkedId);
+  if (linkedType !== "NONE" && !linkedId) throw new Error("Select a course or event for this banner.");
+  const parseMoney = (value: unknown, field: string): number | null => {
+    if (value === null || value === undefined || value === "") return null;
+    const numberValue = Number(value);
+    if (!Number.isFinite(numberValue) || numberValue < 0) throw new Error(`${field} must be zero or more.`);
+    return numberValue;
+  };
+  const priceOverride = parseMoney(body.priceOverride, "Sale price");
+  const originalPriceOverride = parseMoney(body.originalPriceOverride, "Original price");
+  if (priceOverride !== null && originalPriceOverride !== null && originalPriceOverride < priceOverride) {
+    throw new Error("Original price cannot be lower than sale price.");
+  }
+
+  return {
+    title,
+    subtitle: asString(body.subtitle).slice(0, 280),
+    imageUrl,
+    imageAlt: asOptionalString(body.imageAlt) || title,
+    ctaLabel: asOptionalString(body.ctaLabel),
+    ctaLink: asOptionalString(body.ctaLink),
+    linkedType,
+    linkedId: linkedType === "NONE" ? null : linkedId,
+    priceOverride,
+    originalPriceOverride,
+    displayOrder,
+    isActive: body.isActive === undefined ? true : Boolean(body.isActive),
+    startsAt,
+    endsAt,
+  };
+}
+
+async function withMobileBannerPricing(items: Array<{
+  linkedType: string; linkedId: string | null; priceOverride: number | null; originalPriceOverride: number | null;
+}>) {
+  const courseIds = items.filter((item) => item.linkedType === "COURSE" && item.linkedId).map((item) => item.linkedId as string);
+  const eventIds = items.filter((item) => item.linkedType === "EVENT" && item.linkedId).map((item) => item.linkedId as string);
+  const [courses, events] = await Promise.all([
+    courseIds.length ? prisma.course.findMany({ where: { id: { in: courseIds } }, select: { id: true, title: true, groupFeeINR: true, groupOriginalFeeINR: true, slug: true } }) : [],
+    eventIds.length ? prisma.event.findMany({ where: { id: { in: eventIds } }, select: { id: true, title: true, registrationFee: true } }) : [],
+  ]);
+  const courseById = new Map(courses.map((item) => [item.id, item]));
+  const eventById = new Map(events.map((item) => [item.id, item]));
+
+  return items.map((item) => {
+    const linked = item.linkedType === "COURSE" ? courseById.get(item.linkedId || "") : eventById.get(item.linkedId || "");
+    const currentPrice = item.priceOverride ?? (item.linkedType === "COURSE" ? (linked as typeof courses[number] | undefined)?.groupFeeINR : (linked as typeof events[number] | undefined)?.registrationFee) ?? null;
+    const originalPrice = item.originalPriceOverride ?? (item.linkedType === "COURSE" ? (linked as typeof courses[number] | undefined)?.groupOriginalFeeINR : null) ?? null;
+    const discountPercent = currentPrice !== null && originalPrice !== null && originalPrice > currentPrice
+      ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100)
+      : null;
+    return { ...item, linkedTitle: linked?.title || null, pricing: currentPrice === null ? null : { currentPrice, originalPrice, currency: "INR", discountPercent } };
+  });
+}
+
+export const getPublicMobileBanners = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const now = new Date();
+    const items = await prisma.mobileAppBanner.findMany({
+      where: {
+        isActive: true,
+        AND: [
+          { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+          { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+        ],
+      },
+      orderBy: [{ displayOrder: "asc" }, { createdAt: "desc" }],
+    });
+    res.status(200).json({ status: "success", data: await withMobileBannerPricing(items) });
+  } catch (error) {
+    console.error("Error fetching mobile app banners:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch mobile app banners." });
+  }
+};
+
+export const getAdminMobileBanners = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const items = await prisma.mobileAppBanner.findMany({
+      include: { updatedBy: { select: { id: true, fullName: true } } },
+      orderBy: [{ displayOrder: "asc" }, { createdAt: "desc" }],
+    });
+    res.status(200).json({ status: "success", data: await withMobileBannerPricing(items) });
+  } catch (error) {
+    console.error("Error fetching admin mobile app banners:", error);
+    res.status(500).json({ status: "error", message: "Failed to fetch mobile app banners." });
+  }
+};
+
+export const createAdminMobileBanner = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const item = await prisma.mobileAppBanner.create({
+      data: { ...mobileBannerPayload(req.body || {}), updatedById: req.user?.id || null },
+    });
+    res.status(201).json({ status: "success", data: item });
+  } catch (error) {
+    res.status(400).json({ status: "error", message: error instanceof Error ? error.message : "Failed to create mobile app banner." });
+  }
+};
+
+export const updateAdminMobileBanner = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const existing = await prisma.mobileAppBanner.findUnique({ where: { id } });
+    if (!existing) {
+      res.status(404).json({ status: "error", message: "Mobile app banner not found." });
+      return;
+    }
+    const item = await prisma.mobileAppBanner.update({
+      where: { id: existing.id },
+      data: { ...mobileBannerPayload({ ...existing, ...(req.body || {}) }), updatedById: req.user?.id || existing.updatedById },
+    });
+    res.status(200).json({ status: "success", data: item });
+  } catch (error) {
+    res.status(400).json({ status: "error", message: error instanceof Error ? error.message : "Failed to update mobile app banner." });
+  }
+};
+
+export const deleteAdminMobileBanner = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    await prisma.mobileAppBanner.delete({ where: { id } });
+    res.status(200).json({ status: "success", message: "Mobile app banner deleted." });
+  } catch (error) {
+    console.error("Error deleting mobile app banner:", error);
+    res.status(404).json({ status: "error", message: "Mobile app banner not found." });
+  }
+};

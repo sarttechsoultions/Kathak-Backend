@@ -1450,8 +1450,13 @@ if (!enrollment) {
     payload.batchId;
   let batchFeeStartDate: Date | null = null;
 
+  // A personal batch and its timetable are created only for a brand-new
+  // one-to-one enrollment. A renewal continues the student's existing
+  // membership; it must not require a new preferred date/time or create
+  // another personal batch.
   if (
-    enrollmentType === "ONE_TO_ONE"
+    enrollmentType === "ONE_TO_ONE" &&
+    operationType === "NEW"
   ) {
     const oneToOneBatch =
       await createOneToOneBatch(
@@ -1779,7 +1784,8 @@ if (!enrollment) {
       monthlyBaseAmount: anyPayload.monthlyBaseAmount || 0,
       joiningFeeApplied: anyPayload.joiningFeeApplied || 0,
       discountAmount: anyPayload.discountAmount || 0,
-      paymentMode: anyPayload.paymentMode || paymentRecord.gateway || "ONLINE"
+      paymentMode: anyPayload.paymentMode || paymentRecord.gateway || "ONLINE",
+      operationType,
     };
 
     await tx.invoice.upsert({
@@ -2036,7 +2042,8 @@ export const sendEnrollmentWelcomeEmail =
       phone?: string | null;
       address?: string | null;
     },
-    plaintextPassword?: string
+    plaintextPassword?: string,
+    paymentKind: "ENROLLMENT" | "RENEWAL" | "MONTHLY_DUE" = "ENROLLMENT"
   ): Promise<boolean> => {
     try {
       const payment =
@@ -2116,24 +2123,25 @@ export const sendEnrollmentWelcomeEmail =
 
         subject: invoice
           ? invoice.snapshot?.billingGstin
-            ? "Welcome to Kathak Academy — Tax Invoice"
-            : "Welcome to Kathak Academy — Enrollment & Payment Receipt"
-          : "Welcome to Kathak Academy!",
+            ? paymentKind === "ENROLLMENT" ? "Welcome to Kathak Academy — Tax Invoice" : "Kathak Academy — Tax Invoice"
+            : paymentKind === "ENROLLMENT" ? "Welcome to Kathak Academy — Enrollment & Payment Receipt" : "Kathak Academy — Payment Receipt"
+          : paymentKind === "ENROLLMENT" ? "Welcome to Kathak Academy!" : "Kathak Academy — Payment Confirmation",
 
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
             <h2 style="color: #900C27; text-align: center;">
-              Welcome to Kathak Academy
+              ${paymentKind === "ENROLLMENT" ? "Welcome to Kathak Academy" : "Payment received"}
             </h2>
 
             <p>Hi ${user.fullName},</p>
 
             <p>
-              Thank you for registering with us!
-              Your enrollment and payment have been successfully processed.
+              ${paymentKind === "ENROLLMENT"
+                ? "Thank you for registering with us! Your enrollment and payment have been successfully processed."
+                : "Thank you. Your fee payment has been successfully received and recorded."}
             </p>
 
-            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            ${paymentKind === "ENROLLMENT" ? `<div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
               <h3 style="margin-top: 0; color: #1B1B24;">
                 Your Login Details
               </h3>
@@ -2155,7 +2163,7 @@ export const sendEnrollmentWelcomeEmail =
                   ? `<p><strong>Password:</strong> ${plaintextPassword}</p>`
                   : `<p>Use the portal password you created during enrollment to sign in.</p>`
               }
-            </div>
+            </div>` : ""}
 
             ${
               invoice
@@ -2184,22 +2192,31 @@ export const sendEnrollmentWelcomeEmail =
         attachments,
       });
 
-      // Keep the academy informed without making a successful enrollment
+      // Keep every active admin informed without making the paid transaction
       // depend on a second, operational email being delivered.
-      void sendEmail({
-        to: "kathakbyharshita@gmail.com",
-        subject: `New student enrollment: ${user.fullName}`,
-        html: `
-          <h2>New student enrollment</h2>
-          <p>A student has successfully enrolled and paid.</p>
+      const admins = await prisma.user.findMany({
+        where: { role: Role.ADMIN, isActive: true },
+        select: { email: true },
+      });
+      const adminSubject = paymentKind === "ENROLLMENT" ? `New student enrollment: ${user.fullName}` : `Fee payment received: ${user.fullName}`;
+      const adminHtml = `
+          <h2>${paymentKind === "ENROLLMENT" ? "New student enrollment" : "Student fee payment received"}</h2>
+          <p>${paymentKind === "ENROLLMENT" ? "A student has successfully enrolled and paid." : "A student payment has been successfully recorded."}</p>
           <p><strong>Name:</strong> ${user.fullName}</p>
           <p><strong>Email:</strong> ${user.email}</p>
           <p><strong>Phone:</strong> ${user.phone || "Not provided"}</p>
           <p><strong>Course:</strong> ${invoice?.courseTitle || "Kathak Course Enrollment"}</p>
           <p><strong>Batch:</strong> ${invoice?.batchName || "To be assigned"}</p>
           <p><strong>Amount:</strong> ${invoice ? `${invoice.currency} ${invoice.amount}` : "Not available"}</p>
+          <p><strong>Receipt:</strong> ${invoice?.invoiceNumber || "Available in Finance"}</p>
+        `;
+      void Promise.allSettled(admins.map((admin) => sendEmail({
+        to: admin.email,
+        subject: adminSubject,
+        html: `
+          ${adminHtml}
         `,
-      }).catch((adminEmailError) => {
+      }))).catch((adminEmailError) => {
         console.error(`[ENROLLMENT_ADMIN_EMAIL_FAILURE] Failed to notify the academy about ${user.email}:`, adminEmailError);
       });
 

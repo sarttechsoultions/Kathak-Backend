@@ -69,6 +69,7 @@ model User {
   examResults                 ExamResult[]
   uploadedGalleryItems        GalleryItem[]            @relation("UploadedGalleryItems")
   updatedHeroBanners          HeroBanner[]             @relation("UpdatedHeroBanners")
+  updatedMobileAppBanners     MobileAppBanner[]        @relation("UpdatedMobileAppBanners")
   inquiries                   Inquiry[]
   updatedLeadPopups           LeadPopup[]              @relation("UpdatedLeadPopups")
   leaveRequests               LeaveRequest[]
@@ -907,6 +908,30 @@ model HeroBanner {
   updatedBy         User?         @relation("UpdatedHeroBanners", fields: [updatedById], references: [id])
 
   @@index([pageKey])
+}
+
+model MobileAppBanner {
+  id           String   @id @default(uuid())
+  title        String
+  subtitle     String   @default("")
+  imageUrl     String
+  imageAlt     String?
+  ctaLabel     String?
+  ctaLink      String?
+  linkedType   String   @default("NONE")
+  linkedId     String?
+  priceOverride Float?
+  originalPriceOverride Float?
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  startsAt     DateTime?
+  endsAt       DateTime?
+  updatedById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  updatedBy    User?    @relation("UpdatedMobileAppBanners", fields: [updatedById], references: [id])
+
+  @@index([isActive, displayOrder])
 }
 
 model LeadPopup {

@@ -75,7 +75,9 @@ import {
   previewRenewalPricing,
   getTeacherSalaryPayments,
   recordTeacherSalaryPayment,
-  downloadTeacherSalaryReceipt
+  downloadTeacherSalaryReceipt,
+  previewPushNotificationAudience,
+  sendAdminPushNotification
 } from "./admin.controller";
 import { getReportsOverview } from "./admin.reports.controller";
 import { getStudentReports, getStudentReportDetail, downloadStudentReportPdf } from "./studentReports.controller";
@@ -144,6 +146,11 @@ router.post("/batches", requirePermission(Permission.MANAGE_BATCHES), createBatc
 router.put("/batches/:id", requirePermission(Permission.MANAGE_BATCHES), updateBatch);
 router.delete("/batches/:id", requirePermission(Permission.MANAGE_BATCHES), deleteBatch);
 router.get("/batches/:batchId/students", requirePermission(Permission.MANAGE_BATCHES), getBatchStudents);
+
+// Targeted push announcements for enrolled students and their assigned teachers.
+// The preview protects against accidental mass sends.
+router.post("/push-notifications/preview", requirePermission(Permission.MANAGE_COMMUNICATION), previewPushNotificationAudience);
+router.post("/push-notifications", requirePermission(Permission.MANAGE_COMMUNICATION), sendAdminPushNotification);
 
 // 5.5 Assignment Management (admins + teachers, same as video module)
 router.get("/assignments", requireRole(Role.ADMIN, Role.TEACHER), getAssignments);

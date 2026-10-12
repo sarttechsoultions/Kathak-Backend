@@ -1517,6 +1517,14 @@ export const handleRazorpayWebhook = async (
     // completePendingEnrollment() owns the atomic finalization.
     // ------------------------------------------------------------
 
+    const pendingForEmail = await prisma.pendingEnrollment.findFirst({
+      where: pendingId ? { id: pendingId } : { razorpayOrderId },
+      select: { payload: true },
+    });
+    const paymentKind = (pendingForEmail?.payload as { operationType?: string } | null)?.operationType === "RENEWAL"
+      ? "RENEWAL"
+      : "ENROLLMENT";
+
     const result =
       await completePendingEnrollment({
         pendingId:
@@ -1539,7 +1547,9 @@ export const handleRazorpayWebhook = async (
       !result.alreadyCompleted
     ) {
       await sendEnrollmentWelcomeEmail(
-        result.user
+        result.user,
+        undefined,
+        paymentKind
       );
     }
 
