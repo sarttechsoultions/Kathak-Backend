@@ -3,6 +3,7 @@ import { prisma } from "../../lib/prisma";
 import {
   buildStudentBatchTargetWhere,
   getStudentBatchMembershipRows,
+  getTeacherBatchIds,
   getStudentBatchName,
   getTeacherBatchNames,
   getUserDisplayName,
@@ -79,11 +80,10 @@ export async function getDirectory(req: Request, res: Response): Promise<void> {
         ...assignedBatches.map((b) => ({ courseAndBatch: { contains: b } })),
       ];
     } else if (user.role === "STUDENT") {
-      const studentBatch = await getStudentBatchName(user.id);
-      whereClause.OR = [
-        { studentId: user.id },
-        ...(studentBatch ? [{ studentBatch }] : []),
-      ];
+      // A submission belongs to its author, not to every student in the same
+      // batch.  Student pages use the history endpoint, but keeping this list
+      // owner-scoped prevents an API caller from browsing classmates' videos.
+      whereClause = { studentId: user.id };
     } else {
       res.status(403).json({ status: "error", message: "Access denied for this role." });
       return;
@@ -160,10 +160,8 @@ export async function getStudentHistory(req: Request, res: Response): Promise<vo
     }
 
     if (user.role === "TEACHER") {
-      const teacherName = await getUserDisplayName(user.id, user.email);
-      const assignedBatches = await getTeacherBatchNames(user.id, teacherName);
-
-      if (assignedBatches.length === 0) {
+      const teacherBatchIds = await getTeacherBatchIds(user.id);
+      if (teacherBatchIds.length === 0) {
         res.status(403).json({
           status: "error",
           message: "You have no assigned batches yet.",
@@ -171,10 +169,9 @@ export async function getStudentHistory(req: Request, res: Response): Promise<vo
         return;
       }
 
-      const studentBatch = await getStudentBatchName(safeStudentId);
-      const allowed = assignedBatches.some(
-        (b) => b.toLowerCase() === studentBatch.toLowerCase()
-      );
+      const allowed = await prisma.batchStudent.count({
+        where: { studentId: safeStudentId, batchId: { in: teacherBatchIds } },
+      });
 
       if (!allowed) {
         res.status(403).json({
@@ -503,6 +500,15 @@ export async function evaluateVideoSubmission(req: Request, res: Response): Prom
       },
     });
 
+    const reviewerName = await getUserDisplayName(user.id, user.email);
+    await createNotification(
+      submission.studentId,
+      "VIDEO_EVALUATED",
+      "Practice video evaluated",
+      `${reviewerName} reviewed “${submission.videoTitle}” and gave you ${numericScore}/100.`,
+      `/student/video-submission/evaluation?submissionId=${submission.id}`
+    );
+
     res.json({
       status: "success",
       message: `Video evaluation saved with score ${numericScore}/100!`,
@@ -793,13 +799,22 @@ export async function getTaskSubmissionsDetail(req: Request, res: Response): Pro
       return;
     }
 
+    const taskSubmissionWhere: any = {
+      OR: [{ taskId: task.id }, { videoTitle: task.title }],
+    };
+    let teacherStudentIds: string[] | null = null;
+    if (user.role === "TEACHER") {
+      const teacherBatchIds = await getTeacherBatchIds(user.id);
+      const memberships = await prisma.batchStudent.findMany({
+        where: { batchId: { in: teacherBatchIds } },
+        select: { studentId: true },
+      });
+      teacherStudentIds = [...new Set(memberships.map((membership) => membership.studentId))];
+      taskSubmissionWhere.AND = [{ studentId: { in: teacherStudentIds } }];
+    }
+
     const submissions = await prisma.videoSubmission.findMany({
-      where: {
-        OR: [
-          { taskId: task.id },
-          { videoTitle: task.title }
-        ]
-      },
+      where: taskSubmissionWhere,
       orderBy: { createdAt: "desc" },
     });
 
@@ -819,6 +834,15 @@ export async function getTaskSubmissionsDetail(req: Request, res: Response): Pro
       if (targetBatch && targetBatch.students) {
         batchStudents = targetBatch.students;
       }
+    }
+
+    // Academy-wide tasks can be opened by each teacher, but their roster must
+    // remain limited to students in that teacher's own assigned batches.
+    if (teacherStudentIds) {
+      const allowedStudentIds = new Set(teacherStudentIds);
+      batchStudents = batchStudents.filter((membership: any) =>
+        allowedStudentIds.has(membership.studentId)
+      );
     }
 
     const submittedStudentIds = new Set(submissions.map((s: any) => s.studentId).filter(Boolean));
