@@ -872,6 +872,18 @@ model JourneyCarouselSettings {
   updatedAt          DateTime @updatedAt
 }
 
+model PerformanceSectionSettings {
+  id                   String   @id @default("performance-section")
+  eyebrow              String   @default("Featured Performance")
+  title                String   @default("Experience the Rhythm of Kathak")
+  description          String   @default("Experience the artistry, grace and timeless tradition of Kathak for your celebration, cultural program or special event.")
+  eventLabels          String   @default("Available for Events, Weddings, Cultural Programs, Workshops")
+  primaryButtonLabel   String   @default("Book This Performance")
+  secondaryButtonLabel String   @default("Watch Full Video")
+  backgroundImageUrl   String?
+  updatedAt            DateTime @updatedAt
+}
+
 model JourneyCarouselItem {
   id        String   @id @default(uuid())
   title     String
