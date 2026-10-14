@@ -256,6 +256,7 @@ async function uploadToBunnyStream(buffer: Buffer, title: string): Promise<{ vid
     thumbnailUrl,
   };
 }
+
 export const uploadVideoToBunny = async (req: Request, res: Response): Promise<void> => {
   try {
     const filesToUpload = Array.isArray(req.files) && req.files.length > 0 ? (req.files as Express.Multer.File[]) : (req.file ? [req.file] : []);

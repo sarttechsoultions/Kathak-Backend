@@ -9,7 +9,7 @@ import {
   getUserDisplayName,
   resolveStudentBatchForAssignment,
 } from "../../lib/batchHelpers";
-import { createNotification, notifyAdmins } from "../notification/notification.controller";
+import { createNotification, createNotifications, notifyAdmins } from "../notification/notification.controller";
 import { sendEmail } from "../../lib/mailer";
 
 // The academy schedule is set in India time, regardless of where a student
@@ -387,6 +387,70 @@ export async function createVideoTask(req: Request, res: Response): Promise<void
         createdByName: creatorName,
       },
     });
+
+    // Notify the exact students who can see this task. Previously video tasks
+    // appeared only after a student opened the practice page, unlike regular
+    // assignments which already send an in-app notification.
+    try {
+      let recipientIds: string[] = [];
+      if (batchId) {
+        const memberships = await prisma.batchStudent.findMany({
+          where: { batchId: String(batchId) },
+          select: { studentId: true },
+        });
+        recipientIds = memberships.map((membership) => membership.studentId);
+      } else if (["all", "all batches", "all batches & courses"].includes(targetBatch.trim().toLowerCase())) {
+        const students = await prisma.user.findMany({
+          where: { role: "STUDENT", isActive: true },
+          select: { id: true },
+        });
+        recipientIds = students.map((student) => student.id);
+      } else {
+        const names = targetBatch.split(",").map((name: string) => name.trim()).filter(Boolean);
+        const batches = await prisma.batch.findMany({
+          where: { OR: [{ name: { in: names } }, { code: { in: names } }] },
+          select: { id: true },
+        });
+        if (batches.length) {
+          const memberships = await prisma.batchStudent.findMany({
+            where: { batchId: { in: batches.map((batch) => batch.id) } },
+            select: { studentId: true },
+          });
+          recipientIds = memberships.map((membership) => membership.studentId);
+        }
+      }
+
+      const uniqueStudentIds = [...new Set(recipientIds)];
+      const deadlineLabel = getTaskDeadline(newTask.submissionDate, newTask.cutOffTime).toLocaleString("en-IN", {
+        timeZone: ACADEMY_TIME_ZONE,
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+      await createNotifications(uniqueStudentIds.map((studentId) => ({
+        userId: studentId,
+        type: "VIDEO_TASK_ASSIGNED",
+        title: "New practice video task",
+        message: `“${newTask.title}” has been assigned. Submit it by ${deadlineLabel} IST.`,
+        link: "/student/video-submission",
+      })));
+
+      // Email is a backup for students who are not signed in when the task is posted.
+      void (async () => {
+        const students = await prisma.user.findMany({
+          where: { id: { in: uniqueStudentIds }, role: "STUDENT", isActive: true },
+          select: { email: true, fullName: true },
+        });
+        await Promise.allSettled(students.map((student) => sendEmail({
+          to: student.email,
+          subject: `New practice video task — ${newTask.title}`,
+          html: `<h2>New practice video task</h2><p>Namaste ${student.fullName || "Student"},</p><p>“<strong>${newTask.title}</strong>” has been assigned to you.</p><p><strong>Submission deadline:</strong> ${deadlineLabel} IST</p><p>Please sign in to your student portal to upload your practice video.</p>`,
+        })));
+      })().catch((emailError) => console.error("Video task student email failed:", emailError));
+    } catch (notificationError) {
+      // A temporary notification failure must not roll back a successfully
+      // created task; students can still see it in their task list.
+      console.error("Failed to notify students about video task:", notificationError);
+    }
 
     res.status(201).json({
       status: "success",

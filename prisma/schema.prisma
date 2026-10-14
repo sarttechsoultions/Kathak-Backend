@@ -881,6 +881,8 @@ model PerformanceSectionSettings {
   primaryButtonLabel   String   @default("Book This Performance")
   secondaryButtonLabel String   @default("Watch Full Video")
   backgroundImageUrl   String?
+  previewVideoUrl      String?
+  youtubeUrl           String?
   updatedAt            DateTime @updatedAt
 }
 
