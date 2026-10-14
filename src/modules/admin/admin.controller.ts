@@ -3255,7 +3255,9 @@
             select: { studentId: true },
           });
 
-          const uniqueStudentIds = [...new Set(studentsInBatch.map((s: { studentId: string }) => s.studentId))];
+          const uniqueStudentIds: string[] = Array.from(
+            new Set<string>((studentsInBatch as Array<{ studentId: string }>).map((student) => String(student.studentId)))
+          );
 
           if (uniqueStudentIds.length > 0) {
             const notifications = uniqueStudentIds.map((studentId) => ({
@@ -3266,6 +3268,18 @@
               link: "/student/assignments",
             }));
             await createNotifications(notifications);
+
+            void (async () => {
+              const students = await prisma.user.findMany({
+                where: { id: { in: uniqueStudentIds }, role: Role.STUDENT, isActive: true },
+                select: { email: true, fullName: true },
+              });
+              await Promise.allSettled(students.map((student) => sendEmail({
+                to: student.email,
+                subject: `New assignment — ${assignment.title}`,
+                html: `<h2>New assignment posted</h2><p>Namaste ${student.fullName || "Student"},</p><p>“<strong>${assignment.title}</strong>” has been posted for your batch.</p><p>Please sign in to your student portal to review the instructions and submit your work.</p>`,
+              })));
+            })().catch((emailError) => console.error("Assignment student email failed:", emailError));
           }
 
           // When an admin posts work for a batch, its assigned teacher must
@@ -3313,6 +3327,18 @@
               link: "/student/assignments",
             }));
             await createNotifications(notifications);
+
+            void (async () => {
+              const students = await prisma.user.findMany({
+                where: { id: { in: allStudents.map((student: { id: string }) => student.id) }, role: Role.STUDENT, isActive: true },
+                select: { email: true, fullName: true },
+              });
+              await Promise.allSettled(students.map((student) => sendEmail({
+                to: student.email,
+                subject: `New assignment — ${assignment.title}`,
+                html: `<h2>New assignment posted</h2><p>Namaste ${student.fullName || "Student"},</p><p>“<strong>${assignment.title}</strong>” has been posted for you.</p><p>Please sign in to your student portal to review the instructions and submit your work.</p>`,
+              })));
+            })().catch((emailError) => console.error("Global assignment student email failed:", emailError));
           }
         }
       } catch (notifErr) {

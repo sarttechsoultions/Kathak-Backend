@@ -27,6 +27,8 @@ const PERFORMANCE_SETTINGS_DEFAULTS = {
   primaryButtonLabel: "Book This Performance",
   secondaryButtonLabel: "Watch Full Video",
   backgroundImageUrl: null as string | null,
+  previewVideoUrl: null as string | null,
+  youtubeUrl: null as string | null,
 };
 
 type PerformanceSectionSettingsRow = typeof PERFORMANCE_SETTINGS_DEFAULTS & { updatedAt: Date };
@@ -39,8 +41,8 @@ function performanceSettingValue(value: unknown, fallback: string, max = 600): s
 export const getPerformanceSectionSettings = async (_req: Request, res: Response): Promise<void> => {
   try {
     const rows = await prisma.$queryRaw<PerformanceSectionSettingsRow[]>`
-      INSERT INTO "PerformanceSectionSettings" ("id", "eyebrow", "title", "description", "eventLabels", "primaryButtonLabel", "secondaryButtonLabel", "updatedAt")
-      VALUES (${PERFORMANCE_SETTINGS_DEFAULTS.id}, ${PERFORMANCE_SETTINGS_DEFAULTS.eyebrow}, ${PERFORMANCE_SETTINGS_DEFAULTS.title}, ${PERFORMANCE_SETTINGS_DEFAULTS.description}, ${PERFORMANCE_SETTINGS_DEFAULTS.eventLabels}, ${PERFORMANCE_SETTINGS_DEFAULTS.primaryButtonLabel}, ${PERFORMANCE_SETTINGS_DEFAULTS.secondaryButtonLabel}, NOW())
+      INSERT INTO "PerformanceSectionSettings" ("id", "eyebrow", "title", "description", "eventLabels", "primaryButtonLabel", "secondaryButtonLabel", "previewVideoUrl", "youtubeUrl", "updatedAt")
+      VALUES (${PERFORMANCE_SETTINGS_DEFAULTS.id}, ${PERFORMANCE_SETTINGS_DEFAULTS.eyebrow}, ${PERFORMANCE_SETTINGS_DEFAULTS.title}, ${PERFORMANCE_SETTINGS_DEFAULTS.description}, ${PERFORMANCE_SETTINGS_DEFAULTS.eventLabels}, ${PERFORMANCE_SETTINGS_DEFAULTS.primaryButtonLabel}, ${PERFORMANCE_SETTINGS_DEFAULTS.secondaryButtonLabel}, ${PERFORMANCE_SETTINGS_DEFAULTS.previewVideoUrl}, ${PERFORMANCE_SETTINGS_DEFAULTS.youtubeUrl}, NOW())
       ON CONFLICT ("id") DO UPDATE SET "id" = EXCLUDED."id"
       RETURNING *
     `;
@@ -60,11 +62,13 @@ export const updatePerformanceSectionSettings = async (req: Request, res: Respon
     const primaryButtonLabel = performanceSettingValue(req.body?.primaryButtonLabel, PERFORMANCE_SETTINGS_DEFAULTS.primaryButtonLabel, 80);
     const secondaryButtonLabel = performanceSettingValue(req.body?.secondaryButtonLabel, PERFORMANCE_SETTINGS_DEFAULTS.secondaryButtonLabel, 80);
     const backgroundImageUrl = asString(req.body?.backgroundImageUrl).slice(0, 1000) || null;
+    const previewVideoUrl = asString(req.body?.previewVideoUrl).slice(0, 1000) || null;
+    const youtubeUrl = asString(req.body?.youtubeUrl).slice(0, 1000) || null;
     const rows = await prisma.$queryRaw<PerformanceSectionSettingsRow[]>`
-      INSERT INTO "PerformanceSectionSettings" ("id", "eyebrow", "title", "description", "eventLabels", "primaryButtonLabel", "secondaryButtonLabel", "backgroundImageUrl", "updatedAt")
-      VALUES (${PERFORMANCE_SETTINGS_DEFAULTS.id}, ${eyebrow}, ${title}, ${description}, ${eventLabels}, ${primaryButtonLabel}, ${secondaryButtonLabel}, ${backgroundImageUrl}, NOW())
+      INSERT INTO "PerformanceSectionSettings" ("id", "eyebrow", "title", "description", "eventLabels", "primaryButtonLabel", "secondaryButtonLabel", "backgroundImageUrl", "previewVideoUrl", "youtubeUrl", "updatedAt")
+      VALUES (${PERFORMANCE_SETTINGS_DEFAULTS.id}, ${eyebrow}, ${title}, ${description}, ${eventLabels}, ${primaryButtonLabel}, ${secondaryButtonLabel}, ${backgroundImageUrl}, ${previewVideoUrl}, ${youtubeUrl}, NOW())
       ON CONFLICT ("id") DO UPDATE SET
-        "eyebrow" = EXCLUDED."eyebrow", "title" = EXCLUDED."title", "description" = EXCLUDED."description", "eventLabels" = EXCLUDED."eventLabels", "primaryButtonLabel" = EXCLUDED."primaryButtonLabel", "secondaryButtonLabel" = EXCLUDED."secondaryButtonLabel", "backgroundImageUrl" = EXCLUDED."backgroundImageUrl", "updatedAt" = NOW()
+        "eyebrow" = EXCLUDED."eyebrow", "title" = EXCLUDED."title", "description" = EXCLUDED."description", "eventLabels" = EXCLUDED."eventLabels", "primaryButtonLabel" = EXCLUDED."primaryButtonLabel", "secondaryButtonLabel" = EXCLUDED."secondaryButtonLabel", "backgroundImageUrl" = EXCLUDED."backgroundImageUrl", "previewVideoUrl" = EXCLUDED."previewVideoUrl", "youtubeUrl" = EXCLUDED."youtubeUrl", "updatedAt" = NOW()
       RETURNING *
     `;
     res.status(200).json({ status: "success", message: "Performance section details saved.", data: rows[0] });

@@ -142,9 +142,16 @@ export function studentCanAccessBatchTarget<
 export async function getTeacherBatchNames(teacherId: string, teacherName?: string): Promise<string[]> {
   try {
     const batches = await prisma.batch.findMany({
-      where: teacherName
-        ? { teacherName: { equals: teacherName, mode: "insensitive" as const } }
-        : {},
+      // `teacherId` is the authoritative assignment.  Keep the name-based
+      // match only for older batch records that predate the teacher relation.
+      where: {
+        OR: [
+          { teacherId },
+          ...(teacherName
+            ? [{ teacherName: { equals: teacherName, mode: "insensitive" as const } }]
+            : []),
+        ],
+      },
       select: { name: true, code: true },
     });
 

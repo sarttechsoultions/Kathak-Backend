@@ -3,12 +3,13 @@ import { prisma } from "../../lib/prisma";
 import {
   buildStudentBatchTargetWhere,
   getStudentBatchMembershipRows,
+  getTeacherBatchIds,
   getStudentBatchName,
   getTeacherBatchNames,
   getUserDisplayName,
   resolveStudentBatchForAssignment,
 } from "../../lib/batchHelpers";
-import { createNotification, notifyAdmins } from "../notification/notification.controller";
+import { createNotification, createNotifications, notifyAdmins } from "../notification/notification.controller";
 import { sendEmail } from "../../lib/mailer";
 
 // The academy schedule is set in India time, regardless of where a student
@@ -79,11 +80,10 @@ export async function getDirectory(req: Request, res: Response): Promise<void> {
         ...assignedBatches.map((b) => ({ courseAndBatch: { contains: b } })),
       ];
     } else if (user.role === "STUDENT") {
-      const studentBatch = await getStudentBatchName(user.id);
-      whereClause.OR = [
-        { studentId: user.id },
-        ...(studentBatch ? [{ studentBatch }] : []),
-      ];
+      // A submission belongs to its author, not to every student in the same
+      // batch.  Student pages use the history endpoint, but keeping this list
+      // owner-scoped prevents an API caller from browsing classmates' videos.
+      whereClause = { studentId: user.id };
     } else {
       res.status(403).json({ status: "error", message: "Access denied for this role." });
       return;
@@ -160,10 +160,8 @@ export async function getStudentHistory(req: Request, res: Response): Promise<vo
     }
 
     if (user.role === "TEACHER") {
-      const teacherName = await getUserDisplayName(user.id, user.email);
-      const assignedBatches = await getTeacherBatchNames(user.id, teacherName);
-
-      if (assignedBatches.length === 0) {
+      const teacherBatchIds = await getTeacherBatchIds(user.id);
+      if (teacherBatchIds.length === 0) {
         res.status(403).json({
           status: "error",
           message: "You have no assigned batches yet.",
@@ -171,10 +169,9 @@ export async function getStudentHistory(req: Request, res: Response): Promise<vo
         return;
       }
 
-      const studentBatch = await getStudentBatchName(safeStudentId);
-      const allowed = assignedBatches.some(
-        (b) => b.toLowerCase() === studentBatch.toLowerCase()
-      );
+      const allowed = await prisma.batchStudent.count({
+        where: { studentId: safeStudentId, batchId: { in: teacherBatchIds } },
+      });
 
       if (!allowed) {
         res.status(403).json({
@@ -391,6 +388,70 @@ export async function createVideoTask(req: Request, res: Response): Promise<void
       },
     });
 
+    // Notify the exact students who can see this task. Previously video tasks
+    // appeared only after a student opened the practice page, unlike regular
+    // assignments which already send an in-app notification.
+    try {
+      let recipientIds: string[] = [];
+      if (batchId) {
+        const memberships = await prisma.batchStudent.findMany({
+          where: { batchId: String(batchId) },
+          select: { studentId: true },
+        });
+        recipientIds = memberships.map((membership) => membership.studentId);
+      } else if (["all", "all batches", "all batches & courses"].includes(targetBatch.trim().toLowerCase())) {
+        const students = await prisma.user.findMany({
+          where: { role: "STUDENT", isActive: true },
+          select: { id: true },
+        });
+        recipientIds = students.map((student) => student.id);
+      } else {
+        const names = targetBatch.split(",").map((name: string) => name.trim()).filter(Boolean);
+        const batches = await prisma.batch.findMany({
+          where: { OR: [{ name: { in: names } }, { code: { in: names } }] },
+          select: { id: true },
+        });
+        if (batches.length) {
+          const memberships = await prisma.batchStudent.findMany({
+            where: { batchId: { in: batches.map((batch) => batch.id) } },
+            select: { studentId: true },
+          });
+          recipientIds = memberships.map((membership) => membership.studentId);
+        }
+      }
+
+      const uniqueStudentIds = [...new Set(recipientIds)];
+      const deadlineLabel = getTaskDeadline(newTask.submissionDate, newTask.cutOffTime).toLocaleString("en-IN", {
+        timeZone: ACADEMY_TIME_ZONE,
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+      await createNotifications(uniqueStudentIds.map((studentId) => ({
+        userId: studentId,
+        type: "VIDEO_TASK_ASSIGNED",
+        title: "New practice video task",
+        message: `“${newTask.title}” has been assigned. Submit it by ${deadlineLabel} IST.`,
+        link: "/student/video-submission",
+      })));
+
+      // Email is a backup for students who are not signed in when the task is posted.
+      void (async () => {
+        const students = await prisma.user.findMany({
+          where: { id: { in: uniqueStudentIds }, role: "STUDENT", isActive: true },
+          select: { email: true, fullName: true },
+        });
+        await Promise.allSettled(students.map((student) => sendEmail({
+          to: student.email,
+          subject: `New practice video task — ${newTask.title}`,
+          html: `<h2>New practice video task</h2><p>Namaste ${student.fullName || "Student"},</p><p>“<strong>${newTask.title}</strong>” has been assigned to you.</p><p><strong>Submission deadline:</strong> ${deadlineLabel} IST</p><p>Please sign in to your student portal to upload your practice video.</p>`,
+        })));
+      })().catch((emailError) => console.error("Video task student email failed:", emailError));
+    } catch (notificationError) {
+      // A temporary notification failure must not roll back a successfully
+      // created task; students can still see it in their task list.
+      console.error("Failed to notify students about video task:", notificationError);
+    }
+
     res.status(201).json({
       status: "success",
       message: `Practice Task "${newTask.title}" created successfully!`,
@@ -502,6 +563,15 @@ export async function evaluateVideoSubmission(req: Request, res: Response): Prom
         evaluationRubric: Array.isArray(evaluationRubric) ? evaluationRubric : [],
       },
     });
+
+    const reviewerName = await getUserDisplayName(user.id, user.email);
+    await createNotification(
+      submission.studentId,
+      "VIDEO_EVALUATED",
+      "Practice video evaluated",
+      `${reviewerName} reviewed “${submission.videoTitle}” and gave you ${numericScore}/100.`,
+      `/student/video-submission/evaluation?submissionId=${submission.id}`
+    );
 
     res.json({
       status: "success",
@@ -793,13 +863,22 @@ export async function getTaskSubmissionsDetail(req: Request, res: Response): Pro
       return;
     }
 
+    const taskSubmissionWhere: any = {
+      OR: [{ taskId: task.id }, { videoTitle: task.title }],
+    };
+    let teacherStudentIds: string[] | null = null;
+    if (user.role === "TEACHER") {
+      const teacherBatchIds = await getTeacherBatchIds(user.id);
+      const memberships = await prisma.batchStudent.findMany({
+        where: { batchId: { in: teacherBatchIds } },
+        select: { studentId: true },
+      });
+      teacherStudentIds = [...new Set(memberships.map((membership) => membership.studentId))];
+      taskSubmissionWhere.AND = [{ studentId: { in: teacherStudentIds } }];
+    }
+
     const submissions = await prisma.videoSubmission.findMany({
-      where: {
-        OR: [
-          { taskId: task.id },
-          { videoTitle: task.title }
-        ]
-      },
+      where: taskSubmissionWhere,
       orderBy: { createdAt: "desc" },
     });
 
@@ -819,6 +898,15 @@ export async function getTaskSubmissionsDetail(req: Request, res: Response): Pro
       if (targetBatch && targetBatch.students) {
         batchStudents = targetBatch.students;
       }
+    }
+
+    // Academy-wide tasks can be opened by each teacher, but their roster must
+    // remain limited to students in that teacher's own assigned batches.
+    if (teacherStudentIds) {
+      const allowedStudentIds = new Set(teacherStudentIds);
+      batchStudents = batchStudents.filter((membership: any) =>
+        allowedStudentIds.has(membership.studentId)
+      );
     }
 
     const submittedStudentIds = new Set(submissions.map((s: any) => s.studentId).filter(Boolean));
