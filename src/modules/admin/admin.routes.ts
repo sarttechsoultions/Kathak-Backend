@@ -177,18 +177,18 @@ router.get("/finance", requirePermission(Permission.VIEW_PAYMENTS), getPayments)
 router.get("/finance/export.csv", requirePermission(Permission.VIEW_PAYMENTS), exportFinanceCsv);
 router.get("/finance/student/:id", requirePermission(Permission.VIEW_PAYMENTS), getStudentFinance);
 router.post("/finance/preview-renewal", requirePermission(Permission.VIEW_PAYMENTS), previewRenewalPricing);
-router.post("/finance/renew-cash", requirePermission(Permission.VIEW_PAYMENTS), renewStudentCash);
-router.post("/finance/renew-online", requirePermission(Permission.VIEW_PAYMENTS), renewStudentOnline);
+router.post("/finance/renew-cash", requirePermission(Permission.MANAGE_PAYMENTS), renewStudentCash);
+router.post("/finance/renew-online", requirePermission(Permission.MANAGE_PAYMENTS), renewStudentOnline);
 router.get("/payments/:id/invoice", requirePermission(Permission.VIEW_PAYMENTS), getPaymentInvoice);
-router.post("/payments", requirePermission(Permission.VIEW_PAYMENTS), recordFeePayment);
-router.post("/payments/:id/refund", requirePermission(Permission.VIEW_PAYMENTS), refundPayment);
+router.post("/payments", requirePermission(Permission.MANAGE_PAYMENTS), recordFeePayment);
+router.post("/payments/:id/refund", requirePermission(Permission.MANAGE_PAYMENTS), refundPayment);
 router.get("/finance/teacher-salary", requirePermission(Permission.VIEW_PAYMENTS), getTeacherSalaryPayments);
-router.post("/finance/teacher-salary", requirePermission(Permission.VIEW_PAYMENTS), recordTeacherSalaryPayment);
+router.post("/finance/teacher-salary", requirePermission(Permission.MANAGE_PAYMENTS), recordTeacherSalaryPayment);
 router.get("/finance/teacher-salary/:id/receipt", requirePermission(Permission.VIEW_PAYMENTS), downloadTeacherSalaryReceipt);
 
 // 7b. Monthly Dues
 router.get("/monthly-dues", requirePermission(Permission.VIEW_PAYMENTS), getMonthlyDues);
-router.post("/monthly-dues/:dueId/pay", requirePermission(Permission.VIEW_PAYMENTS), recordMonthlyDuePayment);
+router.post("/monthly-dues/:dueId/pay", requirePermission(Permission.MANAGE_PAYMENTS), recordMonthlyDuePayment);
 
 // 8. Inquiries
 router.get("/inquiries", requireAnyPermission(Permission.MANAGE_COMMUNICATION, Permission.MANAGE_WEBSITE), getInquiries);
