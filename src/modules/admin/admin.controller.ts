@@ -3958,7 +3958,13 @@
       const students = await prisma.user.findMany({
         where: { role: Role.STUDENT },
         include: {
-          enrollments: { include: { course: true } },
+          enrollments: {
+            orderBy: { createdAt: "desc" },
+            include: {
+              course: true,
+              monthlyDues: { orderBy: { dueDate: "asc" } },
+            },
+          },
           payments: { where: { status: PaymentStatus.SUCCESS }, orderBy: { createdAt: "desc" } },
           batchMemberships: { include: { batch: true } }
         }
@@ -3969,23 +3975,27 @@
       let paidStudentsCount = 0;
       let pendingStudentsCount = 0;
 
+      const now = new Date();
       const studentFinanceRecords = students.map((s) => {
-        const course = s.enrollments[0]?.course;
+        const enrollment = s.enrollments.find((entry) => entry.active) || s.enrollments[0] || null;
+        const course = enrollment?.course;
         const courseName = course?.title || null;
-        // A student with no course enrollment has no fee to owe — don't
-        // fabricate a ₹12,000 charge for them (that previously counted every
-        // unenrolled account as a pending debtor and inflated totalFeeAmount /
-        // pendingStudentsCount on the finance dashboard).
         const currency = resolveCurrency(s.country);
-        const groupFee = currency === "USD" ? (course?.groupFeeUSD || 0) : (course?.groupFeeINR || 0);
-        const joiningFee = currency === "USD" ? (course?.joiningFeeUSD ?? 0) : (course?.joiningFeeINR ?? 1100);
-        const totalFee = course ? calculateMonthlyEnrollmentAmount(groupFee, joiningFee) : 0;
-        const activeEnrollmentId = s.enrollments[0]?.id;
-        const coursePayments = activeEnrollmentId
-          ? s.payments.filter((p) => p.enrollmentId === activeEnrollmentId)
-          : s.payments.filter((p) => p.enrollmentId !== null);
+        const currencySymbol = currency === "USD" ? "$" : "₹";
+        const coursePayments = enrollment
+          ? s.payments.filter((p) => p.enrollmentId === enrollment.id)
+          : [];
         const paid = coursePayments.reduce((acc, p) => acc + p.amount, 0);
-        const pending = Math.max(0, totalFee - paid);
+        const pendingDues = enrollment?.monthlyDues.filter((due) => due.status === PaymentStatus.PENDING) || [];
+        const pending = pendingDues.reduce((acc, due) => acc + due.amount, 0);
+        const overdueAmount = pendingDues
+          .filter((due) => due.dueDate < now)
+          .reduce((acc, due) => acc + due.amount, 0);
+        // This is the real financial ledger for the selected enrollment:
+        // actual collected payments plus actual outstanding dues. It does not
+        // invent a one-month charge or treat a discounted bulk payment as the
+        // undiscounted course fee.
+        const totalFee = paid + pending;
 
         totalFeeAmount += totalFee;
         amountReceived += paid;
@@ -3998,8 +4008,11 @@
           }
         }
 
-        const batchName = s.batchMemberships[0]?.batch?.name || s.batchMemberships[0]?.batch?.code || null;
-        const lastPayment = s.payments[0];
+        const batch = enrollment
+          ? s.batchMemberships.find((membership) => membership.batch.courseId === enrollment.courseId)?.batch
+          : null;
+        const batchName = batch?.name || batch?.code || null;
+        const lastPayment = coursePayments[0];
         const statusLabel = !course ? "No Enrollment" : pending === 0 ? "Paid" : paid > 0 ? "Partial" : "Pending";
 
         return {
@@ -4017,12 +4030,13 @@
           paymentMethod: s.paymentMethod,
           course: courseName,
           batch: batchName,
-          totalFees: `₹${totalFee.toLocaleString("en-IN")}`,
-          paidAmount: `₹${paid.toLocaleString("en-IN")}`,
-          pendingAmount: `₹${pending.toLocaleString("en-IN")}`,
+          totalFees: `${currencySymbol}${totalFee.toLocaleString("en-IN")}`,
+          paidAmount: `${currencySymbol}${paid.toLocaleString("en-IN")}`,
+          pendingAmount: `${currencySymbol}${pending.toLocaleString("en-IN")}`,
           rawTotal: totalFee,
           rawPaid: paid,
           rawPending: pending,
+          rawOverdue: overdueAmount,
           statusLabel,
           lastPaymentId: lastPayment?.id || null,
           lastTransactionId: lastPayment?.transactionId || null,
@@ -4048,9 +4062,9 @@
             pendingStudents: pendingStudentsCount,
             totalFeeAmount,
             amountReceived,
-            pendingAmount: Math.max(0, totalFeeAmount - amountReceived),
-            overdueCount: studentFinanceRecords.filter((r) => r.rawPending > 5000).length,
-            overdueAmount: studentFinanceRecords.reduce((acc, r) => acc + (r.rawPending > 5000 ? r.rawPending : 0), 0),
+            pendingAmount: studentFinanceRecords.reduce((acc, r) => acc + r.rawPending, 0),
+            overdueCount: studentFinanceRecords.filter((r) => r.rawOverdue > 0).length,
+            overdueAmount: studentFinanceRecords.reduce((acc, r) => acc + r.rawOverdue, 0),
             partialCount: studentFinanceRecords.filter((r) => r.rawPaid > 0 && r.rawPending > 0).length,
             partialAmount: studentFinanceRecords.reduce((acc, r) => acc + (r.rawPaid > 0 ? r.rawPending : 0), 0),
             platformRevenue: platform.platformRevenue,
@@ -4297,6 +4311,17 @@
         return;
       }
 
+      // Payment.gateway is an enum. Rejecting unknown values here prevents a
+      // Prisma validation error from turning a bad client request into a 500.
+      const paymentGateway = String(gateway || "CASH").trim().toUpperCase();
+      if (paymentGateway !== "CASH" && paymentGateway !== "RAZORPAY") {
+        res.status(400).json({
+          status: "error",
+          message: "Payment method must be CASH or RAZORPAY.",
+        });
+        return;
+      }
+
       const txId = transactionId || `TXN-${Date.now().toString(36).toUpperCase()}`;
       const orderId = `ORD-${Date.now().toString(36).toUpperCase()}`;
 
@@ -4305,7 +4330,7 @@
           userId: studentId,
           amount: Number(amount),
           currency: "INR",
-          gateway: gateway || "MANUAL_CASH",
+          gateway: paymentGateway,
           transactionId: txId,
           orderId,
           status: PaymentStatus.SUCCESS
@@ -4339,7 +4364,7 @@
                   </tr>
                   <tr style="border-bottom: 1px solid #ddd;">
                     <td style="padding: 10px 0;"><strong>Method:</strong></td>
-                    <td style="padding: 10px 0; text-align: right;">${gateway || "MANUAL_CASH"}</td>
+                    <td style="padding: 10px 0; text-align: right;">${paymentGateway}</td>
                   </tr>
                 </table>
                 <p>You can view and download your full digital receipt anytime from your Student Dashboard under the Finance section.</p>
@@ -4364,12 +4389,75 @@
   export const refundPayment = async (req: Request, res: Response): Promise<void> => {
     try {
       const id = req.params.id as string;
-      const updated = await prisma.payment.update({
+      const payment = await prisma.payment.findUnique({
         where: { id },
-        data: { status: PaymentStatus.REFUNDED }
+        select: { id: true, enrollmentId: true, status: true },
       });
 
-      res.json({ status: "success", message: "Payment status marked as Refunded.", data: updated });
+      if (!payment) {
+        res.status(404).json({ status: "error", message: "Payment not found." });
+        return;
+      }
+
+      if (payment.status === PaymentStatus.REFUNDED) {
+        res.json({ status: "success", message: "Payment was already refunded.", data: payment });
+        return;
+      }
+
+      if (payment.status !== PaymentStatus.SUCCESS) {
+        res.status(409).json({
+          status: "error",
+          message: "Only successful payments can be refunded.",
+        });
+        return;
+      }
+
+      const linkedDues = await prisma.monthlyDue.findMany({
+        where: { paymentId: id },
+        select: { id: true },
+      });
+
+      // An enrollment or renewal payment can cover several months and change
+      // access eligibility. It must be reversed through a dedicated
+      // cancellation/refund workflow, never by merely changing its status.
+      if (payment.enrollmentId && linkedDues.length === 0) {
+        res.status(409).json({
+          status: "error",
+          message: "This enrollment payment requires the dedicated enrollment cancellation/refund workflow.",
+        });
+        return;
+      }
+
+      const updated = await prisma.$transaction(async (tx) => {
+        if (linkedDues.length > 0) {
+          await tx.monthlyDue.updateMany({
+            where: { paymentId: id, status: PaymentStatus.SUCCESS },
+            data: {
+              status: PaymentStatus.PENDING,
+              paymentId: null,
+              paidAt: null,
+            },
+          });
+        }
+
+        await tx.invoice.updateMany({
+          where: { paymentId: id },
+          data: { status: "REFUNDED" },
+        });
+
+        return tx.payment.update({
+          where: { id },
+          data: { status: PaymentStatus.REFUNDED },
+        });
+      });
+
+      res.json({
+        status: "success",
+        message: linkedDues.length > 0
+          ? "Refund recorded and the related monthly due reopened."
+          : "Payment refund recorded.",
+        data: updated,
+      });
     } catch (error) {
       console.error(error);
       res.status(500).json({ status: "error", message: "Failed to process refund." });
