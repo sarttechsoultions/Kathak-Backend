@@ -1,3 +1,4 @@
+import { createMediaRecordOnce } from "../upload/direct-video-record";
 import { Request, Response } from "express";
 import { StudentCornerKind } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
@@ -172,7 +173,7 @@ export const createStudentCornerItem = async (req: Request, res: Response): Prom
 
     const thumbnailUrl = asString(req.body?.thumbnailUrl) || deriveVideoThumbnail(videoUrl);
 
-    const created = await prisma.studentCornerItem.create({
+    const created = await createMediaRecordOnce(videoUrl, "STUDENT_CORNER", tx => tx.studentCornerItem.create({
       data: {
         kind,
         studentName,
@@ -187,7 +188,7 @@ export const createStudentCornerItem = async (req: Request, res: Response): Prom
         fileSize: asString(req.body?.fileSize) || null,
         uploadedById: adminId,
       },
-    });
+    }), (tx, id) => tx.studentCornerItem.findUnique({ where: { id } }));
 
     res.status(201).json({ status: "success", data: serializeItem(created) });
   } catch (error) {

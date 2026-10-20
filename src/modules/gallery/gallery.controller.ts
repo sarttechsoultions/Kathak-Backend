@@ -1,3 +1,4 @@
+import { createMediaRecordOnce } from "../upload/direct-video-record";
 import { Request, Response } from "express";
 import { GalleryCategory, GalleryMediaType } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
@@ -339,7 +340,7 @@ export const createGalleryItem = async (req: Request, res: Response): Promise<vo
 
     const thumbnailUrl = asString(req.body?.thumbnailUrl) || deriveVideoThumbnail(url);
 
-    const created = await prisma.galleryItem.create({
+    const created = await createMediaRecordOnce(url, "GALLERY", tx => tx.galleryItem.create({
       data: {
         title,
         altText: asString(req.body?.altText) || title,
@@ -354,7 +355,7 @@ export const createGalleryItem = async (req: Request, res: Response): Promise<vo
         fileSize: asString(req.body?.fileSize) || null,
         uploadedById: adminId,
       },
-    });
+    }), (tx, id) => tx.galleryItem.findUnique({ where: { id } }));
 
     res.status(201).json({ status: "success", data: serializeItem(created) });
   } catch (error) {

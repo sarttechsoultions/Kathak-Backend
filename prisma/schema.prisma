@@ -9,6 +9,7 @@ datasource db {
 }
 
 model User {
+  videoUploadIntents          VideoUploadIntent[]
   id                          String                   @id @default(uuid())
   fullName                    String
   email                       String                   @unique
@@ -89,6 +90,31 @@ model User {
   certificatesIssued          Certificate[]            @relation("CertificateIssuer")
   salaryPaymentsReceived      TeacherSalaryPayment[]   @relation("SalaryPaymentTeacher")
   salaryPaymentsRecorded      TeacherSalaryPayment[]   @relation("SalaryPaymentRecorder")
+}
+
+model VideoUploadIntent {
+  id               String   @id @default(uuid())
+  userId           String?
+  purpose          String
+  relatedId        String?
+  publicId         String   @unique
+  assetId          String?  @unique
+  size             Float
+  mimeType         String
+  format           String?
+  duration         Float?
+  status           String   @default("UPLOADING")
+  processingStatus String   @default("PENDING")
+  playbackUrl      String?  @unique
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime
+  completedAt      DateTime?
+  verifiedAt       DateTime?
+  links            Json     @default("{}")
+  user             User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([status, expiresAt])
 }
 
 model TeacherPermission {
