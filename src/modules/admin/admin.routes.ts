@@ -12,6 +12,8 @@ import {
   getDashboardStats,
   getStudents,
   getStudentById,
+  updateStudentFee,
+  updateStudentBillingDate,
   createStudent,
   updateStudent,
   changeStudentStatus,
@@ -105,6 +107,8 @@ router.get("/dashboard", requirePermission(Permission.VIEW_DASHBOARD), getDashbo
 router.get("/students", requirePermission(Permission.MANAGE_STUDENTS), getStudents);
 router.post("/students", requirePermission(Permission.MANAGE_STUDENTS), createStudent);
 router.get("/students/:id", requirePermission(Permission.MANAGE_STUDENTS), getStudentById);
+router.patch("/students/:id/billing-date", requirePermission(Permission.MANAGE_PAYMENTS), updateStudentBillingDate);
+router.patch("/students/:id/fee", requirePermission(Permission.MANAGE_PAYMENTS), updateStudentFee);
 router.put("/students/:id", requirePermission(Permission.MANAGE_STUDENTS), updateStudent);
 router.post("/students/:id/reset-password", requirePermission(Permission.MANAGE_STUDENTS), updateStudentPassword);
 router.patch("/students/:id/status", requirePermission(Permission.MANAGE_STUDENTS), changeStudentStatus);

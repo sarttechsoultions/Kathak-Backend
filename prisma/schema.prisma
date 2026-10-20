@@ -294,6 +294,11 @@ model Enrollment {
   placeOfSupply        String?
   isGstInclusive       Boolean      @default(true)
   nextDueDate          DateTime?
+  agreedMonthlyFee     Float?
+  feeCurrency          String?
+  billingAnchorDate    DateTime?
+  migratedAt           DateTime?
+  feeHistory           Json?
   subscriptionId       String?
   previousEnrollmentId String?      @unique
   previousEnrollment   Enrollment?  @relation("EnrollmentUpgrade", fields: [previousEnrollmentId], references: [id])

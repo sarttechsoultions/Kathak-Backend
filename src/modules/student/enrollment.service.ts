@@ -1,3 +1,4 @@
+import { enrollmentMonthlyFee } from "../../lib/enrollment-pricing";
 import {
   ClassMode,
   PaymentStatus,
@@ -1354,12 +1355,13 @@ if (!enrollment) {
 
   // Use explicitly calculated amount and currency from backend payload
   // Fallback to legacy INR logic if missing (for older pending enrollments)
+  const migrated = anyPayload.previouslyEnrolled === true;
   let feePaid = Number(anyPayload.expectedAmount);
   let paymentCurrency = anyPayload.expectedCurrency as "INR" | "USD" | "GBP" | "EUR";
   
   const isLegacy = !feePaid || Number.isNaN(feePaid) || !paymentCurrency;
   
-  if (isLegacy) {
+  if (isLegacy && !migrated) {
     const monthlyFee =
       enrollmentType === "ONE_TO_ONE"
         ? course.oneToOneFeeINR || 0
@@ -1376,6 +1378,13 @@ if (!enrollment) {
     paymentCurrency = "INR";
   }
 
+  if (anyPayload.agreedMonthlyFee != null) {
+    const fee = Number(anyPayload.agreedMonthlyFee);
+    enrollment = await tx.enrollment.update({ where: { id: enrollment.id }, data: {
+      agreedMonthlyFee: fee, feeCurrency: String(anyPayload.expectedCurrency),
+      feeHistory: [{ amount: fee, currency: String(anyPayload.expectedCurrency), recordedAt: new Date().toISOString(), effectiveFrom: migrated ? String(anyPayload.migrationDue) : new Date().toISOString(), adminId: String(anyPayload.recordedByAdminId), event: migrated ? "MIGRATED" : "ENROLLED" }],
+    }});
+  }
   // Prices are GST-inclusive: extract GST for finance records without changing feePaid.
   const gstDetails = calculateGstFromInclusiveTotal(feePaid, payload.region);
   enrollment = await tx.enrollment.update({
@@ -1411,7 +1420,7 @@ if (!enrollment) {
   const alreadyCompleted =
     Boolean(existingPayment);
 
-  if (!existingPayment) {
+  if (!existingPayment && !migrated) {
     await tx.payment.create({
       data: {
         userId: user.id,
@@ -1434,7 +1443,7 @@ if (!enrollment) {
       },
     });
   } else if (
-    !existingPayment.enrollmentId
+    existingPayment && !existingPayment.enrollmentId
   ) {
     await tx.payment.update({
       where: {
@@ -1564,6 +1573,17 @@ if (!enrollment) {
     },
   });
 
+  if (migrated) {
+    const dueDate = new Date(String(anyPayload.migrationDue));
+    if (!Number.isFinite(dueDate.getTime())) throw new EnrollmentError("Invalid migration due date.");
+    enrollment = await tx.enrollment.update({ where: { id: enrollment.id }, data: {
+      nextDueDate: dueDate, billingAnchorDate: dueDate, migratedAt: new Date(), monthsPaid: 0, paymentMode: "MONTHLY",
+    }});
+    await tx.monthlyDue.create({ data: { enrollmentId: enrollment.id, userId: user.id, courseId: course.id,
+      dueMonth: dueMonthFromDate(dueDate), dueDate, amount: Number(anyPayload.agreedMonthlyFee), currency: anyPayload.expectedCurrency as "INR" | "USD", status: "PENDING" }});
+    return { user: publicUser(user), enrollment, alreadyCompleted: false };
+  }
+
   // Setup MonthlyDues inside the transaction
   const paymentDate = new Date(); // authoritative timestamp
   // Keep the student's original billing cycle even when a renewal is paid late.
@@ -1592,7 +1612,7 @@ if (!enrollment) {
     // Create paid dues for the bulk period
     for (const dueMonth of generatedMonths) {
       const [yyyy, mm] = dueMonth.split("-").map(Number);
-      const dueDate = billingDateForMonth(yyyy, mm - 1, enrollment.createdAt);
+      const dueDate = billingDateForMonth(yyyy, mm - 1, (enrollment.billingAnchorDate || enrollment.createdAt));
       
       const existingDue = await tx.monthlyDue.findUnique({
         where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth } }
@@ -1601,7 +1621,7 @@ if (!enrollment) {
       if (existingDue) {
         await tx.monthlyDue.update({
           where: { id: existingDue.id },
-          data: { status: "SUCCESS", paidAt: paymentDate, amount: monthlyBaseAmount, currency: currencyForDues }
+          data: { status: "SUCCESS", paidAt: paymentDate, amount: enrollment.agreedMonthlyFee != null ? enrollmentMonthlyFee({ ...enrollment, course }, currencyForDues, dueDate) : monthlyBaseAmount, currency: currencyForDues }
         });
       } else {
         await tx.monthlyDue.create({
@@ -1611,7 +1631,7 @@ if (!enrollment) {
             courseId: course.id,
             dueMonth,
             dueDate,
-            amount: monthlyBaseAmount,
+            amount: enrollment.agreedMonthlyFee != null ? enrollmentMonthlyFee({ ...enrollment, course }, currencyForDues, dueDate) : monthlyBaseAmount,
             currency: currencyForDues,
             status: "SUCCESS",
             paidAt: paymentDate,
@@ -1621,7 +1641,7 @@ if (!enrollment) {
     }
     
     // Create pending due for the next month after bulk
-    nextDue = nextCoverageDueDate(coverageStartDate, monthsPaid, enrollment.createdAt);
+    nextDue = nextCoverageDueDate(coverageStartDate, monthsPaid, (enrollment.billingAnchorDate || enrollment.createdAt));
     
     if (enrollment.paymentMode !== "FULL_COURSE") {
       const nextDueMonth = dueMonthFromDate(nextDue);
@@ -1633,7 +1653,7 @@ if (!enrollment) {
       if (existingNext) {
         await tx.monthlyDue.update({
           where: { id: existingNext.id },
-          data: { amount: monthlyBaseAmount, currency: currencyForDues }
+          data: { amount: enrollment.agreedMonthlyFee != null ? enrollmentMonthlyFee({ ...enrollment, course }, currencyForDues, nextDue) : monthlyBaseAmount, currency: currencyForDues }
         });
       } else {
         await tx.monthlyDue.create({
@@ -1643,7 +1663,7 @@ if (!enrollment) {
             courseId: course.id,
             dueMonth: nextDueMonth,
             dueDate: nextDue,
-            amount: monthlyBaseAmount,
+            amount: enrollment.agreedMonthlyFee != null ? enrollmentMonthlyFee({ ...enrollment, course }, currencyForDues, nextDue) : monthlyBaseAmount,
             currency: currencyForDues,
             status: "PENDING",
           }
@@ -1658,7 +1678,7 @@ if (!enrollment) {
     );
     const currentMonth = generatedMonths[0];
     const [yyyy, mm] = currentMonth.split("-").map(Number);
-    const currentDueDate = billingDateForMonth(yyyy, mm - 1, enrollment.createdAt);
+    const currentDueDate = billingDateForMonth(yyyy, mm - 1, (enrollment.billingAnchorDate || enrollment.createdAt));
 
     const existingCurrent = await tx.monthlyDue.findUnique({
       where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: currentMonth } }
@@ -1667,7 +1687,7 @@ if (!enrollment) {
     if (existingCurrent) {
       await tx.monthlyDue.update({
         where: { id: existingCurrent.id },
-        data: { status: "SUCCESS", paidAt: paymentDate, amount: monthlyBaseAmount, currency: currencyForDues }
+        data: { status: "SUCCESS", paidAt: paymentDate, amount: enrollment.agreedMonthlyFee != null ? enrollmentMonthlyFee({ ...enrollment, course }, currencyForDues, currentDueDate) : monthlyBaseAmount, currency: currencyForDues }
       });
     } else {
       await tx.monthlyDue.create({
@@ -1677,7 +1697,7 @@ if (!enrollment) {
           courseId: course.id,
           dueMonth: currentMonth,
           dueDate: currentDueDate,
-          amount: monthlyBaseAmount,
+          amount: enrollment.agreedMonthlyFee != null ? enrollmentMonthlyFee({ ...enrollment, course }, currencyForDues, currentDueDate) : monthlyBaseAmount,
           currency: currencyForDues,
           status: "SUCCESS",
           paidAt: paymentDate,
@@ -1685,7 +1705,7 @@ if (!enrollment) {
       });
     }
     
-    nextDue = nextCoverageDueDate(coverageStartDate, 1, enrollment.createdAt);
+    nextDue = nextCoverageDueDate(coverageStartDate, 1, (enrollment.billingAnchorDate || enrollment.createdAt));
     
     if (enrollment.paymentMode !== "FULL_COURSE") {
       const nextDueMonth = dueMonthFromDate(nextDue);
@@ -1697,7 +1717,7 @@ if (!enrollment) {
       if (existingNext) {
         await tx.monthlyDue.update({
           where: { id: existingNext.id },
-          data: { amount: monthlyBaseAmount, currency: currencyForDues }
+          data: { amount: enrollment.agreedMonthlyFee != null ? enrollmentMonthlyFee({ ...enrollment, course }, currencyForDues, nextDue) : monthlyBaseAmount, currency: currencyForDues }
         });
       } else {
         await tx.monthlyDue.create({
@@ -1707,7 +1727,7 @@ if (!enrollment) {
             courseId: course.id,
             dueMonth: nextDueMonth,
             dueDate: nextDue,
-            amount: monthlyBaseAmount,
+            amount: enrollment.agreedMonthlyFee != null ? enrollmentMonthlyFee({ ...enrollment, course }, currencyForDues, nextDue) : monthlyBaseAmount,
             currency: currencyForDues,
             status: "PENDING",
           }
@@ -1884,6 +1904,12 @@ export const completePendingEnrollment = async (
    * Do not fall back to the user's latest enrollment because
    * that can return the wrong enrollment.
    */
+  if (pending.status === PendingEnrollmentStatus.COMPLETED && (pending.payload as any)?.previouslyEnrolled) {
+    const enrollment = await prisma.enrollment.findFirst({ where: { userId: pending.userId!, courseId: pending.courseId } });
+    const user = await prisma.user.findUnique({ where: { id: pending.userId! } });
+    if (!enrollment || !user) throw new EnrollmentError("Completed enrollment could not be recovered.", 409);
+    return { user: publicUser(user), enrollment, alreadyCompleted: true };
+  }
   if (pending.status === PendingEnrollmentStatus.COMPLETED) {
     const alreadyPaid = await loadCompletedByPayment(
       razorpayOrderId,

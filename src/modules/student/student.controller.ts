@@ -1,3 +1,4 @@
+import { enrollmentRenewalPricing, enrollmentMonthlyFee, enrollmentDiscountTiers, validateAgreedFee } from "../../lib/enrollment-pricing";
 import { Request, Response } from "express";
 import { PaymentStatus, PendingEnrollmentStatus, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
@@ -29,7 +30,7 @@ import { createNotification, notifyAdmins } from "../notification/notification.c
 import { getDisplayCurrency } from "../../utils/currency";
 import { buildStudentPaymentReceiptHtml, generatePdfBuffer, InvoiceData } from "../../lib/invoice";
 import { resolveCurrency } from "../../lib/currency";
-import { calculateRenewalAmount, parseTiers, validateEnrollmentMonths } from "../../lib/fees";
+import { nextCoverageDueDate, calculateRenewalAmount, parseTiers, validateEnrollmentMonths } from "../../lib/fees";
 
 
 const cleanPhoneInput = (phone: unknown): string => {
@@ -714,10 +715,10 @@ export const changeStudentPassword = async (
       return;
     }
 
-    if (newPassword.length < 6) {
+    if (typeof newPassword !== "string" || newPassword.length < 8 || !/[A-Z]/.test(newPassword) || !/[a-z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^A-Za-z0-9\s]/.test(newPassword)) {
       res.status(400).json({
         status: "error",
-        message: "New password must be at least 6 characters."
+        message: "New password must be at least 8 characters with a capital letter, small letter, number and special character."
       });
       return;
     }
@@ -890,19 +891,13 @@ export const initiateStudentRenewal = async (req: Request, res: Response): Promi
     }
 
     const currency = resolveCurrency(student.countryCode || student.country || "IN");
-    const monthlyFee = currency === "USD"
-      ? (enrollment.type === "ONE_TO_ONE" ? Number(enrollment.course.oneToOneFeeUSD || 0) : Number(enrollment.course.groupFeeUSD || 0))
-      : (enrollment.type === "ONE_TO_ONE" ? Number(enrollment.course.oneToOneFeeINR || 0) : Number(enrollment.course.groupFeeINR || 0));
+    const monthlyFee = enrollmentMonthlyFee(enrollment, currency, enrollment.nextDueDate || new Date());
     if (!Number.isFinite(monthlyFee) || monthlyFee <= 0) {
       res.status(400).json({ status: "error", message: `A valid ${currency} renewal fee is not configured for this course.` });
       return;
     }
 
-    const pricing = calculateRenewalAmount(
-      monthlyFee,
-      months,
-      parseTiers(enrollment.course.bulkDiscountTiers, currency),
-    );
+    const pricing = enrollmentRenewalPricing(enrollment, currency, months);
     if (pricing.total <= 0) {
       res.status(400).json({ status: "error", message: "The renewal amount is invalid." });
       return;
@@ -1097,7 +1092,7 @@ export const getStudentFinance = async (
             course: true,
             monthlyDues: {
               where: {
-                status: "PENDING",
+                status: { in: ["PENDING", "SUCCESS"] },
               },
             },
           },
@@ -1141,7 +1136,7 @@ export const getStudentFinance = async (
 
     const successfulPayments =
       user.payments.filter(
-        (p) => p.status === "SUCCESS"
+        (p) => p.status === "SUCCESS" && p.enrollmentId === enrollment?.id
       );
 
     const paidAmount =
@@ -1154,19 +1149,28 @@ export const getStudentFinance = async (
     const pendingAmount =
       enrollment?.monthlyDues?.reduce(
         (acc, md) =>
-          acc + Number(md.amount || 0),
+          acc + (md.status === "PENDING" ? Number(md.amount || 0) : 0),
         0
       ) || 0;
 
     const totalFee = paidAmount + pendingAmount;
+    const paidDues = enrollment?.monthlyDues.filter(due => due.status === "SUCCESS").sort((a, b) => b.dueDate.getTime() - a.dueDate.getTime()) || [];
+    const coverageEnd = paidDues[0] && enrollment ? nextCoverageDueDate(paidDues[0].dueDate, 1, enrollment.billingAnchorDate || enrollment.createdAt) : null;
+
 
     res.json({
       status: "success",
 
       data: {
         courseTitle,
+        monthlyFee: enrollment ? enrollmentMonthlyFee(enrollment, enrollment.feeCurrency || resolveCurrency(user.country)) : 0,
+        feeCurrency: enrollment?.feeCurrency || resolveCurrency(user.country),
+        feeHistory: (Array.isArray(enrollment?.feeHistory) ? enrollment.feeHistory : []).map((entry: any) => ({ event: entry.event, amount: entry.amount, oldAmount: entry.oldAmount, currency: entry.currency, effectiveFrom: entry.effectiveFrom })),
 
         totalFee,
+        paidMonths: enrollment?.monthlyDues.filter(due => due.status === "SUCCESS").length || 0,
+        paidThrough: coverageEnd ? new Date(coverageEnd.getTime() - 1).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" }) : null,
+        migrated: Boolean(enrollment?.migratedAt),
 
         paidAmount,
 
@@ -1211,7 +1215,7 @@ export const getStudentFinance = async (
               const isRenewal = String(snapshot?.operationType || "").toUpperCase() === "RENEWAL";
               const paymentLabel = isRenewal
                 ? `Course Renewal — ${paidMonths} month${paidMonths === 1 ? "" : "s"}`
-                : "Registration Fee";
+                : `Enrollment — ${paidMonths} month${paidMonths === 1 ? "" : "s"}`;
               return `${snapshot?.courseTitle || courseTitle} - ${paymentLabel}`;
             })(),
 

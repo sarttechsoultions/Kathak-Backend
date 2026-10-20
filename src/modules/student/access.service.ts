@@ -1,3 +1,4 @@
+import { enrollmentMonthlyFee } from "../../lib/enrollment-pricing";
 import { prisma } from "../../lib/prisma";
 import { resolveCurrency } from "../../lib/currency";
 
@@ -119,14 +120,7 @@ export async function getStudentAccessState(
     .trim()
     .toUpperCase();
 
-  const monthlyBaseAmount =
-    currency === "USD"
-      ? enrollmentType === "ONE_TO_ONE"
-        ? course?.oneToOneFeeUSD || 0
-        : course?.groupFeeUSD || 0
-      : enrollmentType === "ONE_TO_ONE"
-        ? course?.oneToOneFeeINR || 0
-        : course?.groupFeeINR || 0;
+  const monthlyBaseAmount = enrollmentMonthlyFee(activeEnrollment, currency);
 
   // Find latest pending due for this enrollment if available
   const pendingDue = await prisma.monthlyDue.findFirst({

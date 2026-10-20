@@ -1,3 +1,4 @@
+import { enrollmentRenewalPricing, enrollmentMonthlyFee, enrollmentDiscountTiers, validateAgreedFee } from "../../lib/enrollment-pricing";
   import { Request, Response } from "express";
   import { 
     validateEnrollmentInput, 
@@ -4860,6 +4861,9 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
       return;
     }
 
+    const migrated = req.body.previouslyEnrolled === true;
+    const migrationDue = migrated ? new Date(String(req.body.nextDueDate) + "T00:00:00+05:30") : null;
+    if (migrated && (!migrationDue || !Number.isFinite(migrationDue.getTime()))) throw new EnrollmentError("Select the next fee due date.");
     const cashTxId = `CASH_${idempotencyKey}`;
 
     // =========================================================
@@ -5120,7 +5124,7 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
     //   1/3/6/12 = no joining fee
     // =========================================================
     const joiningFeeApplied =
-      operationType === "NEW" && requestedMonths === 1
+      !migrated && operationType === "NEW" && requestedMonths === 1
         ? joiningFee
         : 0;
 
@@ -5162,7 +5166,10 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
     // =========================================================
     // 8. CASH AMOUNT / ADMIN DISCOUNT
     // =========================================================
-    const amountReceived = Number(req.body.amountReceived);
+    const agreedFee = req.body.monthlyFee != null ? validateAgreedFee(req.body.monthlyFee, currency) : monthlyFee;
+    monthlyFee = agreedFee;
+    amount = migrated ? 0 : agreedFee * requestedMonths + joiningFeeApplied;
+    const amountReceived = migrated ? 0 : Number(req.body.amountReceived);
 
     if (currency === "INR" && !Number.isInteger(amountReceived)) {
       res.status(400).json({
@@ -5172,7 +5179,7 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    if (!Number.isFinite(amountReceived) || amountReceived <= 0) {
+    if (!Number.isFinite(amountReceived) || (!migrated && amountReceived <= 0)) {
       res.status(400).json({
         status: "error",
         message: "Valid amountReceived is required for cash enrollment.",
@@ -5236,6 +5243,9 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
           : {};
 
       const sameRequest =
+        Boolean(existingPayload.previouslyEnrolled) === migrated &&
+        (existingPayload.migrationDue || null) === (migrationDue?.toISOString() || null) &&
+        Number(existingPayload.agreedMonthlyFee) === agreedFee &&
         pending.email === fingerprint.email &&
         pending.phone === fingerprint.phone &&
         pending.courseId === fingerprint.courseId &&
@@ -5294,6 +5304,9 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
               expectedCurrency: currency,
 
               monthlyBaseAmount: monthlyFee,
+              agreedMonthlyFee: agreedFee,
+              previouslyEnrolled: migrated,
+              migrationDue: migrationDue?.toISOString() || null,
               joiningFeeApplied,
 
               gateway: "CASH",
@@ -5332,6 +5345,9 @@ export const enrollCashStudent = async (req: Request, res: Response): Promise<vo
               : {};
 
           const sameRacedRequest =
+            Boolean(racedPayload.previouslyEnrolled) === migrated &&
+            (racedPayload.migrationDue || null) === (migrationDue?.toISOString() || null) &&
+            Number(racedPayload.agreedMonthlyFee) === agreedFee &&
             racedPending.email === fingerprint.email &&
             racedPending.phone === fingerprint.phone &&
             racedPending.courseId === fingerprint.courseId &&
@@ -5498,6 +5514,8 @@ export const enrollStudentOnline = async (
       );
     }
 
+    (validated.payload as any).adminAgreedMonthlyFee = req.body.monthlyFee;
+    (validated.payload as any).recordedByAdminId = (req as any).user?.id;
     const orderData = await createEnrollmentPaymentOrder(
       validated,
       requestedMonths,
@@ -5811,10 +5829,7 @@ export const previewRenewalPricing = async (
     const currency = resolveCurrency(student.countryCode || student.country || "IN");
     const course = enrollment.course;
     const isOneToOne = enrollment.type === "ONE_TO_ONE";
-    const monthlyFee =
-      currency === "USD"
-        ? (isOneToOne ? Number(course.oneToOneFeeUSD || 0) : Number(course.groupFeeUSD || 0))
-        : (isOneToOne ? Number(course.oneToOneFeeINR || 0) : Number(course.groupFeeINR || 0));
+    const monthlyFee = enrollmentMonthlyFee(enrollment, currency, enrollment.nextDueDate || new Date());
 
     if (!Number.isFinite(monthlyFee) || monthlyFee <= 0) {
       res.status(400).json({
@@ -5824,8 +5839,8 @@ export const previewRenewalPricing = async (
       return;
     }
 
-    const tiers = parseTiers(course.bulkDiscountTiers, currency);
-    const calc = calculateRenewalAmount(monthlyFee, requestedMonths, tiers);
+    const tiers = enrollmentDiscountTiers(enrollment, currency);
+    const calc = enrollmentRenewalPricing(enrollment, currency, requestedMonths);
 
     res.json({
       status: "success",
@@ -5920,10 +5935,7 @@ export const renewStudentCash = async (
     const currency = resolveCurrency(student.countryCode || student.country || "IN");
     const course = enrollment.course;
     const isOneToOne = enrollment.type === "ONE_TO_ONE";
-    const monthlyFee =
-      currency === "USD"
-        ? (isOneToOne ? Number(course.oneToOneFeeUSD || 0) : Number(course.groupFeeUSD || 0))
-        : (isOneToOne ? Number(course.oneToOneFeeINR || 0) : Number(course.groupFeeINR || 0));
+    const monthlyFee = enrollmentMonthlyFee(enrollment, currency, enrollment.nextDueDate || new Date());
 
     if (!Number.isFinite(monthlyFee) || monthlyFee <= 0) {
       res.status(400).json({
@@ -5933,8 +5945,8 @@ export const renewStudentCash = async (
       return;
     }
 
-    const tiers = parseTiers(course.bulkDiscountTiers, currency);
-    const calc = calculateRenewalAmount(monthlyFee, requestedMonths, tiers);
+    const tiers = enrollmentDiscountTiers(enrollment, currency);
+    const calc = enrollmentRenewalPricing(enrollment, currency, requestedMonths);
     const expectedAmount = calc.total;
 
     // 3. Exact Cash Amount Validation
@@ -6121,10 +6133,7 @@ export const renewStudentOnline = async (
     const currency = resolveCurrency(student.countryCode || student.country || "IN");
     const course = enrollment.course;
     const isOneToOne = enrollment.type === "ONE_TO_ONE";
-    const monthlyFee =
-      currency === "USD"
-        ? (isOneToOne ? Number(course.oneToOneFeeUSD || 0) : Number(course.groupFeeUSD || 0))
-        : (isOneToOne ? Number(course.oneToOneFeeINR || 0) : Number(course.groupFeeINR || 0));
+    const monthlyFee = enrollmentMonthlyFee(enrollment, currency, enrollment.nextDueDate || new Date());
 
     if (!Number.isFinite(monthlyFee) || monthlyFee <= 0) {
       res.status(400).json({
@@ -6134,8 +6143,8 @@ export const renewStudentOnline = async (
       return;
     }
 
-    const tiers = parseTiers(course.bulkDiscountTiers, currency);
-    const calc = calculateRenewalAmount(monthlyFee, requestedMonths, tiers);
+    const tiers = enrollmentDiscountTiers(enrollment, currency);
+    const calc = enrollmentRenewalPricing(enrollment, currency, requestedMonths);
     const expectedAmount = calc.total;
 
     // Check existing pending attempt
@@ -6319,4 +6328,98 @@ export const getStudentFinance = async (
     console.error("Failed to get student finance details:", error);
     res.status(500).json({ error: "Internal server error." });
   }
+};
+
+// Fee edits apply to the next unpaid cycle; successful dues and receipts are immutable.
+export const updateStudentFee = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Reconcile abandoned gateway orders before taking the fee-edit transaction.
+    // A database PENDING flag alone does not mean a payment is in progress.
+    const student = await prisma.user.findFirst({ where: { id: String(req.params.id), role: Role.STUDENT }, select: { id: true, email: true } });
+    if (!student) throw new EnrollmentError("Student not found.", 404);
+    const target = await prisma.enrollment.findFirst({ where: { id: String(req.body.enrollmentId), userId: student.id, active: true } });
+    if (!target) throw new EnrollmentError("Active enrollment not found.", 404);
+    validateAgreedFee(req.body.monthlyFee, target.feeCurrency || "INR");
+    const abandoned = await prisma.pendingEnrollment.findMany({ where: {
+      OR: [{ userId: student.id }, { email: student.email }], courseId: target.courseId,
+      status: "PENDING", createdAt: { lt: new Date(Date.now() - 30 * 60 * 1000) },
+    }});
+    for (const attempt of abandoned) {
+      if (!attempt.razorpayOrderId) continue;
+      const gateway = getRazorpay();
+      if (!gateway) throw new EnrollmentError("Unable to verify the old payment. Please retry later.");
+      const order = await gateway.orders.fetch(attempt.razorpayOrderId);
+      const payments = await gateway.orders.fetchPayments(attempt.razorpayOrderId);
+      const unsettled = payments.items.some(payment => ["authorized", "captured", "created"].includes(payment.status));
+      if (order.status !== "created" || Number(order.amount_paid) !== 0 || unsettled) continue;
+      await prisma.pendingEnrollment.updateMany({ where: { id: attempt.id, status: "PENDING" }, data: {
+        status: "FAILED", errorMessage: "Abandoned unpaid order closed before admin fee correction; no payment received.",
+      }});
+    }
+
+    const result = await prisma.$transaction(async tx => {
+      const enrollment = await tx.enrollment.findFirst({ where: { id: String(req.body.enrollmentId), userId: String(req.params.id), active: true }, include: { course: true, user: true } });
+      if (!enrollment) throw new EnrollmentError("Active enrollment not found.", 404);
+      if (enrollment.subscriptionId) throw new EnrollmentError("Disable the existing autopay subscription before changing the fee.");
+      const currency = (enrollment.feeCurrency || resolveCurrency(enrollment.user.country)) as "INR" | "USD";
+      const amount = validateAgreedFee(req.body.monthlyFee, currency);
+      const firstDue = await tx.monthlyDue.findFirst({ where: { enrollmentId: enrollment.id, status: "PENDING" }, orderBy: { dueDate: "asc" } });
+      const defaultDate = firstDue?.dueDate || enrollment.nextDueDate;
+      const inputDate = req.body.effectiveFrom;
+      const effectiveFrom = inputDate ? new Date(String(inputDate) + "T00:00:00+05:30") : defaultDate;
+      if (inputDate && (!/^\d{4}-\d{2}-\d{2}$/.test(String(inputDate)) || !effectiveFrom || !Number.isFinite(effectiveFrom.getTime()) || new Date(effectiveFrom.getTime() + 19800000).toISOString().slice(0,10) !== inputDate)) throw new EnrollmentError("Select a valid fee effective date.");
+      if (!effectiveFrom) throw new EnrollmentError("No upcoming billing cycle found.");
+      // Do not silently reprice overdue or already-issued bills.
+      if (effectiveFrom < new Date()) throw new EnrollmentError("Clear the outstanding fee before changing the monthly fee.");
+      const openAttempt = await tx.pendingEnrollment.findFirst({ where: { OR: [{ userId: enrollment.userId }, { email: enrollment.user.email }], courseId: enrollment.courseId, status: { in: ["PENDING", "PROCESSING"] } } });
+      if (openAttempt) throw new EnrollmentError("Finish the pending payment attempt before changing the fee.");
+      const history = Array.isArray(enrollment.feeHistory) ? enrollment.feeHistory : [];
+      const scheduled = history.filter((entry: any) => entry.event === "FEE_CHANGED" && Date.parse(entry.effectiveFrom) >= effectiveFrom.getTime());
+      if (scheduled.length) throw new EnrollmentError("A fee change is already scheduled on or after this date. Choose a later date.");
+      const oldAmount = enrollmentMonthlyFee(enrollment, currency, effectiveFrom);
+      if (amount === oldAmount && enrollment.agreedMonthlyFee != null) return enrollment;
+      await tx.monthlyDue.updateMany({ where: { enrollmentId: enrollment.id, status: "PENDING", dueDate: { gte: effectiveFrom } }, data: { amount, currency } });
+      return tx.enrollment.update({ where: { id: enrollment.id }, data: {
+        agreedMonthlyFee: amount, feeCurrency: currency,
+        feeHistory: [...history, { event: "FEE_CHANGED", oldAmount, amount, currency, effectiveFrom: effectiveFrom.toISOString(), recordedAt: new Date().toISOString(), adminId: (req as any).user.id }],
+      }});
+    }, { isolationLevel: "Serializable" });
+    res.json({ status: "success", data: result });
+  } catch (error: any) { res.status(error.statusCode || 400).json({ status: "error", message: error.message || "Unable to update fee." }); }
+};
+
+export const updateStudentBillingDate = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const dateText = String(req.body.nextDueDate || "");
+    const dueDate = new Date(dateText + "T00:00:00+05:30");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText) || !Number.isFinite(dueDate.getTime()) || new Date(dueDate.getTime() + 19800000).toISOString().slice(0, 10) !== dateText) {
+      throw new EnrollmentError("Select a valid next fee due date.");
+    }
+    const result = await prisma.$transaction(async tx => {
+      const enrollment = await tx.enrollment.findFirst({ where: { id: String(req.body.enrollmentId), userId: String(req.params.id), active: true }, include: { course: true, user: true } });
+      if (!enrollment) throw new EnrollmentError("Active enrollment not found.", 404);
+      if (enrollment.subscriptionId) throw new EnrollmentError("Disable autopay before changing the billing date.");
+      if (enrollment.nextDueDate?.getTime() === dueDate.getTime()) return enrollment;
+      const pending = await tx.monthlyDue.findMany({ where: { enrollmentId: enrollment.id, status: "PENDING" }, orderBy: { dueDate: "asc" } });
+      if (pending.length > 1) throw new EnrollmentError("This student has multiple unpaid dues. Resolve those dues before changing the billing date.");
+      const open = await tx.pendingEnrollment.findFirst({ where: { OR: [{ userId: enrollment.userId }, { email: enrollment.user.email }], courseId: enrollment.courseId, status: { in: ["PENDING", "PROCESSING"] } } });
+      if (open) throw new EnrollmentError("Resolve the pending payment attempt before changing the billing date.");
+      const dueMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit" }).formatToParts(dueDate);
+      const monthKey = dueMonth.find(p => p.type === "year")!.value + "-" + dueMonth.find(p => p.type === "month")!.value;
+      const existing = await tx.monthlyDue.findUnique({ where: { enrollmentId_dueMonth: { enrollmentId: enrollment.id, dueMonth: monthKey } } });
+      if (existing && existing.id !== pending[0]?.id) throw new EnrollmentError("A fee record already exists for that month. Choose a month without a paid fee record.");
+      const currency = (enrollment.feeCurrency || resolveCurrency(enrollment.user.country)) as "INR" | "USD";
+      if (pending[0]) {
+        await tx.monthlyDue.update({ where: { id: pending[0].id }, data: { dueDate, dueMonth: monthKey, amount: enrollmentMonthlyFee(enrollment, (enrollment.feeCurrency || resolveCurrency(enrollment.user.country)) as "INR" | "USD", dueDate) } });
+      } else {
+        await tx.monthlyDue.create({ data: { enrollmentId: enrollment.id, userId: enrollment.userId, courseId: enrollment.courseId, dueDate, dueMonth: monthKey, amount: enrollmentMonthlyFee(enrollment, currency, dueDate), currency, status: "PENDING" } });
+      }
+      const history = Array.isArray(enrollment.feeHistory) ? enrollment.feeHistory : [];
+      return tx.enrollment.update({ where: { id: enrollment.id }, data: {
+        nextDueDate: dueDate, billingAnchorDate: dueDate,
+        feeHistory: [...history, { event: "BILLING_DATE_CHANGED", oldDate: (pending[0]?.dueDate || enrollment.nextDueDate)?.toISOString() || null, newDate: dueDate.toISOString(), effectiveFrom: dueDate.toISOString(), recordedAt: new Date().toISOString(), adminId: (req as any).user.id }],
+      }});
+    }, { isolationLevel: "Serializable" });
+    res.json({ status: "success", data: result });
+  } catch (error: any) { res.status(error.statusCode || 400).json({ status: "error", message: error.message || "Unable to update billing date." }); }
 };
