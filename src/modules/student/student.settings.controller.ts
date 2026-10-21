@@ -24,10 +24,11 @@ const hasStrongPassword = (password: string): boolean =>
   password.length >= 8 &&
   /[A-Z]/.test(password) &&
   /[a-z]/.test(password) &&
-  /[^A-Za-z0-9]/.test(password);
+  /[0-9]/.test(password) &&
+  /[^A-Za-z0-9\s]/.test(password);
 
 const strongPasswordMessage =
-  "Password must be at least 8 characters and include one uppercase letter, one lowercase letter, and one special character.";
+  "Password must be at least 8 characters and include one uppercase letter, one lowercase letter, one number, and one special character.";
 
 function parseStudentSettingsPrefs(raw: unknown): StudentSettingsPrefs {
   if (!raw) return DEFAULT_PREFS;

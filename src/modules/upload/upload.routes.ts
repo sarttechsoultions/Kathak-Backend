@@ -5,13 +5,15 @@ import { uploadImage, uploadLetterheadTemplate, uploadVideoToBunny } from "./upl
 import { authenticate, requireAnyPermission, requireRole } from "../../middleware/auth.middleware";
 import { requireActiveStudentAccess } from "../../middleware/access.middleware";
 import { publicUploadRateLimiter } from "../../middleware/rateLimit.middleware";
+import rateLimit from "express-rate-limit";
+import { initDirectVideo, completeDirectVideo, cancelDirectVideo } from "./direct-video.controller";
 
 const storage = multer.memoryStorage();
 
-// Full 500MB allowance — only for authenticated video/image uploads.
+// Bound memory across every legacy media route, including images/documents.
 const uploadAnyMulter = multer({
   storage,
-  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
+  limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 10, parts: 11 },
 });
 
 // A profile photo never needs to be more than a few MB. The public route
@@ -20,7 +22,7 @@ const uploadAnyMulter = multer({
 const PUBLIC_IMAGE_MAX_BYTES = 50 * 1024 * 1024;
 const uploadPublicImageMulter = multer({
   storage,
-  limits: { fileSize: PUBLIC_IMAGE_MAX_BYTES },
+  limits: { fileSize: PUBLIC_IMAGE_MAX_BYTES, files: 1, fields: 10, parts: 11 },
 });
 
 // Leave applications only need a small supporting document. Keep this route
@@ -63,7 +65,17 @@ const uploadLetterheadTemplateMulter = multer({
   },
 });
 
+let activeBufferedUploads = 0;
 const makeMulterHandler = (instance: multer.Multer) => (req: Request, res: Response, next: NextFunction) => {
+  if (activeBufferedUploads >= 2) {
+    res.status(429).json({ status: "error", message: "Upload service is busy. Please try again shortly." });
+    return;
+  }
+  activeBufferedUploads++;
+  let released = false;
+  const release = () => { if (!released) { released = true; activeBufferedUploads--; } };
+  res.once("finish", release);
+  res.once("close", release);
   instance.any()(req, res, (err) => {
     if (err) {
       res.status(400).json({ status: "error", message: err.message || "File upload parse error." });
@@ -105,6 +117,23 @@ const protectedUpload = (req: Request, res: Response, next: NextFunction) => {
 router.post("/image", authenticate, protectedUpload, handleMulterUpload, uploadImage);
 router.post("/letterhead-template", authenticate, requireRole(Role.ADMIN), handleLetterheadTemplateUpload, uploadLetterheadTemplate);
 router.post("/video", authenticate, protectedUpload, handleMulterUpload, uploadVideoToBunny);
+
+const directInitLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, limit: 12, keyGenerator: req => req.user!.id,
+  standardHeaders: true, legacyHeaders: false,
+  message: { status: "error", message: "Too many video upload requests. Please try again later." },
+});
+const directPollLimit = rateLimit({
+  windowMs: 60 * 1000, limit: 30, keyGenerator: req => req.user!.id,
+  standardHeaders: true, legacyHeaders: false,
+  message: { status: "error", message: "Please wait before checking your video again." },
+});
+router.post("/video/intents", authenticate, protectedUpload, directInitLimit, initDirectVideo(false));
+router.post("/student/video/intents", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, directInitLimit, initDirectVideo(true));
+router.post("/video/intents/:id/complete", authenticate, protectedUpload, directPollLimit, completeDirectVideo);
+router.post("/student/video/intents/:id/complete", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, directPollLimit, completeDirectVideo);
+router.delete("/video/intents/:id", authenticate, protectedUpload, cancelDirectVideo);
+router.delete("/student/video/intents/:id", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, cancelDirectVideo);
 
 // Student assignment submissions
 router.post("/student/image", authenticate, requireRole(Role.STUDENT), requireActiveStudentAccess, handleMulterUpload, uploadImage);

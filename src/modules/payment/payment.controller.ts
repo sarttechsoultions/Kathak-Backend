@@ -1,3 +1,4 @@
+import { validateAgreedFee } from "../../lib/enrollment-pricing";
 import { Request, Response } from "express";
 import crypto from "crypto";
 import Razorpay from "razorpay";
@@ -395,7 +396,8 @@ export const createEnrollmentPaymentOrder = async (
       existingCourseId !==
         String(courseId) ||
       existingMonths !== requestedMonths ||
-      existingCurrency !== currency
+      existingCurrency !== currency ||
+      (validated.payload.recordedByAdminId && Number(existingPayload.agreedMonthlyFee) !== Number(validated.payload.adminAgreedMonthlyFee))
     ) {
       throw new EnrollmentError(
         "This idempotency key is already associated with a different enrollment request.",
@@ -561,6 +563,11 @@ export const createEnrollmentPaymentOrder = async (
     );
   }
 
+  if (validated.payload.recordedByAdminId && validated.payload.adminAgreedMonthlyFee != null) {
+    monthlyFee = validateAgreedFee(validated.payload.adminAgreedMonthlyFee, currency);
+    tiers = [];
+  }
+
   // ------------------------------------------------------------
   // Enforce NEW enrollment only & check active enrollment
   // ------------------------------------------------------------
@@ -708,8 +715,9 @@ export const createEnrollmentPaymentOrder = async (
             expectedCurrency:
               currency,
 
-            monthlyBaseAmount:
-              monthlyFee,
+            agreedMonthlyFee: validated.payload.recordedByAdminId ? monthlyFee : null,
+            recordedByAdminId: validated.payload.recordedByAdminId || null,
+            monthlyBaseAmount: monthlyFee,
 
             joiningFeeApplied:
               pricing.joiningFee,

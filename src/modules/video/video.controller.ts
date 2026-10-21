@@ -1,3 +1,4 @@
+import { createMediaRecordOnce } from "../upload/direct-video-record";
 import { Request, Response } from "express";
 import { prisma } from "../../lib/prisma";
 import {
@@ -658,7 +659,7 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
 
     const deadline = task ? getTaskDeadline(task.submissionDate, task.cutOffTime) : null;
     const isLate = Boolean(deadline && new Date() > deadline);
-    const newSubmission = await (prisma.videoSubmission as any).create({
+    const newSubmission = await createMediaRecordOnce(submittedFiles[0].url, "PRACTICE", tx => tx.videoSubmission.create({
       data: {
         taskId: taskId || null,
         studentId: user.id,
@@ -678,7 +679,7 @@ export async function submitStudentVideo(req: Request, res: Response): Promise<v
         isLate,
         marks: null,
       },
-    });
+    }), (tx, id) => tx.videoSubmission.findUnique({ where: { id } }));
 
     const notificationTitle = "Practice video submitted";
     const notificationMessage = `${studentUser?.fullName || user.email || "A student"} submitted “${videoTitle}”${isLate ? " late" : ""}.`;

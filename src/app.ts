@@ -55,6 +55,7 @@ import { authenticate } from "./middleware/auth.middleware";
 import { notifyAdminOfPortalActivity } from "./middleware/activityEmail.middleware";
 import { publicFormRateLimiter } from "./middleware/rateLimit.middleware";
 import { createPublicInquiry } from "./modules/inquiries/inquiries.controller";
+import { verifyDirectVideoLinks } from "./modules/upload/direct-video-link.middleware";
 
 const app = express();
 
@@ -99,6 +100,15 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
+// Direct authorization/completion are metadata-only. Do not apply the general
+// 50 MB JSON allowance to upload routes; multipart legacy bodies are unaffected.
+app.use("/api/v1/upload", (req, res, next) => {
+  express.json({ limit: "16kb" })(req, res, error => {
+    if (error) { res.status(400).json({ status: "error", message: "Upload metadata must be valid JSON under 16 KB." }); return; }
+    next();
+  });
+});
+
 app.use(express.json({
   limit: "50mb",
   verify: (req, _res, buf) => {
@@ -109,6 +119,7 @@ app.use(express.json({
   },
 }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(verifyDirectVideoLinks);
 app.use(notifyAdminOfPortalActivity);
 
 const uploadsDir = path.join(__dirname, "../uploads");
