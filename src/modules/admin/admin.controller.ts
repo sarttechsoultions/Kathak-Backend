@@ -1,3 +1,29 @@
+async function reconcileAbandonedStudentPayments(studentId: string, enrollmentId: string): Promise<void> {
+    // Reconcile abandoned gateway orders before taking the fee-edit transaction.
+    // A database PENDING flag alone does not mean a payment is in progress.
+    const student = await prisma.user.findFirst({ where: { id: studentId, role: Role.STUDENT }, select: { id: true, email: true } });
+    if (!student) throw new EnrollmentError("Student not found.", 404);
+    const target = await prisma.enrollment.findFirst({ where: { id: enrollmentId, userId: student.id, active: true } });
+    if (!target) throw new EnrollmentError("Active enrollment not found.", 404);
+    const abandoned = await prisma.pendingEnrollment.findMany({ where: {
+      OR: [{ userId: student.id }, { email: student.email }], courseId: target.courseId,
+      status: "PENDING", createdAt: { lt: new Date(Date.now() - 30 * 60 * 1000) },
+    }});
+    for (const attempt of abandoned) {
+      if (!attempt.razorpayOrderId) continue;
+      const gateway = getRazorpay();
+      if (!gateway) throw new EnrollmentError("Unable to verify the old payment. Please retry later.");
+      const order = await gateway.orders.fetch(attempt.razorpayOrderId);
+      const payments = await gateway.orders.fetchPayments(attempt.razorpayOrderId);
+      const unsettled = payments.items.some(payment => ["authorized", "captured", "created"].includes(payment.status));
+      if (order.status !== "created" || Number(order.amount_paid) !== 0 || unsettled) continue;
+      await prisma.pendingEnrollment.updateMany({ where: { id: attempt.id, status: "PENDING" }, data: {
+        status: "FAILED", errorMessage: "Abandoned unpaid order closed before admin fee correction; no payment received.",
+      }});
+    }
+
+}
+
 import { enrollmentRenewalPricing, enrollmentMonthlyFee, enrollmentDiscountTiers, validateAgreedFee } from "../../lib/enrollment-pricing";
   import { Request, Response } from "express";
   import { 
@@ -6333,30 +6359,7 @@ export const getStudentFinance = async (
 // Fee edits apply to the next unpaid cycle; successful dues and receipts are immutable.
 export const updateStudentFee = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Reconcile abandoned gateway orders before taking the fee-edit transaction.
-    // A database PENDING flag alone does not mean a payment is in progress.
-    const student = await prisma.user.findFirst({ where: { id: String(req.params.id), role: Role.STUDENT }, select: { id: true, email: true } });
-    if (!student) throw new EnrollmentError("Student not found.", 404);
-    const target = await prisma.enrollment.findFirst({ where: { id: String(req.body.enrollmentId), userId: student.id, active: true } });
-    if (!target) throw new EnrollmentError("Active enrollment not found.", 404);
-    validateAgreedFee(req.body.monthlyFee, target.feeCurrency || "INR");
-    const abandoned = await prisma.pendingEnrollment.findMany({ where: {
-      OR: [{ userId: student.id }, { email: student.email }], courseId: target.courseId,
-      status: "PENDING", createdAt: { lt: new Date(Date.now() - 30 * 60 * 1000) },
-    }});
-    for (const attempt of abandoned) {
-      if (!attempt.razorpayOrderId) continue;
-      const gateway = getRazorpay();
-      if (!gateway) throw new EnrollmentError("Unable to verify the old payment. Please retry later.");
-      const order = await gateway.orders.fetch(attempt.razorpayOrderId);
-      const payments = await gateway.orders.fetchPayments(attempt.razorpayOrderId);
-      const unsettled = payments.items.some(payment => ["authorized", "captured", "created"].includes(payment.status));
-      if (order.status !== "created" || Number(order.amount_paid) !== 0 || unsettled) continue;
-      await prisma.pendingEnrollment.updateMany({ where: { id: attempt.id, status: "PENDING" }, data: {
-        status: "FAILED", errorMessage: "Abandoned unpaid order closed before admin fee correction; no payment received.",
-      }});
-    }
-
+    await reconcileAbandonedStudentPayments(String(req.params.id), String(req.body.enrollmentId));
     const result = await prisma.$transaction(async tx => {
       const enrollment = await tx.enrollment.findFirst({ where: { id: String(req.body.enrollmentId), userId: String(req.params.id), active: true }, include: { course: true, user: true } });
       if (!enrollment) throw new EnrollmentError("Active enrollment not found.", 404);
@@ -6395,6 +6398,7 @@ export const updateStudentBillingDate = async (req: Request, res: Response): Pro
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText) || !Number.isFinite(dueDate.getTime()) || new Date(dueDate.getTime() + 19800000).toISOString().slice(0, 10) !== dateText) {
       throw new EnrollmentError("Select a valid next fee due date.");
     }
+    await reconcileAbandonedStudentPayments(String(req.params.id), String(req.body.enrollmentId));
     const result = await prisma.$transaction(async tx => {
       const enrollment = await tx.enrollment.findFirst({ where: { id: String(req.body.enrollmentId), userId: String(req.params.id), active: true }, include: { course: true, user: true } });
       if (!enrollment) throw new EnrollmentError("Active enrollment not found.", 404);
