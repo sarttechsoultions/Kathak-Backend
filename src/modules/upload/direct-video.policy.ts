@@ -18,10 +18,50 @@ export function validateSelection(body: Record<string, unknown>, maxBytes: numbe
   return { size, mimeType };
 }
 
-export function verifyAsset(asset: Record<string, any>, intent: { publicId: string; size: number; createdAt: Date }) {
-  if (asset.public_id !== intent.publicId || asset.resource_type !== "video" || asset.type !== "upload" ||
-      !asset.asset_id || !VIDEO_FORMATS.includes(asset.format) || !Number.isSafeInteger(asset.bytes) ||
-      asset.bytes !== intent.size || !Number.isFinite(asset.duration) || asset.duration <= 0 ||
-      !Number.isFinite(Date.parse(asset.created_at)) || Date.parse(asset.created_at) < intent.createdAt.getTime() - 5000)
-    throw new UploadError(422, "Uploaded video could not be verified. Select the original file and retry.");
+export function verifyAsset(
+  asset: Record<string, any>,
+  intent: {
+    publicId: string;
+    size: number;
+    createdAt: Date;
+  }
+) {
+  const failures = {
+    publicIdMismatch: asset.public_id !== intent.publicId,
+    wrongResourceType: asset.resource_type !== "video",
+    wrongDeliveryType: asset.type !== "upload",
+    missingAssetId: !asset.asset_id,
+    invalidFormat: !VIDEO_FORMATS.includes(asset.format),
+    invalidBytes: !Number.isSafeInteger(asset.bytes),
+    sizeMismatch: asset.bytes !== intent.size,
+    invalidDuration:
+      !Number.isFinite(asset.duration) || asset.duration <= 0,
+    invalidCreatedAt:
+      !Number.isFinite(Date.parse(asset.created_at)),
+    createdBeforeIntent:
+      Number.isFinite(Date.parse(asset.created_at)) &&
+      Date.parse(asset.created_at) <
+        intent.createdAt.getTime() - 5000
+  };
+
+  const failedChecks = Object.entries(failures)
+    .filter(([, failed]) => failed)
+    .map(([name]) => name);
+
+  if (failedChecks.length > 0) {
+    console.error("[VIDEO_VERIFY_FAILED]", {
+      failedChecks,
+      assetFormat: asset.format,
+      assetBytes: asset.bytes,
+      expectedBytes: intent.size,
+      duration: asset.duration,
+      assetCreatedAt: asset.created_at,
+      intentCreatedAt: intent.createdAt
+    });
+
+    throw new UploadError(
+      422,
+      "Uploaded video could not be verified. Select the original file and retry."
+    );
+  }
 }

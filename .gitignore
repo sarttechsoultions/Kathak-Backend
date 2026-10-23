@@ -6,3 +6,10 @@ dist/
 build/
 *.log
 uploads/
+
+# Environment secrets and backups
+.env
+.env.*
+!.env.example
+*.env.backup*
+*.backup

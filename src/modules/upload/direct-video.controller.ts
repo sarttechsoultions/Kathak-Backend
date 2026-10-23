@@ -15,7 +15,7 @@ async function configuration() {
       !config.cloud_name || !config.api_key || !config.api_secret)
     throw new UploadError(503, "Video uploads are awaiting account limit configuration. Please contact the academy.");
   const preset = await cloudinary.api.upload_preset(presetName);
-  const options = preset.options || {};
+  const options = preset.settings || {};
   const formats = Array.isArray(options.allowed_formats) ? options.allowed_formats : String(options.allowed_formats || "").split(",");
   if (preset.unsigned !== false ||
       !formats.length || formats.some((format: string) => !VIDEO_FORMATS.includes(format)))
@@ -107,7 +107,11 @@ export async function completeDirectVideo(req: Request, res: Response) {
       res.json({ status: "success", data: payload(intent) }); return;
     }
     if (intent.status === "UPLOADING" && intent.expiresAt < new Date()) throw new UploadError(410, "Upload authorization expired. Select the file again.");
-    const asset = await cloudinary.api.resource(intent.publicId, { resource_type: "video", type: "upload" });
+    const asset = await cloudinary.api.resource(intent.publicId, {
+  resource_type: "video",
+  type: "upload",
+  media_metadata: true
+});
     try { verifyAsset(asset, intent); } catch (error) {
       await prisma.videoUploadIntent.updateMany({ where: { id: intent.id, status: "UPLOADING" }, data: { status: "FAILED", processingStatus: "FAILED" } });
       throw error;
