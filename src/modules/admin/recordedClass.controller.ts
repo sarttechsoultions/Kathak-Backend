@@ -226,7 +226,7 @@ export const createRecordedClass = async (req: Request, res: Response): Promise<
     }
 
     let finalThumbnail = thumbnail?.trim() || null;
-    if (!finalThumbnail && videoId && BUNNY_CONFIG.libraryId && !String(videoId).startsWith("local-")) {
+    if (!finalThumbnail && videoId && BUNNY_CONFIG.libraryId && !String(videoId).startsWith("local-") && !String(videoId).startsWith("kathak_direct/")) {
       finalThumbnail = `https://vz-${BUNNY_CONFIG.libraryId}.b-cdn.net/${videoId}/thumbnail.jpg`;
     }
 

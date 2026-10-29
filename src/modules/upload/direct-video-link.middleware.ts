@@ -15,7 +15,9 @@ export async function verifyDirectVideoLinks(req: Request, res: Response, next: 
       if (typeof value === "string") {
         let decoded = value;
         try { decoded = decodeURIComponent(decodeURIComponent(value)); } catch { /* Ordinary text may contain percent signs. */ }
-        if (decoded.includes("kathak_direct")) urls.add(value.includes("|https://") ? value.slice(value.lastIndexOf("|https://") + 1) : value);
+        // Provider IDs also contain the namespace; only playback URLs are links.
+        const candidate = value.includes("|https://") ? value.slice(value.lastIndexOf("|https://") + 1) : value;
+        if (/^https?:\/\//i.test(candidate) && decoded.includes("kathak_direct")) urls.add(candidate);
       }
       else if (Array.isArray(value)) value.forEach(item => visit(item, depth + 1));
       else if (value && typeof value === "object") Object.values(value).forEach(item => visit(item, depth + 1));
