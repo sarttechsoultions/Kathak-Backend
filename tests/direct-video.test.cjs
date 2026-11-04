@@ -23,11 +23,13 @@ const { VIDEO_EAGER } = require('../dist/modules/upload/direct-video.policy');
 let records, asset, resourceFails, membership, enrollment, now;
 let sequence = 0, currentId;
 let app;
+const accountRoles = new Map();
 const selection = { name: 'dance.mov', mimeType: 'video/quicktime', size: 20000000 };
 const matches = (item, where) => Object.entries(where).every(([key, value]) =>
   value && typeof value === 'object' && 'in' in value ? value.in.includes(item[key]) : item[key] === value);
 before(() => {
-  cloudinary.api.upload_preset = async () => ({ unsigned: false, options: { allowed_formats: ['mp4', 'mov', 'webm', 'm4v'] } });
+  prisma.user.findUnique = async ({ where }) => accountRoles.has(where.id) ? { isActive: true, role: accountRoles.get(where.id) } : null;
+  cloudinary.api.upload_preset = async () => ({ unsigned: false, settings: { allowed_formats: ['mp4', 'mov', 'webm', 'm4v'] } });
   cloudinary.api.resource = async () => { if (resourceFails) throw new Error('sensitive provider detail'); return asset; };
   prisma.videoUploadIntent.create = async ({ data }) => {
     const item = { ...data, status: 'UPLOADING', processingStatus: 'PENDING', createdAt: now, completedAt: null, playbackUrl: null };
@@ -53,6 +55,7 @@ beforeEach(() => { currentId = `user-${++sequence}`; records = []; now = new Dat
     derived: [{ transformation: VIDEO_EAGER, secure_url: 'https://res.cloudinary.com/test/video/upload/derived.mp4' }] };
 });
 async function call(path, { role = 'ADMIN', id = currentId, body = {}, method = 'POST' } = {}) {
+  accountRoles.set(id, role);
   const token = jwt.sign({ id, email: 'test@example.invalid', role, permissions: [] }, process.env.JWT_SECRET);
   const { IncomingMessage, ServerResponse } = require('node:http');
   const { Duplex } = require('node:stream');

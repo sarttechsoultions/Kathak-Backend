@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { Permission, Role } from "@prisma/client";
 import { env } from "../config/env";
 import { isTokenRevoked } from "../lib/tokenBlocklist";
+import { prisma } from "../lib/prisma";
 import { AuthUser } from "../types/auth";
 import { getTokenFromCookies } from "../lib/authHelpers";
 
@@ -52,6 +53,11 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
   try {
     const decoded = jwt.verify(token, env.jwtSecret) as JwtPayload;
 
+    const account = await prisma.user.findUnique({ where: { id: decoded.id }, select: { isActive: true, role: true } });
+    if (!account?.isActive || account.role !== decoded.role) {
+      res.status(401).json({ status: "error", message: "User not found or inactive. Please sign in again." });
+      return;
+    }
     req.user = {
       id: decoded.id,
       email: decoded.email,

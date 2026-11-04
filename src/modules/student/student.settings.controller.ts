@@ -137,7 +137,7 @@ export const getStudentSettings = async (req: Request, res: Response): Promise<v
         id: student.id,
         fullName: student.fullName,
         email: student.email,
-        phone: student.phone?.replace(/^\+91/, "") || "",
+        phone: student.phone || "",
         avatarUrl: student.avatarUrl,
         level: student.skillLevel,
         batch: batch?.name || batch?.courseName || batch?.code || null,
@@ -166,7 +166,19 @@ export const updateStudentSettingsProfile = async (req: Request, res: Response):
     }
 
     const digits = String(phone || "").replace(/\D/g, "");
-    const normalizedPhone = digits ? `+91${digits.slice(-10)}` : student.phone;
+    const rawPhone = String(phone ?? "").trim();
+    const countryPrefix = String(student.countryCode || "+91").replace(/\D/g, "");
+    const normalizedPhone = phone === undefined ? student.phone : rawPhone.startsWith("+")
+      ? "+" + digits
+      : "+" + countryPrefix + digits;
+    if (phone !== undefined && !/^\+[1-9]\d{6,14}$/.test(normalizedPhone || "")) {
+      res.status(400).json({ status: "error", message: "Enter a valid phone number including its country code." });
+      return;
+    }
+    if (fullName !== undefined && !String(fullName).trim()) {
+      res.status(400).json({ status: "error", message: "Full name is required." });
+      return;
+    }
 
     if (digits && normalizedPhone !== student.phone) {
       const existingPhone = await prisma.user.findFirst({
@@ -199,7 +211,7 @@ export const updateStudentSettingsProfile = async (req: Request, res: Response):
       message: "Account settings saved.",
       data: {
         ...updated,
-        phone: updated.phone?.replace(/^\+91/, "") || "",
+        phone: updated.phone || "",
       },
     });
   } catch (error) {

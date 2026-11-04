@@ -1231,13 +1231,16 @@ const fulfillEnrollment = async (
     });
   }
 
-  let enrollment =
-    await tx.enrollment.findFirst({
-      where: {
-        userId: user.id,
-        courseId: payload.courseId,
-      },
-    });
+  const renewalPayload = payload as Record<string, unknown>;
+  const isRenewal = String(renewalPayload.operationType || "").toUpperCase() === "RENEWAL";
+  const boundEnrollmentId = typeof renewalPayload.enrollmentId === "string" ? renewalPayload.enrollmentId : null;
+  let enrollment = await tx.enrollment.findFirst({
+    where: { userId: user.id, courseId: payload.courseId, ...(isRenewal && boundEnrollmentId ? { id: boundEnrollmentId } : {}) },
+    orderBy: { createdAt: "desc" },
+  });
+  if (isRenewal && (!enrollment || !enrollment.active)) {
+    throw new EnrollmentError("This renewal belongs to an enrollment that is no longer active. Please contact support to reconcile your payment.", 409);
+  }
 
   const enrollmentType =
     parseEnrollmentType(
@@ -2886,15 +2889,8 @@ export async function completeEnrollmentUpgrade(
       );
     }
 
-    if (
-      pending.preferredDate <
-      todayIsoDate()
-    ) {
-      throw new EnrollmentError(
-        "Please choose a date that is today or later.",
-        400
-      );
-    }
+    // The date was validated at checkout. Delayed payment confirmation must
+    // preserve the paid schedule rather than reject it as a new booking.
 
     normalizeClassTime(
       String(
@@ -2903,93 +2899,39 @@ export async function completeEnrollmentUpgrade(
     );
   }
 
-  /* -------------------------------------------------------
-     Determine monthly fee based on currency
-     ------------------------------------------------------- */
-
-  let monthlyFee: number;
-
-  if (
-    normalizedCurrency === "USD"
-  ) {
-    monthlyFee =
-      targetType === "ONE_TO_ONE"
-        ? Number(
-            targetCourse.oneToOneFeeUSD ??
-              0
-          )
-        : Number(
-            targetCourse.groupFeeUSD ??
-              0
-          );
-  } else {
-    monthlyFee =
-      targetType === "ONE_TO_ONE"
-        ? Number(
-            targetCourse.oneToOneFeeINR ??
-              0
-          )
-        : Number(
-            targetCourse.groupFeeINR ??
-              0
-          );
+  // Honor the amount agreed when this payment order was created.
+  const finalAmount = Number(pending.expectedAmount);
+  if (!Number.isFinite(finalAmount) || finalAmount <= 0) {
+    throw new EnrollmentError("Invalid saved upgrade amount.", 400);
   }
-
-  if (
-    !Number.isFinite(monthlyFee) ||
-    monthlyFee <= 0
-  ) {
-    throw new EnrollmentError(
-      normalizedCurrency === "USD"
-        ? targetType === "ONE_TO_ONE"
-          ? "One-to-one USD pricing is not available for this course."
-          : "Group USD pricing is not available for this course."
-        : targetType === "ONE_TO_ONE"
-        ? "One-to-one pricing is not available for this course."
-        : "Group classes are not available for this course.",
-      400
-    );
+  const gateway = getRazorpay();
+  if (!gateway) throw new EnrollmentError("Payment service is temporarily unavailable.", 503);
+  const checkoutOrder = await gateway.orders.fetch(razorpayOrderId);
+  if (Number(checkoutOrder.amount) !== Math.round(finalAmount * 100) || String(checkoutOrder.currency).toUpperCase() !== normalizedCurrency) {
+    throw new EnrollmentError("Payment order does not match the saved checkout.", 400);
   }
-
-  /* -------------------------------------------------------
-     Calculate exact upgrade price
-
-     No joining fee.
-     ------------------------------------------------------- */
-
-  const pricing =
-    calculateUpgradeFee(
-      monthlyFee,
-      months,
-      targetCourse.bulkDiscountTiers
-    );
-
-  const finalAmount =
-    pricing.finalAmount;
-
-  if (Math.abs(Number(pending.expectedAmount || 0) - finalAmount) > 0.01) {
-    throw new EnrollmentError(
-      "The upgrade price has changed. Please start a new upgrade payment.",
-      409
-    );
+  const notes = checkoutOrder.notes || {};
+  const pricing = {
+    monthlyFee: Number(notes.monthlyFee), months,
+    subtotal: Number(notes.subtotal), discountPercent: Number(notes.discountPercent),
+    discountAmount: Number(notes.discountAmount), finalAmount,
+  };
+  if (![pricing.monthlyFee, pricing.subtotal, pricing.discountPercent, pricing.discountAmount].every(Number.isFinite)
+      || pricing.monthlyFee <= 0 || pricing.discountPercent < 0 || pricing.discountPercent > 100 || pricing.discountAmount < 0
+      || Math.abs(pricing.subtotal - pricing.monthlyFee * months) > 0.01
+      || Math.abs(pricing.subtotal - pricing.discountAmount - finalAmount) > 0.01) {
+    throw new EnrollmentError("Saved checkout pricing is incomplete or invalid. Please contact support.", 409);
   }
-
-  if (
-    !Number.isFinite(finalAmount) ||
-    finalAmount <= 0
-  ) {
-    throw new EnrollmentError(
-      "Unable to calculate the upgrade amount.",
-      500
-    );
-  }
+  const billingStart = new Date();
+  const nextDueDate = nextCoverageDueDate(billingStart, months, billingStart);
 
   /* -------------------------------------------------------
      Transaction
      ------------------------------------------------------- */
 
-  const newEnrollment =
-    await prisma.$transaction(
+  let newEnrollment;
+  try {
+    newEnrollment = await prisma.$transaction(
       async (tx) => {
         /* -------------------------------------------------
            Verify student
@@ -3038,6 +2980,7 @@ export async function completeEnrollmentUpgrade(
             where: {
               studentId:
                 pending.userId,
+              batch: { courseId: currentEnrollment.courseId },
             },
             select: {
               batchId: true,
@@ -3052,10 +2995,7 @@ export async function completeEnrollmentUpgrade(
           oldMemberships.length > 0
         ) {
           await tx.batchStudent.deleteMany({
-            where: {
-              studentId:
-                pending.userId,
-            },
+            where: { studentId: pending.userId, batchId: { in: oldMemberships.map(m => m.batchId) } },
           });
 
           /* -----------------------------------------------
@@ -3125,10 +3065,27 @@ export async function completeEnrollmentUpgrade(
               paymentMode:
                 "MONTHLY",
 
-              monthsPaid:
-                months,
+              monthsPaid: months,
+              billingAnchorDate: billingStart,
+              nextDueDate,
+              agreedMonthlyFee: pricing.monthlyFee,
+              feeCurrency: normalizedCurrency,
             },
           });
+
+        for (const dueMonth of generateCoverageMonths(billingStart, months)) {
+          const [year, month] = dueMonth.split("-").map(Number);
+          await tx.monthlyDue.create({ data: {
+            enrollmentId: enrollment.id, userId: pending.userId, courseId: pending.targetCourseId,
+            dueMonth, dueDate: billingDateForMonth(year, month - 1, billingStart),
+            amount: finalAmount / months, currency: normalizedCurrency, status: "SUCCESS", paidAt: billingStart,
+          } });
+        }
+        await tx.monthlyDue.create({ data: {
+          enrollmentId: enrollment.id, userId: pending.userId, courseId: pending.targetCourseId,
+          dueMonth: dueMonthFromDate(nextDueDate), dueDate: nextDueDate,
+          amount: pricing.monthlyFee, currency: normalizedCurrency, status: "PENDING",
+        } });
 
         /* -------------------------------------------------
            Determine target batch
@@ -3335,7 +3292,7 @@ export async function completeEnrollmentUpgrade(
            Store actual currency.
            ------------------------------------------------- */
 
-        await tx.payment.create({
+        const upgradePayment = await tx.payment.create({
           data: {
             userId:
               pending.userId,
@@ -3363,6 +3320,34 @@ export async function completeEnrollmentUpgrade(
           },
         });
 
+        const invoiceYear = billingStart.getFullYear();
+        const invoiceCounter = await tx.invoiceCounter.upsert({
+          where: { year: invoiceYear }, update: { current: { increment: 1 } },
+          create: { year: invoiceYear, current: 1 },
+        });
+        const prefix = (process.env.INVOICE_PREFIX || "KATHAK").trim().replace(/-+$/, "");
+        const { BUSINESS_DETAILS } = require("../../lib/businessConfig");
+        const tax = calculateGstFromInclusiveTotal(finalAmount, upgradingUser.region);
+        const assignedBatch = assignedBatchId ? await tx.batch.findUnique({ where: { id: assignedBatchId } }) : null;
+        await tx.invoice.create({ data: {
+          invoiceNumber: prefix + "-" + invoiceYear + "-" + String(invoiceCounter.current).padStart(6, "0"),
+          paymentId: upgradePayment.id, enrollmentId: enrollment.id, userId: pending.userId,
+          amount: finalAmount, currency: normalizedCurrency, status: "PAID",
+          snapshot: {
+            academyName: BUSINESS_DETAILS.tradeName, legalName: BUSINESS_DETAILS.legalName,
+            academyAddress: BUSINESS_DETAILS.address, academyState: BUSINESS_DETAILS.state,
+            academyGstin: BUSINESS_DETAILS.gstin, authorizedSignatory: BUSINESS_DETAILS.authorizedSignatory,
+            sacCode: getInvoiceSacCode(), sacDescription: getInvoiceSacDescription(),
+            gstDetails: { ...tax }, taxableValue: tax.taxableBase, cgst: tax.cgst, sgst: tax.sgst,
+            igst: tax.igst, totalGst: tax.totalGst, gstRate: tax.gstRate, isGstInclusive: true,
+            studentName: upgradingUser.fullName, studentEmail: upgradingUser.email,
+            studentPhone: upgradingUser.phone, studentState: upgradingUser.region || "",
+            courseTitle: targetCourse.title, batchName: assignedBatch?.name || "",
+            months, monthlyBaseAmount: pricing.monthlyFee, discountAmount: pricing.discountAmount,
+            joiningFeeApplied: 0, operationType: "UPGRADE", paymentMode: "RAZORPAY",
+          },
+        } });
+
         /* -------------------------------------------------
            Mark upgrade completed
            ------------------------------------------------- */
@@ -3381,6 +3366,19 @@ export async function completeEnrollmentUpgrade(
         return enrollment;
       }
     );
+
+  } catch (error) {
+    // Browser verification and a webhook can finalize the same order together.
+    // A losing transaction rolls back; return the committed result on retry.
+    const completed = await prisma.pendingUpgrade.findUnique({ where: { id: pending.id } });
+    if (completed?.status === "COMPLETED") {
+      const enrollment = await prisma.enrollment.findUnique({
+        where: { previousEnrollmentId: pending.currentEnrollmentId },
+      });
+      if (enrollment) return { alreadyCompleted: true, enrollment };
+    }
+    throw error;
+  }
 
   /* -------------------------------------------------------
      Return

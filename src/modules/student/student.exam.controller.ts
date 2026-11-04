@@ -710,6 +710,12 @@ export const submitExam = async (
       return;
     }
 
+    // Bounded delivery window for the browser's deadline auto-submit.
+    if (now.getTime() > examEnd.getTime() + 30_000) {
+      res.status(403).json({ status: "error", message: "Exam submission deadline has passed." });
+      return;
+    }
+
     // ---------------------------------------------------------
     // Questions from DATABASE
     // ---------------------------------------------------------
@@ -933,10 +939,11 @@ export const submitExam = async (
     // UPDATE EXISTING RESULT
     // NEVER CREATE HERE
     // ---------------------------------------------------------
-    const result =
-      await prisma.examResult.update({
+    const saved =
+      await prisma.examResult.updateMany({
         where: {
           id: attempt.id,
+          status: "IN_PROGRESS",
         },
 
         data: {
@@ -954,6 +961,13 @@ export const submitExam = async (
         },
       });
 
+    if (saved.count !== 1) {
+      res.status(409).json({ status: "error", message: "This exam has already been submitted." });
+      return;
+    }
+    const result = { id: attempt.id, marksObtained, status: finalStatus };
+
+    try {
     const notificationTitle = "Exam submitted";
     const notificationMessage = `${exam.title} was submitted by a student.`;
     const batchTeacher = exam.batchId
@@ -976,6 +990,10 @@ export const submitExam = async (
       notificationMessage,
       `/admin/exam/results/evaluate/${result.id}`
     );
+
+    } catch (error) {
+      console.error("Exam saved; submission notification failed:", error);
+    }
 
     res.json({
       status: "success",
@@ -1083,6 +1101,11 @@ export const getMyResultDetails = async (
 
        IN_PROGRESS is excluded.
     ----------------------------------------------------- */
+
+    if (result.status === "IN_PROGRESS") {
+      res.status(403).json({ status: "error", message: "Results are available after submission." });
+      return;
+    }
 
     let percentile: number | null = null;
 

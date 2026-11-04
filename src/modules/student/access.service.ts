@@ -80,8 +80,8 @@ export async function getStudentAccessState(
     },
   });
 
-  const currency = resolveCurrency(student?.country);
   const activeEnrollment = student?.enrollments?.[0] || null;
+  const currency = (activeEnrollment?.feeCurrency || resolveCurrency(student?.country)) as "INR" | "USD";
   const activeUnlockRaw = student?.accessUnlocksReceived?.[0] || null;
 
   const activeUnlock: ActiveUnlockInfo | null = activeUnlockRaw

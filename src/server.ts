@@ -6,6 +6,7 @@ import { registerLiveClassSocket } from "./modules/liveclass/liveclass.socket";
 import { registerNotificationSocket } from "./modules/notification/notification.socket";
 import { setIO } from "./lib/socket";
 import { startClassExpiryJob } from "./modules/scheduler/expireClasses";
+import { startEnrollmentReconciliationJob } from "./modules/scheduler/reconcileEnrollments";
 
 
 const httpServer = createServer(app);
@@ -39,3 +40,4 @@ httpServer.listen(PORT, () => {
   console.log(`🚀 Kathak Next Backend Server listening on http://localhost:${PORT}`);
 });
 startClassExpiryJob();
+startEnrollmentReconciliationJob();
