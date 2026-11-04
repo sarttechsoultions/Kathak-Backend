@@ -9,6 +9,7 @@ import { prisma } from "../../lib/prisma";
 
 import {
   completePendingEnrollment,
+  completeEnrollmentUpgrade,
   EnrollmentError,
   sendEnrollmentWelcomeEmail,
   validateEnrollmentInput,
@@ -1480,6 +1481,21 @@ export const handleRazorpayWebhook = async (
         status: "ignored",
       });
 
+      return;
+    }
+
+    // Resolve upgrades by the server-saved order ID, even if checkout closed.
+    const pendingUpgrade = await prisma.pendingUpgrade.findUnique({
+      where: { razorpayOrderId },
+      select: { id: true },
+    });
+    if (pendingUpgrade) {
+      await completeEnrollmentUpgrade({
+        pendingUpgradeId: pendingUpgrade.id,
+        razorpayOrderId,
+        razorpayPaymentId,
+      });
+      res.json({ status: "ok" });
       return;
     }
 

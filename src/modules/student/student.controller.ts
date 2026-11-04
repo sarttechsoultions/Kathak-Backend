@@ -890,7 +890,7 @@ export const initiateStudentRenewal = async (req: Request, res: Response): Promi
       return;
     }
 
-    const currency = resolveCurrency(student.countryCode || student.country || "IN");
+    const currency = (enrollment.feeCurrency || resolveCurrency(student.countryCode || student.country || "IN")) as "INR" | "USD";
     const monthlyFee = enrollmentMonthlyFee(enrollment, currency, enrollment.nextDueDate || new Date());
     if (!Number.isFinite(monthlyFee) || monthlyFee <= 0) {
       res.status(400).json({ status: "error", message: `A valid ${currency} renewal fee is not configured for this course.` });
@@ -940,6 +940,7 @@ export const initiateStudentRenewal = async (req: Request, res: Response): Promi
           paymentMethod: "RAZORPAY",
           paymentMode: months === 1 ? "MONTHLY" : "FULL_COURSE",
           operationType: "RENEWAL",
+          enrollmentId: enrollment.id,
           months,
           monthlyBaseAmount: monthlyFee,
           expectedAmount: pricing.total,
@@ -2822,9 +2823,9 @@ export const getStudentProgress = async (req: Request, res: Response) => {
     let gradedAssignments = 0;
     
     const formattedAssignments = assignmentSubmissions.map(sub => {
-       if (sub.status === "GRADED" && sub.grade) {
+       if (sub.status === "GRADED" && sub.grade !== null && Number.isFinite(Number(sub.grade))) {
           gradedAssignments++;
-          totalAssignmentMarks += Number(sub.grade) || 0;
+          totalAssignmentMarks += Math.min(100, Math.max(0, Number(sub.grade)));
        }
        return {
          id: sub.assignmentId,
@@ -2842,14 +2843,15 @@ export const getStudentProgress = async (req: Request, res: Response) => {
       : 0;
       
     // Get pending assignments
-    const batchStudent = await prisma.batchStudent.findFirst({
-      where: { studentId }
+    const studentMemberships = await prisma.batchStudent.findMany({
+      where: { studentId },
+      select: { batchId: true },
     });
     
-    if (batchStudent) {
+    if (studentMemberships.length > 0) {
       const pendingAssignments = await prisma.assignment.findMany({
         where: {
-          batchId: batchStudent.batchId,
+          batchId: { in: studentMemberships.map(membership => membership.batchId) },
           submissions: { none: { studentId } }
         }
       });
@@ -3154,11 +3156,7 @@ export const verifyUpgrade = async (
     // 1. NORMALIZE CURRENCY
     // ============================================================
 
-    const normalizedCurrency = String(
-      currency || "INR"
-    )
-      .trim()
-      .toUpperCase();
+    let normalizedCurrency = "INR";
 
     if (
       normalizedCurrency !== "INR" &&
@@ -3221,6 +3219,16 @@ export const verifyUpgrade = async (
       return;
     }
 
+    if (pendingUpgrade.userId !== req.user!.id) {
+      res.status(403).json({ status: "error", message: "This upgrade does not belong to your account." });
+      return;
+    }
+    normalizedCurrency = String(pendingUpgrade.currency).toUpperCase();
+    if (!["INR", "USD"].includes(normalizedCurrency)) {
+      res.status(400).json({ status: "error", message: "Invalid saved upgrade currency." });
+      return;
+    }
+
     // ============================================================
     // 4. VERIFY ORDER BELONGS TO UPGRADE
     // ============================================================
@@ -3265,234 +3273,9 @@ export const verifyUpgrade = async (
       return;
     }
 
-    // ============================================================
-    // 6. LOAD TARGET COURSE
-    // ============================================================
-
-    const targetCourse =
-      await prisma.course.findUnique({
-        where: {
-          id:
-            pendingUpgrade.targetCourseId,
-        },
-      });
-
-    if (!targetCourse) {
-      res.status(404).json({
-        status: "error",
-        message:
-          "Target course not found.",
-      });
-      return;
-    }
-
-    // ============================================================
-    // 7. VALIDATE DURATION
-    // ============================================================
-
-    const months = Number(
-      pendingUpgrade.months
-    );
-
-    if (
-      !Number.isInteger(months) ||
-      ![1, 6, 12].includes(months)
-    ) {
-      res.status(400).json({
-        status: "error",
-        message:
-          "Invalid upgrade duration.",
-      });
-      return;
-    }
-
-    // ============================================================
-    // 8. FIXED COURSE DURATION
-    // ============================================================
-
-    const courseDurationMonths =
-      Number(
-        targetCourse.courseDurationMonths ??
-          0
-      );
-
-    if (
-      courseDurationMonths > 0 &&
-      months > courseDurationMonths
-    ) {
-      res.status(400).json({
-        status: "error",
-        message:
-          `This course is available for a maximum of ${courseDurationMonths} months.`,
-      });
-      return;
-    }
-
-    // ============================================================
-    // 9. TARGET TYPE
-    // ============================================================
-
-    const targetType = String(
-      pendingUpgrade.targetType
-    )
-      .trim()
-      .toUpperCase()
-      .replace(/[\s\_-]+/g, "_");
-
-    if (
-      targetType !== "ONE_TO_ONE" &&
-      targetType !== "GROUP"
-    ) {
-      res.status(400).json({
-        status: "error",
-        message:
-          "Invalid target enrollment type.",
-      });
-      return;
-    }
-
-    // ============================================================
-    // 10. DETERMINE MONTHLY FEE
-    // ============================================================
-
-    let monthlyFee: number;
-
-    if (
-      normalizedCurrency === "USD"
-    ) {
-      if (
-        targetType ===
-        "ONE_TO_ONE"
-      ) {
-        monthlyFee = Number(
-          targetCourse.oneToOneFeeUSD ??
-            0
-        );
-      } else {
-        monthlyFee = Number(
-          targetCourse.groupFeeUSD ??
-            0
-        );
-      }
-    } else {
-      if (
-        targetType ===
-        "ONE_TO_ONE"
-      ) {
-        monthlyFee = Number(
-          targetCourse.oneToOneFeeINR ??
-            0
-        );
-      } else {
-        monthlyFee = Number(
-          targetCourse.groupFeeINR ??
-            0
-        );
-      }
-    }
-
-    if (
-      !Number.isFinite(
-        monthlyFee
-      ) ||
-      monthlyFee <= 0
-    ) {
-      res.status(400).json({
-        status: "error",
-        message:
-          "Pricing is not available for the selected course.",
-      });
-      return;
-    }
-
-    // ============================================================
-    // 11. SUBTOTAL
-    // ============================================================
-
-    const subtotal = Math.round(
-      monthlyFee * months
-    );
-
-    // ============================================================
-    // 12. BULK DISCOUNT
-    // ============================================================
-
-    const discountTiers =
-      Array.isArray(
-        targetCourse.bulkDiscountTiers
-      )
-        ? targetCourse.bulkDiscountTiers
-            .map((tier: any) => ({
-              months: Number(
-                tier?.months
-              ),
-              discountPercent:
-                Number(
-                  tier?.discountPercent
-                ),
-            }))
-            .filter(
-              (tier) =>
-                Number.isInteger(
-                  tier.months
-                ) &&
-                tier.months > 0 &&
-                Number.isFinite(
-                  tier.discountPercent
-                ) &&
-                tier.discountPercent >=
-                  0 &&
-                tier.discountPercent <=
-                  100
-            )
-        : [];
-
-    const matchingDiscount =
-      discountTiers
-        .filter(
-          (tier) =>
-            tier.months ===
-            months
-        )
-        .sort(
-          (a, b) =>
-            b.discountPercent -
-            a.discountPercent
-        )[0];
-
-    const discountPercent =
-      matchingDiscount
-        ?.discountPercent ??
-      0;
-
-    const discountAmount =
-      Math.round(
-        (subtotal *
-          discountPercent) /
-          100
-      );
-
-    // ============================================================
-    // 13. FINAL AMOUNT
-    // ============================================================
-    //
-    // IMPORTANT:
-    // Joining fee is NOT charged during upgrade.
-    //
-
-    const finalAmount =
-      Math.max(
-        0,
-        subtotal -
-          discountAmount
-      );
-
-    if (finalAmount <= 0) {
-      res.status(400).json({
-        status: "error",
-        message:
-          "Invalid upgrade amount.",
-      });
+    const finalAmount = Number(pendingUpgrade.expectedAmount);
+    if (!Number.isFinite(finalAmount) || finalAmount <= 0) {
+      res.status(400).json({ status: "error", message: "Invalid saved upgrade amount." });
       return;
     }
 
@@ -3583,15 +3366,7 @@ export const verifyUpgrade = async (
           currency:
             normalizedCurrency,
 
-          monthlyFee,
 
-          months,
-
-          subtotal,
-
-          discountPercent,
-
-          discountAmount,
 
           finalAmount,
         }

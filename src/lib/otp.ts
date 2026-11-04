@@ -13,7 +13,7 @@ export class OtpError extends Error {
 }
 
 export const MOBILE_OTP_BYPASS = env.mobileOtpBypass || "001122";
-export const EMAIL_OTP_BYPASS = env.mobileOtpBypass || "001122";
+
 const OTP_TTL_MS = 10 * 60 * 1000;
 const RESEND_GAP_MS = 45 * 1000;
 const VERIFY_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -97,16 +97,15 @@ export const sendEnrollmentOtp = async (params: {
       `,
     }).then((sent) => {
       if (!sent) {
-        console.warn(`SMTP failed for ${target}. Email OTP bypass ${EMAIL_OTP_BYPASS} is active.`);
+        console.warn(`SMTP failed for ${target}. Email OTP delivery failed.`);
       }
     });
 
     return {
       channel,
       target,
-      message: `Use OTP ${EMAIL_OTP_BYPASS} to verify your email if the message does not arrive.`,
-      bypass: true,
-      bypassCode: EMAIL_OTP_BYPASS,
+      message: "An OTP has been sent to your email address.",
+      bypass: false,
     };
   }
 
@@ -136,8 +135,7 @@ export const verifyEnrollmentOtp = async (params: {
 
   const target = normalizeTarget(channel, raw, params.countryCode);
   const isBypass =
-    (channel === "MOBILE" && code === MOBILE_OTP_BYPASS) ||
-    (channel === "EMAIL" && code === EMAIL_OTP_BYPASS);
+    channel === "MOBILE" && code === MOBILE_OTP_BYPASS;
 
   const latest = await prisma.verificationOtp.findFirst({
     where: { channel, target },
